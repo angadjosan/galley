@@ -50,7 +50,7 @@ The architecture below only makes sense against these. If a decision doesn't ser
 
 Priya is a PM. She writes a spec in Galley — bold text, headings, a table of API fields, a callout for the open question. She never sees a `#` or a `|`.
 
-She finishes and hands it to a coding agent. Not by copy-paste: the agent has access to her workspace, and she says "implement the spec at galley://specs/checkout-v2." The agent pulls it as Markdown — the same bytes on disk, no conversion — and gets the table as a table, the callout as a callout, and a stable ID on every block.
+She finishes and hands it to a coding agent. Not by copy-paste — she says "implement the spec at `specs/checkout-v2`," and the agent runs `galley read specs/checkout-v2`. It gets Markdown on stdout: the same bytes that are on disk, no conversion, the table as a table, the callout as a callout, and a stable ID on every block.
 
 The agent implements it, and comes back with: "§API Fields/¶2 says `currency` is optional but §Validation/¶1 requires it. Which?" That's a comment thread anchored to both blocks. Priya answers in the thread, in prose, in her inbox.
 
@@ -86,14 +86,36 @@ Being "agent-native" is four concrete capabilities, not a vibe:
 
 | Capability | What to build |
 |---|---|
-| **Read** a doc as clean Markdown, no export step | The file on disk *is* the API response. Same bytes. |
+| **Read** a doc as clean Markdown, no export step | The file on disk *is* the payload. Same bytes. |
 | **Address** a specific block, stably, across edits | Block IDs, durable through rewrites (see below) |
-| **Cite** back in a way a human can verify | `galley://doc#block` resolves to a scroll-and-highlight |
+| **Cite** back in a way a human can verify | `doc#block` resolves to a scroll-and-highlight in the app |
 | **Propose** an edit that a human reviews | Suggestions as first-class objects, not direct writes |
 
-These are served by an **MCP server over the workspace**, treated as a primary surface and not an integration. Tools: `search_docs`, `read_doc`, `read_block`, `comment`, `suggest_edit`. Agents get scoped, authenticated access to a set of docs — no scraping, no crawling, no per-tool connector.
+### The interface is a CLI, plus skills
 
-An agent's permissions are the same object as a human's. An agent that can read `/policies` and suggest on `/specs` but not write anywhere is a normal thing to express.
+Not a server. Agents already have a shell — that's the one capability every harness has in common, and it's the only integration surface that costs nothing to adopt.
+
+```
+galley pull ./docs                     # mirror a workspace to disk
+galley read specs/checkout-v2          # clean Markdown on stdout
+galley read specs/checkout-v2#a1b2c3   # one block
+galley search "refund policy"          # matching blocks, as doc#block refs
+galley comment <ref> "..."             # anchored comment
+galley suggest <ref> --from patch.md   # propose an edit
+galley status                          # what changed, what's stale, what's pending
+```
+
+Two things follow from this that a server surface doesn't give you:
+
+**`galley pull` means the best agent interface is no interface.** Mirror the workspace and the docs are just files in a folder. Every coding agent already knows how to read files — no tool definition, no connector, no protocol. The CLI is for the operations a filesystem can't express: addressing a block, searching semantically, posting a comment, proposing an edit.
+
+**Stdout composes.** `galley read spec | claude -p "implement this"` is a real workflow. So is a CI job that runs `galley status --stale` and fails when a doc that feeds production agents has drifted from the code. Long-lived connections can't do that; a binary can.
+
+**Skills carry the etiquette that the CLI can't enforce.** The CLI gives an agent *capability*; a Galley skill gives it *behavior* — the citation convention, the comment budget, suggestion-before-write, how to scope a rewrite so block identity survives. Skills are files, so they version with the workspace and travel to whatever harness the user runs. Ship a first-party one, let teams fork it.
+
+**Permissions.** `galley auth login` issues a scoped token. An agent's permissions are the same object as a human's: read `/policies`, suggest on `/specs`, write nowhere is a normal thing to express. Every command is auditable and replayable, which a persistent session is not.
+
+The honest cost: a CLI can't push. An agent can't be *notified* that someone replied to its comment — it has to be run again and poll `galley status`. For the workflows above that's fine, and if a subscription surface is ever needed it can wrap the same commands.
 
 ---
 
@@ -107,7 +129,7 @@ An agent's permissions are the same object as a human's. An agent that can read 
                                       ↓
                               ┌────────────────┐
    browser session  ←────────→│  CRDT (doc)    │
-   agent / MCP      ←────────→│  authoritative │
+   agent via CLI    ←────────→│  authoritative │
    mobile           ←────────→└────────────────┘
                                       ↓
                               sidecar store
@@ -141,7 +163,7 @@ Normalization is a thing the user agrees to when they connect a file, not a bug 
 
 The mechanism, in priority order — the ordering is the whole point:
 
-1. **IDs are authoritative in the CRDT.** Any edit made through Galley — by a human, or by an agent through the MCP surface — carries block identity through the edit, because the editor knows which paragraph it is *while* it rewrites it. This is the path that must survive Walkthrough B.
+1. **IDs are authoritative in the CRDT.** Any edit made through Galley — by a human, or by an agent through the CLI — carries block identity through the edit, because the editor knows which paragraph it is *while* it rewrites it. This is the path that must survive Walkthrough B.
 2. **Fuzzy re-anchoring is the fallback**, used only for edits that arrive through the filesystem, where identity was never in the payload. Content-similarity plus structural position, with an explicit confidence threshold.
 3. **Below threshold, the anchor is orphaned, not guessed.** Orphaned comments surface in a per-doc tray with their last-known text, reattachable in one click. Silently reattaching a comment to the wrong paragraph is worse than losing it.
 
@@ -165,7 +187,7 @@ owner: priya
 ---
 ```
 
-One line, valid YAML, invisible in any renderer that shows frontmatter as metadata. It buys identity across renames, moves, and copies, and it's what the MCP `galley://` scheme resolves against.
+One line, valid YAML, invisible in any renderer that shows frontmatter as metadata. It buys identity across renames, moves, and copies, and it's what a `doc#block` reference resolves against.
 
 ### Filesystem events: magnitude changes the semantic
 
@@ -239,8 +261,8 @@ Ordered by **uncertainty, not dependency**. Build the thing that can kill you fi
 **1. The splicing round-trip engine + WYSIWYG, single local file.**
 No multiplayer, no comments, no agents, no email. Success condition: open a real folder of documents, edit for an hour, and `git diff` shows only what you typed. Weeks, not quarters. If this fails, nothing downstream matters.
 
-**2. Block identity + the MCP read surface.**
-`read_doc`, `read_block`, `search_docs`. Point a coding agent at it and run Walkthrough A end to end. This is the first moment the product is *for* something.
+**2. Block identity + the CLI read path.**
+`galley pull`, `read`, `search`, and a first-party skill. Point a coding agent at it and run Walkthrough A end to end. This is the first moment the product is *for* something — and because the CLI is a binary over the same store the app uses, it costs days, not a quarter.
 
 **3. Comments + suggestions + the review UI.**
 Walkthrough B. Identity has to survive an agent rewriting a commented paragraph — that's the acceptance test, and it validates every decision in the block-identity section.
