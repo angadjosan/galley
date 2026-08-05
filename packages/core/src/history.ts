@@ -158,7 +158,31 @@ export class History {
   private readonly checkpoints = new Map<string, Checkpoint>();
   private readonly attribution = new Map<string, BlockAttribution>();
 
-  constructor(readonly maxRevisions = 500) {}
+  /** Sum of `content` lengths currently retained. Maintained incrementally. */
+  private bytes = 0;
+
+  /**
+   * Two bounds, because a count alone is not one.
+   *
+   * Every revision holds the document's whole bytes (see the note above), so
+   * 500 revisions of a 10 KB document is 5 MB — measured at 493–498× the
+   * document — and 256 of those open at once is over a gigabyte of live strings
+   * backing a couple of megabytes of documents. The count bound is what a
+   * person expects of a timeline; the byte bound is what keeps a large document
+   * from turning that expectation into a memory leak. A floor keeps the
+   * timeline useful for a document large enough that the byte bound bites
+   * first.
+   */
+  constructor(
+    readonly maxRevisions = 500,
+    readonly maxBytes = 4 * 1024 * 1024,
+    readonly minRevisions = 20,
+  ) {}
+
+  /** Bytes of document content currently retained. For tests and metrics. */
+  get retainedBytes(): number {
+    return this.bytes;
+  }
 
   get length(): number {
     return this.revisions.length;
@@ -166,6 +190,7 @@ export class History {
 
   record(revision: Revision): void {
     this.revisions.push(revision);
+    this.bytes += revision.content.length;
 
     for (const blockId of revision.blockIds) {
       if (blockId.startsWith('@')) continue; // an unanchored block has no identity to attribute
@@ -223,18 +248,24 @@ export class History {
     for (const checkpoint of checkpoints) this.addCheckpoint(checkpoint);
   }
 
+  private overBudget(): boolean {
+    if (this.revisions.length <= this.minRevisions) return false;
+    return this.revisions.length > this.maxRevisions || this.bytes > this.maxBytes;
+  }
+
   private evict(): void {
-    if (this.revisions.length <= this.maxRevisions) return;
+    if (!this.overBudget()) return;
     const protectedTickets = new Set(this.listCheckpoints().map((c) => c.ticket));
     // Drop from the oldest end, skipping anything a checkpoint names.
     let index = 0;
-    while (this.revisions.length > this.maxRevisions && index < this.revisions.length) {
+    while (this.overBudget() && index < this.revisions.length) {
       const revision = this.revisions[index]!;
       if (protectedTickets.has(revision.ticket)) {
         index++;
         continue;
       }
       this.revisions.splice(index, 1);
+      this.bytes -= revision.content.length;
     }
   }
 }

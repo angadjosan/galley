@@ -89,6 +89,24 @@ export function build(options: ServerOptions = {}): GalleyServer {
     });
   });
 
+  // The deadline was constructed and disposed and never once consulted, so
+  // `requestBudgetMs` bounded nothing: a run with a 1 ms budget and a 33 ms p50
+  // returned fifteen 200s and zero 504s. Every request paid for an
+  // AbortController and a timer to hold a value nobody read.
+  //
+  // These two hooks bound what a single-threaded server can actually bound:
+  // time spent *waiting* — in the admission queue before the handler, and
+  // behind the document's sequencer during it. A request that blew its budget
+  // answers 504 rather than spending more work on a reply whose caller has
+  // very likely given up.
+  app.addHook('preHandler', async (request) => {
+    request.deadline?.assertLive();
+  });
+  app.addHook('preSerialization', async (request, _reply, payload) => {
+    request.deadline?.assertLive();
+    return payload;
+  });
+
   app.setErrorHandler(async (error: Error, _request, reply) => {
     await reply.code(statusFor(error)).send({ error: error.message, kind: error.name });
   });
@@ -597,7 +615,7 @@ export function build(options: ServerOptions = {}): GalleyServer {
             // edits, re-sending operations every client already had.
             const version = actor.document.versionVector();
             for (const peer of hub.connectionsFor(actor.docId)) peer.lastVersion = version;
-            await workspace.persist(actor.docId, true);
+            workspace.markChanged(actor.docId);
           }
         } catch (err) {
           connection.offer({

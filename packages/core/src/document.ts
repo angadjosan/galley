@@ -7,7 +7,7 @@ import {
   type BlockOp,
   type ParsedDocument,
 } from '@galley/markdown';
-import { assemble, segment, type Segment, type SegmentedDocument } from './segments.js';
+import { assemble, segment, segmentParsed, type Segment, type SegmentedDocument } from './segments.js';
 import { minimalSplice, reconcile, type ReconcileStep } from './reconcile.js';
 
 const SEGMENTS = 'segments';
@@ -105,6 +105,7 @@ export class GalleyDocument {
     if (options.title) meta.set('title', options.title);
     if (options.owner) meta.set('owner', options.owner);
     meta.set('createdAt', new Date().toISOString());
+    release(meta);
 
     doc.writeSegmented(segment(withIdentity, () => blockId()));
     loro.commit();
@@ -123,20 +124,39 @@ export class GalleyDocument {
   // Reading
   // -------------------------------------------------------------------------
 
+  /**
+   * Read one key from the meta map and release the handle.
+   *
+   * `loro.getMap(META)` mints a wasm-bindgen handle on every call, and these
+   * three getters are read on essentially every request. Left to the JavaScript
+   * collector they retained 97 KB per `validateUpdate` — the same leak class as
+   * D31, hiding behind a one-line getter rather than a loop.
+   */
+  private meta(key: string): string | undefined {
+    const map = this.loro.getMap(META);
+    try {
+      return map.get(key) as string | undefined;
+    } finally {
+      release(map);
+    }
+  }
+
   get docId(): string {
-    return (this.loro.getMap(META).get('galleyId') as string | undefined) ?? '';
+    return this.meta('galleyId') ?? '';
   }
 
   get title(): string | undefined {
-    return this.loro.getMap(META).get('title') as string | undefined;
+    return this.meta('title');
   }
 
   get owner(): string | undefined {
-    return this.loro.getMap(META).get('owner') as string | undefined;
+    return this.meta('owner');
   }
 
   setMeta(key: string, value: string): void {
-    this.loro.getMap(META).set(key, value);
+    const map = this.loro.getMap(META);
+    map.set(key, value);
+    release(map);
     this.loro.commit();
   }
 
@@ -220,7 +240,12 @@ export class GalleyDocument {
     const before = this.segmented();
     if (assemble(before) === next) return { source: next, steps: [] };
 
-    const after = segment(next, () => '');
+    // Parsed here rather than inside `segment` so the result can be handed to
+    // the cache below. Every mutation parses twice — once to resolve the ops
+    // against the current bytes, once to segment the result — and parsing is
+    // ~52 µs per block, the largest single term in an edit.
+    const afterParsed = parseDocument(next);
+    const after = segmentParsed(afterParsed, () => '');
     const steps = reconcile(before.segments, after.segments);
     const list = this.segmentList();
 
@@ -231,6 +256,7 @@ export class GalleyDocument {
       preamble.delete(preambleSplice.index, preambleSplice.deleteCount);
       if (preambleSplice.insert) preamble.insert(preambleSplice.index, preambleSplice.insert);
     }
+    release(preamble);
 
     // Deletes descend by original index so earlier indices stay valid.
     const deletes = steps
@@ -292,8 +318,20 @@ export class GalleyDocument {
       release(map);
     }
 
+    release(list);
     this.loro.commit();
-    return { source: this.toMarkdown(), steps };
+    const source = this.toMarkdown();
+    // The commit moved the version, so this is a fresh entry. Seeding it with
+    // the parse we already did halves the parse work of the *next* mutation —
+    // but only when reassembly reproduced `next` exactly. A cache seeded with a
+    // parse of bytes the document does not hold is a correctness bug, and the
+    // comparison that rules it out is one string equality.
+    if (source === next) {
+      const entry = this.cacheEntry();
+      entry.markdown ??= source;
+      entry.parsed ??= afterParsed;
+    }
+    return { source, steps };
   }
 
   /** Set or update frontmatter keys, preserving the rest of the block. */
@@ -347,18 +385,27 @@ export class GalleyDocument {
     } catch (err) {
       return { ok: false, reason: err instanceof Error ? err.message : 'unreadable update' };
     }
-    if (probe.docId !== this.docId) {
-      return { ok: false, reason: 'this update belongs to a different document' };
+    try {
+      if (probe.docId !== this.docId) {
+        return { ok: false, reason: 'this update belongs to a different document' };
+      }
+      const markdown = probe.toMarkdown();
+      const frontmatterBlocks = (markdown.match(/^---$/gm) ?? []).length;
+      if (frontmatterBlocks > 2) {
+        return { ok: false, reason: 'this update would add a second frontmatter block' };
+      }
+      if ((markdown.match(/^galley:/gm) ?? []).length > 1) {
+        return { ok: false, reason: 'this update would give the document a second identity' };
+      }
+      return { ok: true };
+    } finally {
+      // The probe is a whole second copy of the document in WASM memory, and
+      // this runs once per inbound frame per connected client — the hottest
+      // path in the product. Leaving it to the JavaScript collector retained
+      // up to 392 KB per keystroke on a 320-block document, because V8 sizes
+      // its collections by the JavaScript heap and a CRDT barely moves it.
+      probe.dispose();
     }
-    const markdown = probe.toMarkdown();
-    const frontmatterBlocks = (markdown.match(/^---$/gm) ?? []).length;
-    if (frontmatterBlocks > 2) {
-      return { ok: false, reason: 'this update would add a second frontmatter block' };
-    }
-    if ((markdown.match(/^galley:/gm) ?? []).length > 1) {
-      return { ok: false, reason: 'this update would give the document a second identity' };
-    }
-    return { ok: true };
   }
 
   /** Apply remote operations. Returns whether anything changed. */
@@ -410,9 +457,12 @@ export class GalleyDocument {
   }
 
   private writeSegmented(doc: SegmentedDocument): void {
-    this.loro.getText(PREAMBLE).insert(0, doc.preamble);
+    const preamble = this.loro.getText(PREAMBLE);
+    preamble.insert(0, doc.preamble);
+    release(preamble);
     const list = this.segmentList();
     doc.segments.forEach((s, i) => this.insertSegment(list, i, s.sid, s.text, s.separator));
+    release(list);
   }
 
   private insertSegment(

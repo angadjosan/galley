@@ -102,18 +102,17 @@ describe('forced full re-serialization', () => {
   //
   // Definitions and footnote definitions have no schema node and survive only
   // via the `source` attribute this test deliberately clears, so they are
-  // dropped from the comparison. HTML blocks come back as `code` — that is a
-  // real defect, pinned below, and it is folded in here rather than hidden so
-  // the block *count* stays checked.
+  // dropped from the comparison. HTML blocks used to come back as `code` and
+  // were folded in here; the editor now carries them in a `raw_block` node that
+  // holds the exact source, so the fold is gone and `html` must stay `html`.
   const IGNORED = new Set(['definition', 'footnoteDefinition']);
-  const foldKnownBug = (type: string) => (type === 'html' ? 'code' : type);
 
   it.each(corpus)('$name keeps its block structure', ({ source }) => {
     const loaded = markdownToDoc(source);
     const out = forceReserialize(loaded);
     const before = parseDocument(source)
       .blocks.filter((b) => b.depth === 0 && !IGNORED.has(b.type))
-      .map((b) => foldKnownBug(b.type));
+      .map((b) => b.type);
     const after = parseDocument(out)
       .blocks.filter((b) => b.depth === 0 && !IGNORED.has(b.type))
       .map((b) => b.type);
@@ -123,14 +122,14 @@ describe('forced full re-serialization', () => {
   // Claim: re-serialized output is itself stable — serializing it again is a
   // fixed point, so an edited document does not keep drifting on every save.
   //
-  // Four corpus entries fail this today, each for a reason pinned below with a
-  // minimal reproduction: a stray CR on every block of a CRLF document, a pipe
-  // inside an inline-code span in a table cell, and a spurious line-start
-  // escape injected inside emphasis. They are named here rather than filtered
-  // by a predicate so that fixing one turns this list into a lie loudly.
+  // Three corpus entries fail this today, each for a reason pinned below with a
+  // minimal reproduction: an escaped pipe in a plain table cell, and a spurious
+  // line-start escape injected inside emphasis. They are named here rather than
+  // filtered by a predicate so that fixing one turns this list into a lie
+  // loudly — which is exactly what happened to `04-crlf.md`, whose stray-CR
+  // drift is fixed and which is therefore no longer listed.
   const DRIFTS = new Set([
-    '04-crlf.md', // stray CR — see KNOWN BUG below
-    '08-tables-refs-links.md', // pipe inside inline code in a table cell
+    '08-tables-refs-links.md', // `\|` in a plain table cell — see KNOWN BUG below
     'repo/idea.md', // spurious line-start escape inside emphasis
     'repo/decisions.md', // spurious line-start escape inside emphasis
   ]);
@@ -208,19 +207,18 @@ describe('degenerate documents through the editor', () => {
 
 /**
  * ============================================================================
- * KNOWN BUGS.
+ * REGRESSIONS. Defects that have been fixed, pinned with the reproduction that
+ * was sharpest while each was live.
  * ============================================================================
  */
-describe('KNOWN BUG: a body-less document gains a newline on load and save', () => {
-  // When a document has no top-level blocks, `markdownToDoc` sets `preamble` to
-  // the *entire* source and then pushes a placeholder empty paragraph so the
-  // schema is satisfied. `docToMarkdown` emits the preamble, the empty
+describe('a body-less document does not gain a newline on load and save', () => {
+  // This used to grow the file by one newline per cycle, which is why the case
+  // is pinned. When a document has no top-level blocks, `markdownToDoc` sets
+  // `preamble` to the *entire* source and pushes a placeholder empty paragraph
+  // so the schema is satisfied. `docToMarkdown` emitted the preamble, the empty
   // paragraph's serialization (nothing), and then the last-child separator —
-  // which is the document's final newline. The newline is therefore emitted
-  // twice, and a frontmatter-only file grows a blank line every time it is
-  // opened and saved.
-  // apps/web/src/editor/convert.ts:80 (preamble) and :103 (placeholder), with
-  // the extra separator added at :318.
+  // which is the document's final newline — so the newline came out twice and a
+  // frontmatter-only file grew a blank line every time it was opened and saved.
   const cases: [string, string][] = [
     ['only frontmatter', '---\ntitle: x\n---\n'],
     ['frontmatter then a blank line', '---\ntitle: x\n---\n\n'],
@@ -228,12 +226,12 @@ describe('KNOWN BUG: a body-less document gains a newline on load and save', () 
     ['a single newline', '\n'],
   ];
 
-  it.fails.each(cases)('%s survives load and save', (_name, source) => {
+  it.each(cases)('%s survives load and save', (_name, source) => {
     const loaded = markdownToDoc(source);
     expect(docToMarkdown(loaded.doc, loaded)).toBe(source);
   });
 
-  it('demonstrates the defect concretely, and that it compounds', () => {
+  it('does not compound over repeated open/save cycles', () => {
     let current = '---\ntitle: x\n---\n';
     const seen = [current];
     for (let i = 0; i < 3; i++) {
@@ -241,27 +239,28 @@ describe('KNOWN BUG: a body-less document gains a newline on load and save', () 
       current = docToMarkdown(loaded.doc, loaded);
       seen.push(current);
     }
-    // One extra newline per open/save cycle; the file grows without bound.
+    // Every cycle is a fixed point; the file does not grow.
     expect(seen).toEqual([
       '---\ntitle: x\n---\n',
-      '---\ntitle: x\n---\n\n',
-      '---\ntitle: x\n---\n\n\n',
-      '---\ntitle: x\n---\n\n\n\n',
+      '---\ntitle: x\n---\n',
+      '---\ntitle: x\n---\n',
+      '---\ntitle: x\n---\n',
     ]);
   });
 });
 
-describe('KNOWN BUG: editing a paragraph destroys reference links, footnotes and inline HTML', () => {
-  // `inlineToNodes` (apps/web/src/editor/convert.ts:239) has no case for
-  // `linkReference`, `imageReference` or `footnoteReference`, so they fall into
-  // the `default` branch, which recurses into their children and drops the
-  // reference syntax entirely. And `case 'html'` (:283) turns inline HTML into
-  // a plain *text* node, so the serializer escapes it on the way back out.
+describe('editing a paragraph preserves reference links, footnotes and inline HTML', () => {
+  // These used to be destroyed on edit, which is why the cases are pinned.
+  // `inlineToNodes` had no case for `linkReference`, `imageReference` or
+  // `footnoteReference`, so they fell into the `default` branch, which recursed
+  // into their children and dropped the reference syntax entirely — an image
+  // reference lost even its alt text. And `case 'html'` turned inline HTML into
+  // a plain *text* node, so the serializer escaped it on the way back out.
   //
-  // None of this is visible until the block is edited — an untouched block is
-  // copied from `source`. The moment a user types one character in a paragraph
-  // containing a reference link, the link becomes plain text and the `[ref]:`
-  // definition below is left dangling.
+  // None of it was visible until the block was edited, because an untouched
+  // block is copied from `source`: typing one character in a paragraph
+  // containing a reference link turned the link into plain text and left the
+  // `[ref]:` definition below dangling.
   const cases: [string, string, string][] = [
     [
       'reference link',
@@ -273,77 +272,122 @@ describe('KNOWN BUG: editing a paragraph destroys reference links, footnotes and
     ['inline HTML', 'An <span class="x">inline html</span> element.\n', '<span class="x">'],
   ];
 
-  it.fails.each(cases)('%s survives an edit to its paragraph', (_name, source, fragment) => {
+  it.each(cases)('%s survives an edit to its paragraph', (_name, source, fragment) => {
     expect(editBlock(source, 0)).toContain(fragment);
   });
 
-  it('demonstrates the defect concretely', () => {
-    expect(editBlock('Term reference to [the spec][spec] here.\n\n[spec]: https://example.com\n', 0)).toContain(
-      'Term reference to the spec here. x',
+  it('pins the exact bytes an edit produces for each of them', () => {
+    // Previously: "Term reference to the spec here. x", with the definition
+    // below left dangling.
+    expect(editBlock('Term reference to [the spec][spec] here.\n\n[spec]: https://example.com\n', 0)).toBe(
+      'Term reference to [the spec][spec] here. x\n\n[spec]: https://example.com\n',
     );
-    expect(editBlock('Body with a footnote[^1] here.\n\n[^1]: note\n', 0)).toContain(
-      'Body with a footnote here. x',
+    // Previously: "Body with a footnote here. x".
+    expect(editBlock('Body with a footnote[^1] here.\n\n[^1]: note\n', 0)).toBe(
+      'Body with a footnote[^1] here. x\n\n[^1]: note\n',
     );
-    // The image reference loses even its alt text.
-    expect(editBlock('An image ![alt][img] here.\n\n[img]: https://example.com/i.png\n', 0)).toContain(
-      'An image  here. x',
+    // Previously: "An image  here. x" — the image reference lost even its alt.
+    expect(editBlock('An image ![alt][img] here.\n\n[img]: https://example.com/i.png\n', 0)).toBe(
+      'An image ![alt][img] here. x\n\n[img]: https://example.com/i.png\n',
     );
-    // Inline HTML comes back escaped, so it renders as literal angle brackets.
-    expect(editBlock('An <span class="x">inline html</span> element.\n', 0)).toContain(
-      '\\<span class="x"\\>',
+    // Previously: `\<span class="x"\>` — escaped, so it rendered as literal
+    // angle brackets rather than as markup.
+    expect(editBlock('An <span class="x">inline html</span> element.\n', 0)).toBe(
+      'An <span class="x">inline html</span> element. x\n',
     );
   });
 });
 
-describe('KNOWN BUG: editing an HTML block turns it into a fenced code block', () => {
-  // `flowToNode` renders an `html` block as a `code_block` with `lang: 'html'`
-  // (convert.ts:197) so that it is visible and editable, relying on the
-  // `source` attribute to re-emit it verbatim. But `nodeToFlow` maps
-  // `code_block` back to an mdast `code` node (convert.ts:335), so as soon as
-  // the block is edited it is serialized as a ```html fence. The HTML stops
-  // being HTML: it renders as a code listing everywhere.
+describe('an HTML block stays HTML through the editor', () => {
+  // This used to turn into a fenced code block, which is why the case is
+  // pinned. `flowToNode` rendered an `html` block as a `code_block` with
+  // `lang: 'html'` so it was visible and editable, relying on the `source`
+  // attribute to re-emit it verbatim — but `nodeToFlow` mapped `code_block`
+  // back to an mdast `code` node, so the moment the block was touched it was
+  // serialized as a ```html fence and stopped being HTML.
+  //
+  // The editor now carries HTML in a dedicated `raw_block` node whose `raw`
+  // attribute holds the exact source, so it survives even when `source` is
+  // cleared and the block is fully re-serialized.
   const source = '<div class="b">\n  <p>hi</p>\n</div>\n';
 
-  it.fails('keeps an edited HTML block as HTML', () => {
-    const out = editBlock(source, 0);
+  it('keeps an HTML block as HTML through a full re-serialization', () => {
+    const out = forceReserialize(markdownToDoc(source));
+    expect(out).toBe(source);
     expect(parseDocument(out).blocks[0]!.type).toBe('html');
   });
 
-  it('demonstrates the defect concretely', () => {
-    const out = editBlock(source, 0);
-    expect(out).toBe('```html\n<div class="b">\n  <p>hi</p>\n</div> x\n```\n');
-    expect(parseDocument(out).blocks[0]!.type).toBe('code');
+  it('holds it in a raw_block rather than a code_block', () => {
+    // Previously this node was a `code_block` with `lang: 'html'`, and an edit
+    // produced '```html\n<div class="b">\n  <p>hi</p>\n</div> x\n```\n'.
+    const node = markdownToDoc(source).doc.child(0);
+    expect(node.type.name).toBe('raw_block');
+    expect(node.attrs.raw).toBe('<div class="b">\n  <p>hi</p>\n</div>');
+    // A raw block is not a text block, so `editBlock` cannot append to it and
+    // the bytes come back untouched.
+    expect(editBlock(source, 0)).toBe(source);
   });
 });
 
-describe('KNOWN BUG: a table cell loses a pipe escaped inside an inline-code span', () => {
-  // `serializeInline` emits an `inlineCode` value verbatim
-  // (packages/markdown/src/inline.ts:63) and `serializeTable`
-  // (packages/markdown/src/serialize.ts:93) does no cell-level escaping of its
-  // own. A `|` inside a code span therefore comes out unescaped, and the next
-  // parse reads it as a cell boundary: the table gains a column, the code span
-  // is torn in half, and GFM then truncates the over-long row so the second
-  // half of the span is deleted outright.
+describe('a table cell keeps a pipe escaped inside an inline-code span', () => {
+  // This used to tear the code span in half, which is why the case is pinned.
+  // `serializeInline` emitted an `inlineCode` value verbatim and
+  // `serializeTable` did no cell-level escaping of its own, so a `|` inside a
+  // code span came out unescaped; the next parse read it as a cell boundary,
+  // the table gained a column, and GFM truncated the over-long row so the
+  // second half of the span was deleted outright.
+  //
+  // Note this is fixed only for the code-span case. An escaped pipe in *plain*
+  // cell text is still mis-escaped — see the KNOWN BUG below.
   const source = '| a | b |\n| --- | --- |\n| `x \\| y` | z |\n';
 
-  it.fails('keeps the escaped pipe inside the code span', () => {
+  it('keeps the escaped pipe inside the code span', () => {
     const out = forceReserialize(markdownToDoc(source));
     expect(out).toContain('`x \\| y`');
   });
 
-  it('demonstrates the defect concretely', () => {
+  it('re-serializes to a stable two-column table', () => {
+    // Previously: '| a       | b   |\n| ------- | --- |\n| `x | y` | z   |\n',
+    // which reparsed as a three-column table.
     const once = forceReserialize(markdownToDoc(source));
-    // The escape is dropped, so the row now has three cells rather than two.
-    expect(once).toBe('| a       | b   |\n| ------- | --- |\n| `x | y` | z   |\n');
-    // On the next round the torn code span is escaped as literal backticks and
-    // the table has silently grown a column.
+    expect(once).toBe('| a        | b   |\n| -------- | --- |\n| `x \\| y` | z   |\n');
+    // And it is a fixed point, so the table does not keep growing a column.
     const twice = forceReserialize(markdownToDoc(once));
-    expect(twice).toContain('\\`x');
+    expect(twice).toBe(once);
     const table = parseDocument(twice).blocks.find((b) => b.type === 'table')!;
-    expect(table.attrs.columns).toBe(3);
+    expect(table.attrs.columns).toBe(2);
   });
 });
 
+describe('a CRLF document keeps its carriage returns through re-serialization', () => {
+  // This used to lose a CR from every block, which is why the case is pinned.
+  // `segmentParsed` ended a segment at `lineEnd`, which returns the index *of*
+  // the newline. On a CRLF document that index is one past the `\r`, so the
+  // carriage return sat inside the segment's *text* and the separator began
+  // with a bare `\n`. While a block was unchanged its source was copied and
+  // nothing showed; the moment it was re-serialized the `\r` was not
+  // regenerated, and the file ended up with mixed line endings — LF where a
+  // block ended, CRLF where a separator did.
+  const source = '# T\r\n\r\nBody.\r\n';
+
+  it('keeps CRLF endings when a block is re-serialized', () => {
+    expect(forceReserialize(markdownToDoc(source))).toBe(source);
+  });
+
+  it('leaves no stray CR in the segment text', () => {
+    // Previously: '# T\n\r\nBody.\n' — the heading's own terminator became LF
+    // while the separator stayed CRLF.
+    const out = forceReserialize(markdownToDoc(source));
+    expect(out).toBe('# T\r\n\r\nBody.\r\n');
+    expect(out).not.toMatch(/[^\r]\n/);
+  });
+});
+
+/**
+ * ============================================================================
+ * KNOWN BUGS.
+ * ============================================================================
+ */
 describe('KNOWN BUG: a line-start escape is injected inside emphasis', () => {
   // `escapeText` applies `LINE_START_ESCAPE` to every text node it is handed
   // (packages/markdown/src/inline.ts:30) without knowing whether that node
@@ -365,26 +409,33 @@ describe('KNOWN BUG: a line-start escape is injected inside emphasis', () => {
   });
 });
 
-describe('KNOWN BUG: a CRLF document loses a carriage return from every block', () => {
-  // `segmentParsed` ends a segment at `lineEnd`, which returns the index *of*
-  // the newline (packages/core/src/segments.ts:94). On a CRLF document that
-  // index is one past the `\r`, so the carriage return is inside the segment's
-  // text and the separator begins with a bare `\n`. While the block is
-  // unchanged its source is copied and nothing shows; the moment it is
-  // re-serialized the `\r` is not regenerated, and the file ends up with mixed
-  // line endings — LF where a block ends, CRLF where a separator does.
-  it.fails('keeps CRLF endings when a block is re-serialized', () => {
-    const source = '# T\r\n\r\nBody.\r\n';
+describe('KNOWN BUG: an escaped pipe in plain table cell text is re-escaped as a literal backslash', () => {
+  // A `\|` in a cell that is *not* inside a code span comes back as `\\|`: the
+  // backslash is escaped as a literal backslash and the pipe is then left bare.
+  // The next parse reads that pipe as a cell boundary. In a body row the table
+  // silently grows a column; in the *header* row the column count no longer
+  // matches the delimiter row, so GFM stops seeing a table at all and the whole
+  // thing degrades to a paragraph.
+  //
+  // This is why `08-tables-refs-links.md` is still in `DRIFTS` above, and why
+  // its structural check fails.
+  it.fails('keeps an escaped pipe in a plain header cell', () => {
+    const source = '| left \\| pipe | b |\n| --- | --- |\n| a | c |\n';
     const out = forceReserialize(markdownToDoc(source));
-    expect(out).toBe(source);
+    expect(parseDocument(out).blocks.map((b) => b.type)).toEqual(['table']);
   });
 
-  it('demonstrates that the stray CR is in the segment text', () => {
-    const source = '# T\r\n\r\nBody.\r\n';
-    const out = forceReserialize(markdownToDoc(source));
-    // The heading's own terminator became LF; the separator stayed CRLF.
-    expect(out).toBe('# T\n\r\nBody.\n');
-    expect(out).toMatch(/[^\r]\n\r\n/);
+  it('demonstrates the defect concretely, in a header cell and in a body cell', () => {
+    const header = '| left \\| pipe | b |\n| --- | --- |\n| a | c |\n';
+    const once = forceReserialize(markdownToDoc(header));
+    expect(once).toBe('| left \\\\| pipe | b   |\n| ------------- | --- |\n| a             | c   |\n');
+    // The table is gone entirely — it reparses as a single paragraph.
+    expect(parseDocument(once).blocks.map((b) => b.type)).toEqual(['paragraph']);
+
+    const body = '| a | b |\n| --- | --- |\n| x \\| y | z |\n';
+    expect(forceReserialize(markdownToDoc(body))).toBe(
+      '| a       | b   |\n| ------- | --- |\n| x \\\\| y | z   |\n',
+    );
   });
 });
 

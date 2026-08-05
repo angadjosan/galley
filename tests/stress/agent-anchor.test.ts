@@ -394,21 +394,22 @@ describe('randomized adversarial re-anchoring', () => {
 
 /**
  * ============================================================================
- * KNOWN BUGS.
+ * REGRESSIONS. Each of these pins a defect that has been fixed, using the
+ * sharpest reproduction that existed while it was live.
  * ============================================================================
  */
-describe('KNOWN BUG: an unedited document orphans every anchor when paragraphs repeat', () => {
-  // `Fingerprint.textHash` is documented as the "Exact-match fast path"
-  // (packages/anchor/src/fingerprint.ts:19) but `scorePair`
-  // (packages/anchor/src/reanchor.ts:276) never reads it. Nothing in the
-  // pipeline distinguishes "this is literally the same text" from "this is very
-  // similar text", so a run of near-identical paragraphs is ambiguous even when
-  // an exact match exists — and the ambiguity margin then orphans all of them.
+describe('an unedited document keeps every anchor when paragraphs repeat', () => {
+  // This used to orphan every anchor, which is why the case is pinned.
+  // `Fingerprint.textHash` was documented as the "Exact-match fast path" but
+  // nothing in the pipeline read it, so a run of near-identical paragraphs was
+  // ambiguous even when an exact match existed — and the ambiguity margin then
+  // orphaned all of them. Re-anchoring the document below against *itself*
+  // returned a survival rate of zero, against the `reanchor.ts` gate of ">=95%
+  // survival across a corpus of realistic agent rewrites".
   //
-  // The document below has not been edited at all. Re-anchoring it against
-  // itself returns a survival rate of **zero**, with a self-match confidence of
-  // 1.000. `reanchor.ts:41` states the gate as ">=95% survival across a corpus
-  // of realistic agent rewrites"; this is 0% across no rewrite whatsoever.
+  // `reanchor.ts` now runs an exact structural pass (rule 1b) before the fuzzy
+  // scoring: same type, same text hash, same index, same neighbour hashes is
+  // taken as the same block and claimed one-to-one.
   const runbook =
     '# Runbook\n\n' +
     'Step 1: restart the payment service and confirm the health endpoint is green.\n\n' +
@@ -425,45 +426,44 @@ describe('KNOWN BUG: an unedited document orphans every anchor when paragraphs r
     return reanchor(anchors, parseDocument(runbook));
   }
 
-  it.fails('keeps every anchor when the document did not change', () => {
+  it('keeps every anchor when the document did not change', () => {
     expect(selfAnchor().survivalRate).toBe(1);
   });
 
-  it('demonstrates the defect concretely', () => {
+  it('resolves each repeated paragraph to its own block, one-to-one', () => {
     const result = selfAnchor();
-    expect(result.survivalRate).toBe(0);
-    expect(result.resolutions.map((r) => r.method)).toEqual([
-      'orphan-ambiguous',
-      'orphan-ambiguous',
-      'orphan-ambiguous',
-    ]);
-    // The best candidate for the first anchor is a perfect self-match, and it
-    // is thrown away anyway.
-    expect(result.resolutions[0]!.confidence).toBeCloseTo(1, 10);
-    // The text hashes are distinct, so an exact-match pass would resolve all
-    // three unambiguously.
+    // Every anchor lands on the block it came from, in order, at full
+    // confidence — and no block is claimed twice.
+    expect(result.resolutions.map((r) => r.blockIndex)).toEqual([1, 2, 3]);
+    expect(result.resolutions.map((r) => r.method)).toEqual(['fuzzy', 'fuzzy', 'fuzzy']);
+    for (const r of result.resolutions) expect(r.confidence).toBeCloseTo(1, 10);
+    // The exact pass is what makes that possible: the text hashes are distinct,
+    // so "literally the same text" is decidable without the fuzzy scorer ever
+    // having to break a tie between three near-identical paragraphs.
     const prints = fingerprintDocument(parseDocument(runbook));
     const hashes = prints.filter((_, i) => i > 0).map((p) => p.textHash);
     expect(new Set(hashes).size).toBe(hashes.length);
   });
 });
 
-describe('KNOWN BUG: a deleted list is claimed by the list that absorbed its items', () => {
-  // `textSimilarity` (packages/anchor/src/fingerprint.ts:151) falls back to the
-  // overlap coefficient when both shingle sets are large and their size ratio
-  // is under `OVERLAP_MAX_SIZE_RATIO` (2.5). Its own comment names the case it
-  // is supposed to exclude — "a deleted block's sentences were folded into a
-  // surviving neighbour" — but the guard is on set size, and two lists merged
-  // into one stay well inside 2.5x. Containment then scores 1.0, discounted to
-  // 0.95, and the deleted list's anchor attaches to the merged one.
+describe('a deleted list is not claimed by the list that absorbed its items', () => {
+  // This used to misattach, which is why the case is pinned. `textSimilarity`
+  // fell back to the overlap coefficient whenever both shingle sets were large
+  // and their size ratio was under `OVERLAP_MAX_SIZE_RATIO` (2.5). Two lists
+  // merged into one stay well inside 2.5x, so containment scored 1.0,
+  // discounted to 0.95, and the deleted list's anchor attached to the merged
+  // one. It is also what made `packages/anchor/test/benchmark.test.ts` report
+  // four misattachments at seed 0xa9c40 against a gate of zero.
   //
   // Container blocks are the ones that matter here: a list cannot carry an
   // inline marker at all (see the marker rationale in
   // packages/markdown/src/parse.ts:15), so it depends entirely on this path.
   //
-  // This is also what makes `packages/anchor/test/benchmark.test.ts` fail once
-  // list-heavy documents are in the corpus: at seed 0xa9c40 it reports four
-  // misattachments, all of this shape, against a gate of zero.
+  // The fix is `allowsContainment`: container types (list, blockquote, …) are
+  // never scored by containment, and are additionally vetoed by an absorption
+  // test — high coverage of the anchor combined with low retention in the
+  // candidate means the candidate swallowed a sibling rather than being
+  // reworded.
   const before =
     '# Runbook\n\n' +
     'Preparation steps:\n\n' +
@@ -491,19 +491,20 @@ describe('KNOWN BUG: a deleted list is claimed by the list that absorbed its ite
     ).resolutions[0]!;
   }
 
-  it.fails('orphans a comment on a list that no longer exists', () => {
+  it('orphans a comment on a list that no longer exists', () => {
     expect(resolveDeletedList().blockIndex).toBe(null);
   });
 
-  it('demonstrates the defect, and that containment is what drives it', () => {
+  it('orphans it outright, because containment is vetoed for containers', () => {
     const r = resolveDeletedList();
-    expect(r.method).toBe('fuzzy');
-    expect(r.confidence).toBeGreaterThan(0.8);
-    expect(r.runnerUp).toBe(0);
-    expect(parseDocument(after).blocks[r.blockIndex!]!.text).toContain('confirm the health endpoint');
+    expect(r.method).toBe('orphan-no-match');
+    expect(r.blockIndex).toBe(null);
+    expect(r.confidence).toBe(0);
 
-    // The deleted list's trigrams are wholly contained in the surviving one,
-    // and the size ratio sits under the 2.5 guard, so the overlap path fires.
+    // The shape that used to drive the misattachment is still present: the
+    // deleted list's trigrams are wholly contained in the surviving one, and
+    // the size ratio sits under the 2.5 guard, so the containment path *would*
+    // fire on any block type that allowed it.
     const deleted = shingle(
       parseDocument(before).blocks.find((b) => b.type === 'list' && b.text.includes('provision'))!
         .text,
@@ -514,11 +515,22 @@ describe('KNOWN BUG: a deleted list is claimed by the list that absorbed its ite
       2.5,
     );
     expect(textSimilarity(deleted, survivor)).toBeCloseTo(0.95, 2);
-    // Dice alone would have scored it far lower.
+    // A list is a container, so containment is disallowed and the absorption
+    // veto fires instead: the similarity is not merely lowered to Dice, it is
+    // zero, so nothing can carry the match.
+    expect(textSimilarity(deleted, survivor, false)).toBe(0);
+    // Dice alone would have scored it far lower than containment did — but
+    // still well above zero, so the veto is doing the work, not the fallback.
     expect(diceSimilarity(deleted, survivor)).toBeLessThan(0.75);
+    expect(diceSimilarity(deleted, survivor)).toBeGreaterThan(0.7);
   });
 });
 
+/**
+ * ============================================================================
+ * KNOWN BUGS.
+ * ============================================================================
+ */
 describe('KNOWN BUG: an anchor jumps to a near-identical twin when its own block is deleted', () => {
   // The ambiguity guard compares a candidate against the *other candidates that
   // still exist*. When a document contains two near-identical paragraphs and
@@ -534,6 +546,11 @@ describe('KNOWN BUG: an anchor jumps to a near-identical twin when its own block
   // packages/anchor/src/reanchor.ts:214 — `bestOtherText` and the runner-up are
   // both computed over surviving blocks only, so a vanished twin leaves no
   // trace to be ambiguous against.
+  //
+  // The exact-match pass (rule 1b) closes this only when the survivor's index
+  // and neighbours are untouched, so it claims itself before the fuzzy pass
+  // runs. Here the deletion shifts the survivor up one, the exact pass misses,
+  // and the deleted twin's anchor is free to take it.
   const before =
     '# Runbook\n\n' +
     'Step 4: restart the payment service and confirm the health endpoint is green.\n\n' +

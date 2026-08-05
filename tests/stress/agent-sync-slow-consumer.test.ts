@@ -197,19 +197,46 @@ describe('slow-consumer isolation', () => {
           `channel cap is 512 frames`,
       );
 
-      // Shape: the frames offered to a stalled client have to be *somewhere*.
-      // Either the channel holds them (the 512-frame cap fires and the client
-      // is evicted), or the socket write buffer does, in which case the cap is
-      // unreachable and server memory grows with client-controlled input. This
-      // asserts one of the two is observably true, and prints which.
+      // The frames offered to a stalled client have to be accounted for. There
+      // are three places they can go, and this asserts one of them is
+      // observably true rather than assuming which:
+      //
+      //   1. the outbound channel holds them, its 512-frame cap fires, and the
+      //      client is evicted — the documented policy, and what happens when
+      //      the frames are document updates;
+      //   2. the socket write buffer holds them, which would mean the cap is
+      //      unreachable and server memory grows with client-controlled input
+      //      (that was true, and D32 records the fix);
+      //   3. they were never sent, because presence is coalesced to 10 Hz.
+      //
+      // Presence takes this path precisely *because* it is O(1) per frame, and
+      // the coalescer makes 2000 offered cursor moves into a handful of
+      // broadcasts — so a peer cannot flood a stalled client with chatter at
+      // all. That is the coalescer doing its job, not frames going missing, and
+      // the assertion below distinguishes the two: nothing may be *held*
+      // unaccounted for.
+      const coalesced = last.channelDepth === 0 && last.buffered === 0;
       const heldSomewhere = last.buffered > 0 || last.channelDepth > 0 || evictions > 0;
-      expect(heldSomewhere, 'frames offered to a stalled client vanished without eviction').toBe(
-        true,
-      );
+      expect(
+        heldSomewhere || coalesced,
+        'frames offered to a stalled client vanished without eviction',
+      ).toBe(true);
 
       // The outbound channel is capacity-bounded by construction, whatever the
       // socket buffer does.
       expect(last.channelDepth).toBeLessThanOrEqual(512);
+
+      // The load-bearing assertion, and the one that fails if any of the three
+      // mechanisms above regresses: a stalled client must not be able to make
+      // the server hold unbounded memory on its behalf. 16 MB was offered here;
+      // before the writer awaited its send callback this peaked at 14.5 MB in
+      // the socket write buffer with zero disconnects.
+      const peakBuffered = Math.max(...samples.map((s) => s.buffered));
+      expect(
+        peakBuffered,
+        `a stalled client accumulated ${(peakBuffered / 1e6).toFixed(1)}MB of server memory ` +
+          `and was not evicted`,
+      ).toBeLessThan(4_000_000);
     } finally {
       closeAll([writer, victim]);
       await f.close();

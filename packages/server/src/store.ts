@@ -450,11 +450,18 @@ export class Store {
     ).run(docId, ticket, JSON.stringify(revision));
   }
 
+  /**
+   * The most recent `limit` revisions, oldest first.
+   *
+   * `ORDER BY ticket DESC` and then reverse, not `ASC`: a document with more
+   * than `limit` revisions was rehydrating its **oldest** window, so a timeline
+   * on a long-lived document showed ancient history and no recent edits.
+   */
   listRevisions<T>(docId: string, limit = 200): T[] {
     const rows = this.prepare(
-      'SELECT payload FROM revisions WHERE doc_id = ? ORDER BY ticket ASC LIMIT ?',
+      'SELECT payload FROM revisions WHERE doc_id = ? ORDER BY ticket DESC LIMIT ?',
     ).all(docId, limit) as { payload: string }[];
-    return rows.map((r) => JSON.parse(r.payload) as T);
+    return rows.reverse().map((r) => JSON.parse(r.payload) as T);
   }
 
   putCheckpoint(docId: string, id: string, checkpoint: unknown): void {

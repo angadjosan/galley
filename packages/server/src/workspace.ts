@@ -17,7 +17,7 @@ import {
   type Principal,
   type Revision,
 } from '@galley/core';
-import { parseDocument } from '@galley/markdown';
+import { parseDocument, type ParsedDocument } from '@galley/markdown';
 import type { Store } from './store.js';
 
 export interface WorkspaceOptions {
@@ -174,7 +174,15 @@ export class Workspace {
       // The `KeyedMutex` order check caught exactly that under the cross-document
       // storm — a deadlock that would otherwise have shown up as a hang under
       // memory pressure, months later.
-      void this.evictIfNeeded();
+      // Fire-and-forget while the population is merely over the cap, so an
+      // ordinary open never waits on someone else's `close`. Past a hard
+      // multiple of the cap it is awaited instead: under sustained thrash the
+      // opens outran the evictions and the population climbed every round
+      // (44 → 59 → 73 → 87 → 101 → 115 at a cap of 8), because nothing ever
+      // made an opener pay for the pressure it was adding. This is the
+      // backpressure that closes that loop.
+      if (this.open.size > this.maxOpen * 2) await this.evictIfNeeded();
+      else void this.evictIfNeeded();
       return actor;
     } finally {
       stop();
@@ -272,6 +280,24 @@ export class Workspace {
     }
   }
 
+  /**
+   * Note that a document changed by a path that does not go through the actor's
+   * event stream — a CRDT update merged straight into the document by the sync
+   * handler — and let the ordinary debounce carry it to disk.
+   *
+   * The sync handler used to `persist(docId, true)` inline instead, which
+   * forced a snapshot **and a full-text reindex on every keystroke**: measured
+   * at exactly 1.00 storage transaction per inbound frame against 0.075 on the
+   * HTTP path, and 77 ms of synchronous work per keystroke on a 320-block
+   * document. `force` exists for shutdown and for tests, not for the hot path.
+   */
+  markChanged(docId: string): void {
+    const entry = this.open.get(docId);
+    if (!entry) return;
+    entry.dirty = true;
+    this.schedulePersist(docId);
+  }
+
   private schedulePersist(docId: string): void {
     const entry = this.open.get(docId);
     if (!entry || this.closed) return;
@@ -309,7 +335,11 @@ export class Workspace {
             async () => {
               const snapshot = entry.actor.document.snapshot();
               const markdown = entry.actor.document.toMarkdown();
-              const blocks = indexableBlocks(markdown);
+              // `parsed()` is memoized on the CRDT's version vector, so on the
+              // common path this is free. Parsing the markdown again here was
+              // 94% of a persist — 31.5 ms of the 33.6 ms it took on a
+              // 320-block document, none of it disk.
+              const blocks = indexableBlocks(entry.actor.document.parsed());
               await this.store.transaction(() => {
                 this.store.putDocument({
                   docId,
@@ -377,34 +407,58 @@ export class Workspace {
    * documents' locks, and doing that from inside one is a lock-order inversion.
    */
   private async evictIfNeeded(): Promise<void> {
-    if (this.evicting) return;
-    if (this.open.size <= this.maxOpen) return;
+    // A concurrent caller used to return immediately, which under a burst meant
+    // one pass ran against a snapshot taken when the map was small and every
+    // other open simply skipped eviction. Measured: cap 16, a 128-way burst
+    // peaked at 127 open and *settled* at 79 — and stayed at 79 through three
+    // seconds of complete idle, because eviction only ever ran as a side effect
+    // of an open. Under sustained thrash the population climbed every round.
+    // A concurrent caller now asks the running pass to go round again.
+    this.evictWanted = true;
+    if (this.evicting) return this.evictPass;
     this.evicting = true;
-    try {
-      await this.evictNow();
-    } catch {
-      // An eviction that loses a race with a close is not an error; the next
-      // open will try again.
-    } finally {
-      this.evicting = false;
-    }
+    this.evictPass = (async () => {
+      try {
+        while (this.evictWanted) {
+          this.evictWanted = false;
+          if (this.open.size <= this.maxOpen) break;
+          // Re-taken every round: a candidate list snapshotted once goes stale
+          // the moment anything opens, closes, or becomes busy.
+          if (!(await this.evictNow())) break; // nothing evictable; retrying spins
+        }
+      } catch {
+        // An eviction that loses a race with a close is not an error; the next
+        // open will try again.
+      } finally {
+        this.evicting = false;
+      }
+    })();
+    return this.evictPass;
   }
 
-  private async evictNow(): Promise<void> {
+  /** Evict one round. Returns whether anything was closed. */
+  private async evictNow(): Promise<boolean> {
     const candidates = [...this.open.entries()]
       // Never evict a document with work in flight: closing it underneath a
       // running operation would drop the operation.
       .filter(([, entry]) => !entry.actor.sequencer.isBusy(entry.actor.docId))
       .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
 
+    let closed = 0;
     for (const [docId] of candidates) {
       if (this.open.size <= this.maxOpen) break;
+      if (!this.open.has(docId)) continue;
       await this.close(docId);
       this.counters.inc('evictions');
+      closed++;
+      this.evictWanted = true; // the map moved; look again
     }
+    return closed > 0;
   }
 
   private evicting = false;
+  private evictWanted = false;
+  private evictPass: Promise<void> = Promise.resolve();
 
   // -------------------------------------------------------------------------
   // Search
@@ -472,9 +526,9 @@ export class Workspace {
 
 /** Blocks a search index should contain, with their heading context. */
 export function indexableBlocks(
-  markdown: string,
+  input: string | ParsedDocument,
 ): { blockId: string; heading: string; body: string }[] {
-  const doc = parseDocument(markdown);
+  const doc = typeof input === 'string' ? parseDocument(input) : input;
   const out: { blockId: string; heading: string; body: string }[] = [];
   doc.blocks.forEach((block, index) => {
     if (!block.editable) return;

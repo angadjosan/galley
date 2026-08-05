@@ -857,3 +857,126 @@ separate from the `source` attribute every block carries for the round-trip fast
 path. They look redundant and are not — `source` is cleared whenever a block is
 considered changed, and clearing a raw block's *content* along with it would
 delete what it holds. A test caught that within a minute of the first attempt.
+
+---
+
+## D35 — What two more latency rounds found, and what changed
+
+Two more subagents, one on tail latency and jitter, one on behaviour at and past
+saturation. Between them, six things were wrong. Every number below is measured
+before and after.
+
+**A fourth instance of the D31 leak class, on the hottest path there is.**
+`validateUpdate` opens a probe copy of the document per inbound frame — once per
+keystroke per connected client — and never released it: **12.7 KB retained per
+call** on a 40-block document, up to **392 KB** on a 320-block one. Disposing
+the probe left **97 KB**, which is how the second cause surfaced: `get docId()`
+was `loro.getMap(META).get(...)`, minting a wasm-bindgen handle per read and
+dropping it, and `docId` is read on essentially every request. The whole class
+hides behind one-line getters as readily as behind loops. Now 1.3 KB per call —
+*less* than the same work with an explicit `dispose()`.
+
+**The WebSocket edit path forced a snapshot and a full-text reindex per
+keystroke.** `persist(docId, true)` inline in the frame handler, bypassing the
+250 ms debounce the workspace documents as the reason a keystroke is not a disk
+write. Measured at **1.00 storage transaction per inbound frame** against 0.075
+on the HTTP path, and 77 ms of synchronous work per keystroke on a 320-block
+document — of which **94% was not the disk** but `indexableBlocks` re-parsing the
+whole document. Both fixed: the handler marks the document dirty, and the
+reindex reads the parse `parsed()` already memoized on the version vector.
+
+**Fan-out computed the same delta once per connection.** Since D33 every
+connection's watermark advances on every change, so in steady state they are all
+at the same version and the loop recomputed identical bytes N times: **×7.3 at
+32 peers, ×15.6 at 64**. Grouped by watermark, one delta per distinct version.
+
+**`maxOpenDocuments` bounded neither the peak nor the steady state.** Eviction
+ran only as a side effect of an open, a concurrent caller returned immediately
+instead of asking for another round, and a pass that ended still over the cap
+simply stopped. A 128-way burst against a cap of 16 peaked at **127** and settled
+at **79** — and stayed at 79 through three seconds of idle. Under sustained
+thrash the population climbed every round, 44 → 115, and native memory climbed
+with it, 44.5 → 82.5 MB. Two changes: a pass that loops until it is under the cap
+or out of candidates, and an opener that **waits** for eviction once the
+population passes a hard multiple of the cap, so opens cannot outrun closes. Now
+peak 16, settled 16, thrash flat.
+
+**`History` was bounded by count, not by bytes.** Every revision holds the
+document's whole text — the right call for a scrubbable timeline — so 500 of them
+was **493–498× the document**, and 256 documents open at once is over a gigabyte
+of live strings behind a couple of megabytes of content. Now bounded by both,
+with a floor so a large document still keeps a usable timeline.
+
+**`listRevisions` returned the oldest window.** `ORDER BY ticket ASC LIMIT 200`,
+so a document with more than 200 revisions rehydrated its *earliest* 200 and the
+timeline showed ancient history and no recent edits. A correctness bug found by a
+latency test measuring cold-open cost, which is the usual way.
+
+**And the per-request `Deadline` was never consulted.** Constructed on every
+request, disposed on every response, read by nothing: a run with a 1 ms budget
+and a 33 ms p50 returned fifteen 200s and zero 504s. `requestBudgetMs` bounded
+nothing while every request paid an `AbortController` and a timer for it. It now
+gates the handler and the reply, which bounds what a single-threaded server can
+actually bound: time spent *waiting*.
+
+One more parse was removed on the way past. A mutation parses twice — once to
+resolve the ops against the current bytes, once to segment the result — and
+parsing is ~52 µs per block, the largest single term in an edit. The second parse
+is now seeded into the version-keyed cache when reassembly reproduced the target
+bytes exactly, so the *next* mutation gets it free. The string comparison that
+guards it is what keeps a cache of bytes the document does not hold from becoming
+a correctness bug.
+
+End to end, on the same machine, before → after:
+
+| measurement | before | after |
+|---|---|---|
+| `applyOps` p50 | 0.441 ms | 0.289 ms |
+| comment p50 | 0.208 ms | 0.013 ms |
+| read under a write storm, p50 | 61.5 ms | 34.5 ms |
+| PATCH throughput at c=1 | 199 ops/s | 272 ops/s |
+| PATCH p99 at c=64 | 600 ms | 425 ms |
+| PATCH p50 with 32 subscribers | 10.1 ms | 7.4 ms |
+| PATCH p99 with 32 subscribers | 16.1 ms | 9.2 ms |
+
+---
+
+## D36 — Two things the rounds found that are *not* fixed, and why
+
+Recorded rather than quietly left, because both are architectural and a reader
+deserves the numbers.
+
+**An edit is one uninterruptible synchronous stall.** Time queued in the
+`Sequencer` is 0.004–0.018 ms at every concurrency level — the sequencer has
+never been the bottleneck — but the task it runs holds the event loop for the
+whole edit: measured p99 event-loop stall 38.8 ms against a 39.4 ms request p50
+on a 240-block document, and a 10 ms metronome losing 85 of 133 ticks under 48
+concurrent PATCHes. `/v1/health`, which touches no document, no lock and no
+sequencer, went from 0.23 ms to 49.9 ms p50. The cost is linear in document size
+(~52 µs/block to parse, ~61 µs/block to splice) with a measured log-log slope of
+0.98–1.02, so there is no superlinear term to remove — the fix is to chunk the
+parse and splice so they yield, or to move them off-thread, and both are
+structural changes rather than optimisations. A prototype yielding *between*
+sequencer tasks moved nothing, which is the evidence that the stall is inside one
+task.
+
+The load-bearing corollary: every deadline in this system is a `setTimeout`, and
+timer lag under load equals the longest synchronous stretch on the loop exactly.
+No timeout in Galley has a resolution finer than one edit.
+
+**Concurrent merges degrade a document permanently.** Sixteen peers editing the
+same document in turn: `importUpdates` p50 flat at 0.045–0.050 ms over eight
+rounds. The same sixteen peers editing *at the same instant*: 0.185 → 8.557 ms,
+**46×**, with round wall time going 159 → 2596 ms for the same sixteen edits.
+Persistence is flat throughout, so it is not storage; the snapshot grows from 4.5
+to 10.6 KB with the block count unchanged, so it is un-compacted CRDT history.
+Quiet does not help — after a storm the document sits at 1.35–1.7× its baseline
+latency indefinitely. Throughput consequently peaks at one to two simultaneous
+writers and *collapses* past it: 12× the offered concurrency delivers 0.17–0.18×
+the throughput.
+
+Nothing is lost while that happens — every replica converges, zero divergence,
+zero disconnects, and correctness held under every load either round applied. The
+fix is periodic history compaction, which changes what a version vector means to
+a connected peer and therefore belongs with a resync protocol rather than in a
+latency pass.

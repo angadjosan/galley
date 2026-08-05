@@ -218,9 +218,13 @@ function walk(source: string, seed: number, steps: number): Violation[] {
 }
 
 /**
- * The marker invariant is the one the engine actually breaks (see the KNOWN BUG
- * block at the bottom), so the general walk excludes it and it is pinned
- * separately with a minimal reproduction.
+ * The marker invariant is the one the engine still breaks — see
+ * `KNOWN BUG: a marker left alone in a list item is not a paragraph any more`
+ * at the bottom — so the general walk excludes it and it is pinned separately
+ * with a minimal reproduction.
+ *
+ * The other shape that used to break it, a marker pushed out of last position
+ * by a continuation line, is fixed and is now pinned as a passing regression.
  */
 function walkExcludingKnownBugs(source: string, seed: number, steps: number): Violation[] {
   return walk(source, seed, steps).filter(
@@ -386,27 +390,65 @@ describe('KNOWN BUG: inserting next to a block in a tight container merges into 
   });
 });
 
-describe('KNOWN BUG: a marker stops counting once it is no longer last in its paragraph', () => {
-  // `trailingMarker` only recognises a marker that is the final inline child of
-  // a paragraph or heading. Any edit that appends a line to an annotated
-  // paragraph — including one Galley itself performs, and including a human
-  // typing in their own editor — pushes the marker into the middle of the
-  // paragraph. The parser then reports `id: null`, the block's identity is
-  // gone, and `renderClean` no longer strips the marker, so the raw comment
-  // reaches whoever reads the document.
-  // packages/markdown/src/parse.ts:219 (trailingMarker).
+describe('KNOWN BUG: a marker left alone in a list item is not a paragraph any more', () => {
+  // When every other inline in a list item's paragraph is removed, the marker
+  // is all that is left — and CommonMark then reads the item's content as an
+  // *html block*, not a paragraph with an html child. `trailingMarker` returns
+  // null for anything that is not a paragraph or heading, so the id is lost and
+  // `renderClean` stops stripping the comment: raw plumbing reaches an agent.
+  //
+  // This is what invariant 4 catches in the cumulative walk, which is why
+  // `walkExcludingKnownBugs` still has to filter it out.
+  const stranded = '- <!-- ^abc123 -->\n- two\n';
+
+  it.fails('attributes a marker that is the whole of a list item', () => {
+    expect(parseDocument(stranded).blocks.map((b) => b.id).filter(Boolean)).toContain('abc123');
+  });
+
+  it('demonstrates the defect concretely', () => {
+    const doc = parseDocument(stranded);
+    expect(doc.blocks.map((b) => b.id).filter(Boolean)).toEqual([]);
+    // The marker is in the bytes and no block claims it, so it leaks.
+    expect(renderClean(doc)).toContain('<!-- ^abc123 -->');
+    // At top level the same marker alone *is* attributed — the difference is
+    // purely that a list item wraps it.
+    expect(
+      parseDocument('<!-- ^abc123 -->\n\nBody.\n').blocks.map((b) => b.id).filter(Boolean),
+    ).toEqual(['abc123']);
+  });
+});
+
+/**
+ * ============================================================================
+ * REGRESSIONS. Defects that have been fixed, pinned with the reproduction that
+ * was sharpest while each was live.
+ * ============================================================================
+ */
+describe('a marker keeps counting when it is no longer last in its paragraph', () => {
+  // This used to strand the marker, which is why the case is pinned.
+  // `trailingMarker` recognised only a marker that was the *final* inline child
+  // of a paragraph or heading. Any edit that appended a line to an annotated
+  // paragraph — one Galley itself performs, or a human typing in their own
+  // editor — pushed the marker into the middle of the paragraph. The parser
+  // then reported `id: null`, the block's identity was gone, and `renderClean`
+  // no longer stripped the marker, so the raw comment reached whoever read the
+  // document.
+  //
+  // `trailingMarker` (packages/markdown/src/parse.ts:221) now scans backwards
+  // for the last `html` child rather than requiring the very last child, and
+  // only the `atEnd` case is excluded from the block's range.
   const stranded = '- one <!-- ^abc123 -->\n  a continuation line\n- two\n';
 
-  it.fails('still attributes the marker to its block', () => {
+  it('still attributes the marker to its block', () => {
     const doc = parseDocument(stranded);
     expect(doc.blocks.map((b) => b.id).filter(Boolean)).toContain('abc123');
   });
 
-  it.fails('still strips the marker from a clean read', () => {
+  it('still strips the marker from a clean read', () => {
     expect(renderClean(parseDocument(stranded))).not.toMatch(MARKER_IN_TEXT);
   });
 
-  it('demonstrates that a legal op can produce that state', () => {
+  it('survives the legal op sequence that used to produce that state', () => {
     const source = '- one\n- two\n';
     const start = parseDocument(source);
     const index = start.blocks.findIndex((b) => b.type === 'paragraph' && b.text === 'one');
@@ -423,36 +465,48 @@ describe('KNOWN BUG: a marker stops counting once it is no longer last in its pa
         { kind: 'insert', after: blockRef(marked), markdown: 'inserted' },
       ]).source,
     );
-    // The marker is still in the bytes, but no block claims it any more.
-    expect(after.source).toContain('<!-- ^abc123 -->');
-    expect(after.blocks.map((b) => b.id).filter(Boolean)).toEqual([]);
-    // And it now leaks into what an agent reads.
-    expect(renderClean(after)).toContain('<!-- ^abc123 -->');
+    // The insert still lands as a continuation line rather than a new block —
+    // that is the separate tight-container bug pinned above — so the marker is
+    // no longer the paragraph's last inline child. It is still attributed.
+    expect(after.source).toBe('- one <!-- ^abc123 -->\n  inserted\n- two\n');
+    expect(after.blocks.map((b) => b.id).filter(Boolean)).toEqual(['abc123']);
+    // And it does not leak into what an agent reads.
+    expect(renderClean(after)).toBe('- one\n  inserted\n- two\n');
+    expect(renderClean(after)).not.toMatch(MARKER_IN_TEXT);
   });
 });
 
-describe('KNOWN BUG: materialize silently discards an existing id', () => {
-  // `materializeEdit` has a "re-materialize" branch that overwrites an existing
-  // marker range with the new id. Nothing checks whether the id being replaced
-  // is the same one, so minting an id onto an already-annotated block destroys
-  // the previous identity — every comment anchored to it orphans — with no
-  // error and no diagnostic.
-  // packages/markdown/src/ops.ts:265 (materializeEdit).
-  it.fails('refuses to overwrite a different id already on the block', () => {
+describe('materialize refuses to discard an existing id', () => {
+  // This used to overwrite silently, which is why the case is pinned.
+  // `materializeEdit` had a "re-materialize" branch that overwrote an existing
+  // marker range with the new id. Nothing checked whether the id being replaced
+  // was the same one, so minting an id onto an already-annotated block
+  // destroyed the previous identity — every comment anchored to it orphaned —
+  // with no error and no diagnostic.
+  // packages/markdown/src/ops.ts (materializeEdit) now refuses.
+  it('refuses to overwrite a different id already on the block', () => {
     const doc = parseDocument('A paragraph. <!-- ^first1 -->\n');
     const index = doc.blocks.findIndex((b) => b.id === 'first1');
     expect(() =>
       applyBlockOps(doc, [{ kind: 'materialize', target: blockRef(index), id: 'second' }]),
-    ).toThrow();
+    ).toThrow(/already has an id/);
   });
 
-  it('demonstrates the defect concretely', () => {
-    const doc = parseDocument('A paragraph. <!-- ^first1 -->\n');
+  it('leaves the document untouched, and still allows a no-op re-materialize', () => {
+    const source = 'A paragraph. <!-- ^first1 -->\n';
+    const doc = parseDocument(source);
     const index = doc.blocks.findIndex((b) => b.id === 'first1');
-    const out = applyBlockOps(doc, [
-      { kind: 'materialize', target: blockRef(index), id: 'second' },
+    expect(() =>
+      applyBlockOps(doc, [{ kind: 'materialize', target: blockRef(index), id: 'second' }]),
+    ).toThrow();
+    // The refusal is total: the old id is intact and nothing was written.
+    expect(doc.source).toBe(source);
+    expect(parseDocument(doc.source).blocks.map((b) => b.id).filter(Boolean)).toEqual(['first1']);
+    // Materializing the id the block already has is still a legal no-op, so a
+    // caller that re-asserts an identity it already knows is not punished.
+    const same = applyBlockOps(doc, [
+      { kind: 'materialize', target: blockRef(index), id: 'first1' },
     ]).source;
-    expect(out).toBe('A paragraph. <!-- ^second -->\n');
-    expect(parseDocument(out).blocks.map((b) => b.id).filter(Boolean)).toEqual(['second']);
+    expect(same).toBe(source);
   });
 });
