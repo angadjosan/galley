@@ -1,0 +1,261 @@
+import { CircuitBreaker, TimeoutError, retry, withTimeout } from '@galley/concurrency';
+import type { Comment, OrphanedAnchor, Suggestion } from '@galley/core';
+import type { BlockOp } from '@galley/markdown';
+
+export interface ClientOptions {
+  baseUrl: string;
+  token: string;
+  /** Per-request budget. A CLI that hangs is worse than one that fails. */
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}
+
+export class GalleyApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly kind?: string,
+  ) {
+    super(message);
+    this.name = 'GalleyApiError';
+  }
+
+  /** True for failures that a retry could plausibly fix. */
+  get transient(): boolean {
+    return this.status === 429 || this.status === 503 || this.status >= 500;
+  }
+}
+
+export interface DocumentSummary {
+  docId: string;
+  path: string;
+  title: string;
+  updatedAt: string;
+}
+
+export interface SearchHit {
+  ref: string;
+  docId: string;
+  path: string;
+  heading: string;
+  snippet: string;
+  score: number;
+}
+
+export interface StatusRow {
+  docId: string;
+  path: string;
+  updatedAt: string;
+  pendingSuggestions: number;
+  orphanedAnchors: number;
+}
+
+/**
+ * The typed HTTP client shared by the CLI and the web app.
+ *
+ * One client rather than two is a correctness decision, not a convenience one:
+ * `idea.md` says the CLI is "a binary over the same store the app uses", and
+ * two hand-written clients drift on exactly the details — how a ref is encoded,
+ * what a 409 means — that decide whether a citation resolves.
+ *
+ * Retries are narrow on purpose. A 429 is a comment budget, a 409 is a stale
+ * proposal, a 403 is a permission: none of those get better by being asked
+ * again, and retrying them turns a clear error into a slow one.
+ */
+export class GalleyClient {
+  private readonly baseUrl: string;
+  private readonly token: string;
+  private readonly timeoutMs: number;
+  private readonly fetchImpl: typeof fetch;
+  private readonly breaker = new CircuitBreaker({
+    name: 'galley-api',
+    failureThreshold: 5,
+    resetMs: 5_000,
+    // Only infrastructure failures trip the circuit. A permission error is a
+    // correct answer, and a breaker that opens on 403s would be a breaker that
+    // opens because the user typed the wrong path.
+    isFailure: (err) => !(err instanceof GalleyApiError) || err.transient,
+  });
+
+  constructor(options: ClientOptions) {
+    this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+    this.token = options.token;
+    this.timeoutMs = options.timeoutMs ?? 15_000;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+  }
+
+  // -------------------------------------------------------------------------
+  // Documents
+  // -------------------------------------------------------------------------
+
+  async health(): Promise<{ ok: boolean; openDocuments: number; connections: number }> {
+    return this.call('GET', '/v1/health');
+  }
+
+  async list(prefix = ''): Promise<DocumentSummary[]> {
+    const { documents } = await this.call<{ documents: DocumentSummary[] }>(
+      'GET',
+      `/v1/docs?prefix=${encodeURIComponent(prefix)}`,
+    );
+    return documents;
+  }
+
+  async read(ref: string): Promise<{ docId: string; path: string; content: string; ticket: number }> {
+    return this.call('GET', `/v1/docs/${encodeURIComponent(ref)}`);
+  }
+
+  async readBlock(ref: string, blockId: string): Promise<{ blockId: string; content: string }> {
+    return this.call('GET', `/v1/docs/${encodeURIComponent(ref)}/blocks/${encodeURIComponent(blockId)}`);
+  }
+
+  async create(path: string, content: string, title?: string): Promise<{ docId: string; content: string }> {
+    return this.call('POST', '/v1/docs', { path, content, title });
+  }
+
+  async applyOps(
+    ref: string,
+    ops: readonly BlockOp[],
+    requestId?: string,
+  ): Promise<{ ticket: number; content: string }> {
+    return this.call('PATCH', `/v1/docs/${encodeURIComponent(ref)}`, { ops, requestId });
+  }
+
+  async ingest(ref: string, content: string): Promise<{ kind: string; magnitude: number }> {
+    return this.call('POST', `/v1/docs/${encodeURIComponent(ref)}/ingest`, { content });
+  }
+
+  // -------------------------------------------------------------------------
+  // Annotation
+  // -------------------------------------------------------------------------
+
+  async search(query: string, limit = 20): Promise<SearchHit[]> {
+    const { results } = await this.call<{ results: SearchHit[] }>(
+      'GET',
+      `/v1/search?q=${encodeURIComponent(query)}&limit=${limit}`,
+    );
+    return results;
+  }
+
+  async comment(
+    ref: string,
+    input: { blockId: string; body: string; threadId?: string; runId?: string; requestId?: string },
+  ): Promise<Comment> {
+    const { comment } = await this.call<{ comment: Comment }>(
+      'POST',
+      `/v1/docs/${encodeURIComponent(ref)}/comments`,
+      input,
+    );
+    return comment;
+  }
+
+  async comments(ref: string): Promise<Comment[]> {
+    const { comments } = await this.call<{ comments: Comment[] }>(
+      'GET',
+      `/v1/docs/${encodeURIComponent(ref)}/comments`,
+    );
+    return comments;
+  }
+
+  async suggest(
+    ref: string,
+    input: { ops: readonly BlockOp[]; rationale?: string; requestId?: string },
+  ): Promise<Suggestion> {
+    const { suggestion } = await this.call<{ suggestion: Suggestion }>(
+      'POST',
+      `/v1/docs/${encodeURIComponent(ref)}/suggestions`,
+      input,
+    );
+    return suggestion;
+  }
+
+  async suggestions(ref: string, state?: string): Promise<Suggestion[]> {
+    const query = state ? `?state=${encodeURIComponent(state)}` : '';
+    const { suggestions } = await this.call<{ suggestions: Suggestion[] }>(
+      'GET',
+      `/v1/docs/${encodeURIComponent(ref)}/suggestions${query}`,
+    );
+    return suggestions;
+  }
+
+  async acceptSuggestion(ref: string, id: string): Promise<{ suggestion: Suggestion; content: string }> {
+    return this.call('POST', `/v1/docs/${encodeURIComponent(ref)}/suggestions/${id}/accept`);
+  }
+
+  async rejectSuggestion(ref: string, id: string): Promise<{ suggestion: Suggestion }> {
+    return this.call('POST', `/v1/docs/${encodeURIComponent(ref)}/suggestions/${id}/reject`);
+  }
+
+  async orphans(ref: string): Promise<OrphanedAnchor[]> {
+    const { orphans } = await this.call<{ orphans: OrphanedAnchor[] }>(
+      'GET',
+      `/v1/docs/${encodeURIComponent(ref)}/orphans`,
+    );
+    return orphans;
+  }
+
+  async reattach(ref: string, anchorId: string, blockId: string): Promise<void> {
+    await this.call('POST', `/v1/docs/${encodeURIComponent(ref)}/orphans/${anchorId}/reattach`, {
+      blockId,
+    });
+  }
+
+  async citation(ref: string, blockId: string): Promise<string> {
+    const { citation } = await this.call<{ citation: string }>(
+      'GET',
+      `/v1/docs/${encodeURIComponent(ref)}/citations/${encodeURIComponent(blockId)}`,
+    );
+    return citation;
+  }
+
+  async status(): Promise<StatusRow[]> {
+    const { documents } = await this.call<{ documents: StatusRow[] }>('GET', '/v1/status');
+    return documents;
+  }
+
+  // -------------------------------------------------------------------------
+  // Transport
+  // -------------------------------------------------------------------------
+
+  private async call<T>(method: string, path: string, body?: unknown): Promise<T> {
+    return this.breaker.execute(() =>
+      retry(
+        async () => {
+          const response = await withTimeout(
+            (signal) =>
+              this.fetchImpl(`${this.baseUrl}${path}`, {
+                method,
+                signal,
+                headers: {
+                  authorization: `Bearer ${this.token}`,
+                  ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+                },
+                body: body === undefined ? undefined : JSON.stringify(body),
+              }),
+            this.timeoutMs,
+            `${method} ${path}`,
+          );
+
+          const text = await response.text();
+          const parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+          if (!response.ok) {
+            throw new GalleyApiError(
+              response.status,
+              String(parsed.error ?? `HTTP ${response.status}`),
+              parsed.kind === undefined ? undefined : String(parsed.kind),
+            );
+          }
+          return parsed as T;
+        },
+        {
+          attempts: 3,
+          baseMs: 50,
+          maxMs: 1_000,
+          shouldRetry: (err) =>
+            (err instanceof GalleyApiError && err.transient) || err instanceof TimeoutError,
+        },
+      ),
+    );
+  }
+}
+
+export type { BlockOp, Comment, Suggestion, OrphanedAnchor };

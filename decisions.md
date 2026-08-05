@@ -378,3 +378,49 @@ that isn't enforced is a suggestion to a model." The same argument applies one
 layer down — the CLI is not the only thing that will ever call the API. An
 operation set that deletes every anchored block in a document is refused with a
 message naming the alternative, at the HTTP boundary.
+
+---
+
+## D17 — `galley push` derives block ops from a local diff
+
+**Context:** `tradeoffs.md` leans to the checkout model — the cloud is the home,
+the local copy is a checkout. That leaves one question: what does a local edit
+become when it goes back?
+
+**Decision:** `push` reads the current server version, segments both sides,
+reconciles them, and sends **scoped block operations** — the same vocabulary
+`galley suggest` uses. A person edits a file in their own editor and what
+reaches the server is `replace @3` and `insert after @5`, not a blob.
+
+This is what makes the checkout model *better* rather than merely cheaper. Block
+identity survives a local edit by construction, exactly as it does for an
+in-app one, so a comment thread on a paragraph someone edited in vim is still
+attached afterwards. And a local edit that arrives after the cloud document
+moved on is a **suggestion** — conflict resolution stops being a subsystem and
+becomes an existing feature with a different author field.
+
+**Default is propose, not write.** `--write` exists for a principal who has
+write access and wants it, and it is a deliberate act.
+
+**Both paths refuse a whole-document replacement**, with a message that names
+what to do instead. The reuse here is the point: the same refusal, the same
+threshold and the same reasoning cover an agent's proposal, a human's local
+edit, and an inbound file from disk.
+
+---
+
+## D18 — The CLI has no runtime dependencies
+
+`galley` is the thing agents run, and every dependency in its install path is a
+way for `npm i -g galley` to fail on someone's laptop at the exact moment they
+are deciding whether this product works. The argument parser is forty lines and
+owned here rather than pulled in.
+
+`galley read` writes the document's bytes and nothing else — no banner, no
+progress, no colour — because `galley read spec | claude -p "implement this"` is
+a real workflow and anything else on stdout corrupts it. The tests assert the
+absence, including of ANSI escapes.
+
+Exit codes carry meaning a script can branch on: 0 success, 1 a runtime failure
+or an empty result where empty is meaningful (`search` with no hits, `status
+--stale` when something drifted), 2 a usage error.

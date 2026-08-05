@@ -5,5 +5,19 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "exports": { ".": "./src/index.ts" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@galley/client": "*",
+    "@galley/concurrency": "*",
+    "@galley/core": "*",
+    "@galley/markdown": "*"
+  },
+  "bin": {
+    "galley": "./bin/galley.mjs"
+  },
+  "devDependencies": {
+    "@galley/server": "*"
+  }
 }
