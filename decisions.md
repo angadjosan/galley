@@ -611,3 +611,58 @@ The ground truth also changed shape while fixing those two: fragments are now
 tracked by **origin identity** rather than by recorded text. Text goes stale the
 moment a fragment is reworded after a split, and then the matcher gets blamed
 for a bookkeeping error in the generator. Origin cannot go stale.
+
+---
+
+## D27 — Latency is measured and printed; only shape is asserted
+
+Absolute latency is a property of the machine. `expect(p99).toBeLessThan(5)`
+passes on a quiet laptop, fails on a loaded runner, and teaches everyone to
+ignore the suite — the most expensive thing that can happen to a test suite.
+
+So `tests/stress/latency.test.ts` prints every number and asserts only on
+properties that hold anywhere:
+
+- the tail is bounded relative to the median (a runaway ratio means a queue
+  growing faster than it drains);
+- throughput does not *collapse* as concurrency rises (it does not scale
+  linearly either — a document is serialized by design — so the assertion is
+  against an accidental global bottleneck);
+- read cost grows no faster than the document does;
+- fan-out cost grows no faster than the subscriber count.
+
+**Measured on the development machine** (Node 22, in-memory store):
+
+| path | p50 | p99 |
+|---|---|---|
+| `applyOps` replace, in process | 0.63 ms | 12.4 ms |
+| consistent `read`, in process | 0.012 ms | 0.14 ms |
+| `comment`, in process | 0.21 ms | 5.5 ms |
+| HTTP PATCH, 1 client | 9.6 ms | 25 ms |
+| HTTP PATCH, 64 clients on one document | 57 ms | 1067 ms |
+| HTTP GET, 150-block document | 5.1 ms | 26 ms |
+| HTTP PATCH with 32 live subscribers | 21.7 ms | 62 ms |
+
+Throughput on a single document held flat from 100 ops/s at one client to
+112 ops/s at sixty-four — the queueing shows up in per-request latency, which
+is what serializing a document means.
+
+**One measurement was wrong before it was right.** The first version reused one
+document across all four concurrency levels, so each level ran against a bigger
+document than the last and the test reported an 11× "throughput collapse" that
+was entirely document growth. A benchmark that does not isolate its variable
+measures the wrong thing confidently.
+
+---
+
+## D28 — An async method never throws synchronously
+
+`DocumentActor.applyOps` threw synchronously when the sequencer was closed,
+because `Sequencer.submit` does. An async method that *sometimes* throws instead
+of rejecting is a trap: `actor.applyOps(…).catch(…)` does not catch it, and the
+failure surfaces as an uncaught exception in whatever happened to be running.
+
+Every command path now funnels through one wrapper that converts a synchronous
+throw into a rejection. Found by the chaos suite asserting that a faulted
+document refuses work — the assertion passed for the wrong reason until the
+error stopped escaping the promise.

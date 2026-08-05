@@ -14,12 +14,15 @@
     "build": "tsc --build",
     "clean": "tsc --build --clean && rm -rf packages/*/dist apps/*/dist",
     "typecheck": "tsc --build --force",
-    "test": "vitest run",
+    "test": "vitest run packages apps",
     "test:watch": "vitest",
     "test:unit": "vitest run --project unit",
-    "test:stress": "vitest run --project stress",
+    "test:stress": "vitest run tests/stress",
     "test:e2e": "playwright test",
-    "lint": "tsc --build --force"
+    "lint": "tsc --build --force",
+    "test:all": "vitest run",
+    "dev:api": "tsx tools/dev-server.ts",
+    "dev:web": "npm --prefix apps/web run dev"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",

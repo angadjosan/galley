@@ -658,10 +658,22 @@ export class DocumentActor {
     }
   }
 
-  /** Wrap a command in idempotency, when the caller supplied a request id. */
+  /**
+   * Wrap a command in idempotency, when the caller supplied a request id.
+   *
+   * The `try` matters: a closed sequencer throws *synchronously* from `submit`,
+   * and an async method that sometimes throws instead of rejecting is a trap —
+   * `actor.applyOps(...).catch(…)` would not catch it, and the failure would
+   * surface as an uncaught exception in whatever happened to be running.
+   * Everything this class returns is a promise, including its failures.
+   */
   private command<T>(requestId: string | undefined, fn: () => Promise<T>): Promise<T> {
-    if (!requestId) return fn();
-    return this.idempotency.commitOnce(requestId, fn as () => Promise<unknown>) as Promise<T>;
+    try {
+      if (!requestId) return fn();
+      return this.idempotency.commitOnce(requestId, fn as () => Promise<unknown>) as Promise<T>;
+    } catch (err) {
+      return Promise.reject(err);
+    }
   }
 
   /** For tests and diagnostics: the breaker guarding persistence. */

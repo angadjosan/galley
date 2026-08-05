@@ -10,3 +10,4 @@ playwright-report/
 tmp/
 .vite/
 .galley-dev-tokens.json
+.galley-e2e-tokens.json
