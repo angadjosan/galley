@@ -66,3 +66,46 @@ Option B. Cloud is the home, local is a checkout. The lost capability is worth l
 **Rejected:** per-branch doc variants, where the same `galley:` identity carries N versions keyed by ref. Genuinely better for the narrow case of a doc rewritten in lockstep with a long-lived feature branch — but it splits the comment ecosystem across variants, and an annotation layer whose comments are in the other branch is worth nothing. It also drags git vocabulary into a product that spent a whole principle avoiding it.
 
 **Notes:** the decision is cheaper still under Option B above — a branch is just a checkout that hasn't been pushed, and the divergence path is the push path. If B is taken, this entry costs nothing; if A is kept, it costs the diverged-file state in the filesystem event table.
+
+---
+
+## Concurrency primitives: off-the-shelf vs. built here
+
+**Status:** decided (built here). See `decisions.md` D2.
+
+**Taken:** `@galley/concurrency`, written before any product code.
+
+**Rejected:** `async-mutex` + `p-queue` + `opossum`. They are good libraries and
+would have saved a day. Three properties decided against them, all of which the
+stress suite has to be able to assert on:
+
+1. **Fairness as a guarantee, not an implementation detail.** The suite asserts
+   strict FIFO handoff. A library that happens to be FIFO today can stop being
+   FIFO in a patch release, and the failure mode — the projection writer starved
+   by a hot editor, so a document "saves" and never reaches disk — is invisible
+   until it is a support ticket.
+2. **Cancellation-safe acquire.** A waiter that aborts in the same turn the lock
+   is handed to it must release rather than strand it. Most implementations
+   either lack `AbortSignal` support or leak the lock on that exact interleaving,
+   which is the one a disconnecting WebSocket client produces constantly.
+3. **Close distinct from fault.** No off-the-shelf async queue distinguishes "the
+   producer finished" from "the producer died", and Galley's consumers must
+   commit in the first case and roll back in the second.
+
+**Cost accepted:** ~1,100 lines to own and 117 tests to keep green.
+
+---
+
+## Latency assertions in CI
+
+**Status:** decided (measure and print, assert only on generous ceilings).
+
+Absolute latency numbers are a function of the machine, not the code. The stress
+suite records exact percentiles and prints them, but hard assertions are reserved
+for properties that hold on any machine: no unbounded queue growth, no lost
+event, no ordering violation, and completion inside a timeout that a genuine
+deadlock would blow through by orders of magnitude.
+
+**Rejected:** asserting `p99 < 5ms` in CI. It passes on a quiet laptop and fails
+on a loaded runner, which trains everyone to ignore the suite — the single most
+expensive thing that can happen to a test suite.
