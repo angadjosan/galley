@@ -1,8 +1,17 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/concurrency" },
-    { "path": "packages/markdown" },
-    { "path": "packages/anchor" }
+    {
+      "path": "packages/concurrency"
+    },
+    {
+      "path": "packages/markdown"
+    },
+    {
+      "path": "packages/anchor"
+    },
+    {
+      "path": "packages/core"
+    }
   ]
 }

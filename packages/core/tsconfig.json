@@ -1,5 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "rootDir": ".", "outDir": "dist" },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "references": [
+    { "path": "../concurrency" },
+    { "path": "../markdown" },
+    { "path": "../anchor" }
+  ]
 }

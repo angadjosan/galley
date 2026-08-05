@@ -146,17 +146,22 @@ export class Sequencer {
   }
 
   /**
-   * Seal a lane at the current global cursor.
+   * Seal a lane: refuse every ticket at or after `cutoff`.
    *
-   * Work already submitted is admitted and will run; anything submitted after
-   * this call is refused. Returns the cutoff to pass to {@link drain}.
+   * With no argument the cutoff is the current cursor, so work already
+   * submitted is admitted and anything submitted later is refused.
+   *
+   * **Pass an explicit cutoff when sealing from inside the lane.** A task that
+   * seals while running has already had tickets issued behind it, and the
+   * default cutoff would admit them — which is exactly the edit that must not
+   * leak into the version being closed. Sealing at `ownTicket + 1` makes the
+   * boundary the sealing operation itself.
    *
    * The pair (seal, drain) is how a session boundary is taken without losing an
-   * in-flight edit or leaking a post-boundary one into the old version.
+   * in-flight edit or admitting a post-boundary one.
    */
-  seal(key: string): number {
+  seal(key: string, cutoff = this.watermark.seal()): number {
     const lane = this.laneFor(key);
-    const cutoff = this.watermark.seal();
     lane.cutoff = lane.cutoff === null ? cutoff : Math.min(lane.cutoff, cutoff);
     return lane.cutoff;
   }
@@ -223,6 +228,18 @@ export class Sequencer {
     try {
       while (lane.queue.length > 0) {
         const task = lane.queue.shift()!;
+        if (lane.cutoff !== null && task.ticket >= lane.cutoff) {
+          // The lane was sealed after this task was queued — by a task ahead of
+          // it in the same lane. Refuse it here rather than running it, or the
+          // boundary would admit work submitted after it was taken.
+          task.deferred.reject(
+            new ClosedError(
+              `${this.name}: lane ${task.key} was sealed at ${lane.cutoff}; ticket ${task.ticket} is past the boundary`,
+            ),
+          );
+          this.watermark.complete(task.ticket);
+          continue;
+        }
         const startedAt = Date.now();
         let ok = true;
         let error: unknown;

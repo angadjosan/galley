@@ -232,3 +232,87 @@ correct answers without weakening the misattachment gate* — landing outside th
 set is still a failure. The two changes that were genuine code fixes (the text
 similarity veto, and the containment size-ratio cap) both made the matcher
 *stricter*, never more permissive.
+
+---
+
+## D11 — The CRDT holds top-level segments, not a block tree
+
+**Context:** `idea.md` commits to Loro, and to the CRDT being the source of
+truth during a session. It does not say what shape the document takes inside it,
+and the shape decides whether byte fidelity survives contact with multiplayer.
+
+**Decision:**
+
+```
+LoroDoc
+  ├ meta      LoroMap    galley id, title, owner
+  ├ preamble  LoroText   frontmatter and leading whitespace, verbatim
+  └ segments  LoroMovableList of LoroMap { sid, text: LoroText, sep }
+```
+
+`toMarkdown()` is `preamble + Σ(text + separator)`. There is **no serializer in
+the path at all** — the bytes are stored, not regenerated, so byte fidelity is a
+property of the data structure rather than something the code has to be careful
+about.
+
+Storing the separator *on the segment* rather than deriving it is what makes
+this exact: a document that puts two blank lines between sections, or ends
+without a newline, reassembles as written.
+
+**Top-level only.** A list is one segment, not one per item. Nested containers
+would force the reassembler to understand list markers and blockquote prefixes,
+which is the AST-to-text serialization this codebase exists to avoid. Nested
+blocks are not identity-less — they get sidecar ids, materialize inline markers,
+and are addressed by block ops *within* a segment. What they do not get is a
+CRDT list position.
+
+**A movable list, not a plain one.** "Move this section above that one" is then
+a first-class operation instead of a delete plus an insert. The difference is
+visible to users: delete-and-insert loses the section's identity, and with it
+every comment anchored inside it.
+
+**Reconciliation is how bytes become CRDT ops.** `setMarkdown` diffs the new
+segmentation against the old — exact matches by LCS first, then similar
+leftovers above a floor, then genuine inserts and deletes — and applies the
+result as a character-level splice per changed segment. An edited paragraph is
+an *update*, so a concurrent edit elsewhere in it still merges.
+
+---
+
+## D12 — One sequencer per document, and the ticket is the version number
+
+The first implementation shared one `Sequencer` across every document, with a
+lane per document. It deadlocked the first time a session boundary was taken
+from inside a lane, and the fix revealed the real design.
+
+A document's ticket now orders *that document's* operations and nothing else.
+This makes two things precise that a shared counter left approximate: a
+suggestion's `baseTicket` is a version of the document it targets, and the drain
+at a session boundary waits on that document rather than on unrelated traffic.
+
+**The boundary is the operation's own ticket.** `seal(key, ownTicket + 1)`, not
+`seal(key)`. Sealing at the current cursor admits work that was queued *behind*
+the sealing task while it waited — precisely the edit that must not leak into
+the version being closed. The sequencer now also re-checks the cutoff in its
+pump, because a task can be sealed out after it was already queued.
+
+The bug it fixed was a hang, and it was found by the test that asserts the
+boundary loses nothing and admits nothing — which is why that test asserts both
+halves rather than just the easy one.
+
+---
+
+## D13 — Agent edits are suggestions; acceptance is a human act
+
+`idea.md` calls suggestion-by-default the trust primitive of the product. Two
+enforcements in `DocumentActor` make it a property rather than a convention:
+
+- `acceptSuggestion` refuses any agent principal outright, including the author
+  of the proposal. There is no rule a sponsor can write that auto-accepts.
+- `stale` is terminal for acceptance. A proposal whose anchor moved would apply
+  an edit to text its author never saw; re-proposing is the author's job.
+
+Staleness is judged on **content hashes, not timestamps**. A block edited and
+then edited back is byte-identical to what the proposer saw — but it still goes
+stale on the first edit, and stays stale, because the author never saw the round
+trip and the reviewer should know one happened.
