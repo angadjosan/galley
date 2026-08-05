@@ -137,11 +137,41 @@ describe('constructs', () => {
     expect(docToMarkdown(edited, loaded)).toContain('**bold [link](https://example.com) inside**');
   });
 
-  it('renders raw HTML as an editable code block rather than dropping it', () => {
+  it('holds raw HTML verbatim rather than turning it into a code block', () => {
+    // As a code block it round-tripped to a *fenced* block, so editing an HTML
+    // block turned it into ```html and it stopped being HTML.
     const source = '<div class="block">\n  <p>Raw.</p>\n</div>\n';
     const loaded = markdownToDoc(source);
-    expect(loaded.doc.child(0).type.name).toBe('code_block');
+    expect(loaded.doc.child(0).type.name).toBe('raw_block');
     expect(docToMarkdown(loaded.doc, loaded)).toBe(source);
+    expect(docToMarkdown(touch(loaded), loaded), 'HTML survived only because it was untouched').toBe(
+      source,
+    );
+  });
+
+  it('keeps reference links, footnotes and inline HTML through an edit', () => {
+    // Editing one word of a paragraph must not delete something else in it.
+    const source =
+      'See [the spec][spec] and a note[^1], with an <span class="x">inline element</span> and ' +
+      '![alt][img].\n\n[spec]: https://example.com/spec\n[img]: ./i.png\n[^1]: The note.\n';
+    const loaded = markdownToDoc(source);
+    const emitted = docToMarkdown(touch(loaded), loaded);
+
+    expect(emitted, 'a reference link was flattened').toContain('[the spec][spec]');
+    expect(emitted, 'a footnote reference vanished').toContain('[^1]');
+    expect(emitted, 'an image reference lost its alt text').toContain('![alt][img]');
+    expect(emitted, 'inline HTML came back escaped').toContain('<span class="x">');
+    expect(emitted).not.toContain('\\<span');
+  });
+
+  it('does not grow a body-less document on every save', () => {
+    // It gained one newline per open/save cycle, without bound.
+    let source = '---\ntitle: x\n---\n';
+    for (let i = 0; i < 5; i++) {
+      const loaded = markdownToDoc(source);
+      source = docToMarkdown(loaded.doc, loaded);
+    }
+    expect(source).toBe('---\ntitle: x\n---\n');
   });
 
   it('never emits a document that cannot be reparsed', () => {

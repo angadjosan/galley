@@ -32,6 +32,8 @@ export interface Loaded {
   readonly style: StyleProfile;
   /** Frontmatter and leading whitespace, carried across untouched. */
   readonly preamble: string;
+  /** False when the source had no body at all — only frontmatter, or nothing. */
+  readonly hadBody: boolean;
 }
 
 const CALLOUT = /^\[!([A-Za-z]+)\]([+-])?\s*/;
@@ -100,10 +102,15 @@ export function markdownToDoc(markdown: string): Loaded {
     );
   }
 
-  if (children.length === 0) children.push(schema.nodes.paragraph!.create());
+  // A document with no body still needs one node for the editor to have a
+  // cursor. It is recorded so `docToMarkdown` knows the body was empty and does
+  // not append a newline for it on every save — which grew the file without
+  // bound, one byte per open.
+  const hadBody = children.length > 0;
+  if (!hadBody) children.push(schema.nodes.paragraph!.create());
 
   const doc = schema.nodes.doc!.create(null, children);
-  return { doc, parsed, pristine: children, style: parsed.style, preamble };
+  return { doc, parsed, pristine: children, style: parsed.style, preamble, hadBody };
 }
 
 /** The mdast node behind a block, found by its start offset. */
@@ -195,15 +202,14 @@ function flowToNode(
       return schema.nodes.table!.create({ ...attrs, align: node.align ?? [] }, rows);
     }
     case 'html':
-      // Raw HTML has no rich representation and must survive untouched; render
-      // it as a code block so it is visible, editable and losslessly re-emitted.
-      return schema.nodes.code_block!.create({ ...attrs, lang: 'html' }, [schema.text(node.value)]);
+      // Held as an atom carrying its exact bytes, not as a code block: a code
+      // block round-trips to a *fenced* block, so editing an HTML block turned
+      // it into ```html and it stopped being HTML.
+      return schema.nodes.raw_block!.create({ ...attrs, raw: node.value });
     default:
       // Definitions, footnote definitions, anything the schema does not model:
       // keep the bytes rather than dropping the author's content.
-      return source
-        ? schema.nodes.raw_block!.create(attrs)
-        : null;
+      return source ? schema.nodes.raw_block!.create({ ...attrs, raw: source }) : null;
   }
 }
 
@@ -223,6 +229,17 @@ function trimTrailing(inline: readonly PhrasingContent[]): PhrasingContent[] {
     else out[out.length - 1] = { ...last, value: trimmed };
   }
   return out;
+}
+
+/** Flatten phrasing content to plain text, for an atom's display label. */
+function plainOf(children: readonly PhrasingContent[]): string {
+  return children
+    .map((child) => {
+      if (child.type === 'text' || child.type === 'inlineCode') return child.value;
+      const anyChild = child as { children?: PhrasingContent[] };
+      return anyChild.children ? plainOf(anyChild.children) : '';
+    })
+    .join('');
 }
 
 /** Remove the `[!NOTE]` label from a callout's first paragraph. */
@@ -281,7 +298,35 @@ function inlineToNodes(children: readonly PhrasingContent[], marks: readonly Mar
         out.push(schema.nodes.hard_break!.create());
         break;
       case 'html':
-        if (child.value) out.push(schema.text(child.value, marks as Mark[]));
+        // As an atom, not as text: text is escaped on the way out, so
+        // `<span class="x">` came back as `\<span class="x"\>`.
+        if (child.value) {
+          out.push(schema.nodes.inline_raw!.create({ source: child.value, label: child.value }));
+        }
+        break;
+      case 'linkReference':
+        out.push(
+          schema.nodes.inline_raw!.create({
+            source: `[${plainOf(child.children)}][${child.identifier}]`,
+            label: plainOf(child.children),
+          }),
+        );
+        break;
+      case 'imageReference':
+        out.push(
+          schema.nodes.inline_raw!.create({
+            source: `![${child.alt ?? ''}][${child.identifier}]`,
+            label: child.alt ?? child.identifier,
+          }),
+        );
+        break;
+      case 'footnoteReference':
+        out.push(
+          schema.nodes.inline_raw!.create({
+            source: `[^${child.identifier}]`,
+            label: `[${child.identifier}]`,
+          }),
+        );
         break;
       default: {
         const anyChild = child as { children?: PhrasingContent[]; value?: string };
@@ -298,6 +343,10 @@ function inlineToNodes(children: readonly PhrasingContent[], marks: readonly Mar
 // ---------------------------------------------------------------------------
 
 export function docToMarkdown(doc: PmNode, loaded: Loaded): string {
+  // Nothing was written into an empty document: emit exactly what came in.
+  if (!loaded.hadBody && doc.childCount === 1 && doc.child(0).content.size === 0) {
+    return loaded.preamble;
+  }
   const fallbackSeparator = loaded.style.eol.repeat(loaded.style.blockSpacing + 1);
   const parts: string[] = [];
 
@@ -337,7 +386,7 @@ function nodeToFlow(node: PmNode): RootContent {
     case 'horizontal_rule':
       return { type: 'thematicBreak' };
     case 'raw_block':
-      return { type: 'html', value: String(node.attrs.source ?? '') };
+      return { type: 'html', value: String(node.attrs.raw ?? node.attrs.source ?? '') };
     case 'blockquote':
       return { type: 'blockquote', children: childrenToFlow(node) };
     case 'callout': {
@@ -509,6 +558,12 @@ function wrapMark(mark: Mark, children: PhrasingContent[]): PhrasingContent {
 
 function nodeToPhrasing(node: PmNode): PhrasingContent {
   if (node.type.name === 'hard_break') return { type: 'break' };
+  // `html` is the verbatim escape hatch in mdast: the serializer emits its
+  // value untouched, which is exactly what an atom holding original source
+  // needs.
+  if (node.type.name === 'inline_raw') {
+    return { type: 'html', value: String(node.attrs.source ?? '') };
+  }
   if (node.type.name === 'image') {
     return {
       type: 'image',

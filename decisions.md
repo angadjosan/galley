@@ -828,3 +828,32 @@ carrying O(peers) entries — roughly 70 MB/s of egress at 32 clients, for
 information that is stale in a tenth of a second. Presence is now coalesced to
 10 Hz with a trailing edge, and a client's cursor block id is capped, because it
 is echoed to every peer and an oversized one is amplified N times per keystroke.
+
+---
+
+## D34 — The editor holds what it cannot represent, rather than approximating it
+
+Three defects, one cause: the conversion into ProseMirror had no case for a
+construct, so it fell through to a default that *looked* reasonable and lost
+information.
+
+- **Reference links, footnote references, image references and inline HTML**
+  were flattened. `[the spec][spec]` became the words "the spec" with the
+  definition left dangling; `[^1]` vanished; `![alt][img]` lost its alt text;
+  `<span class="x">` came back escaped. Editing one word of a paragraph deleted
+  something else in it.
+- **An HTML block** was rendered as a code block, and a code block round-trips
+  to a *fenced* block — so editing it turned `<div>…</div>` into ```` ```html ````
+  and it stopped being HTML.
+- **A body-less document** gained a newline on every open and save, without
+  bound.
+
+The rule now: anything the schema cannot model is held as an **atom carrying its
+exact source**, shown as a labelled chip, and re-emitted verbatim. Shown, not
+editable, is an honest third answer between dropping it and approximating it.
+
+One detail worth its own note: a raw block's content lives in a `raw` attribute,
+separate from the `source` attribute every block carries for the round-trip fast
+path. They look redundant and are not — `source` is cleared whenever a block is
+considered changed, and clearing a raw block's *content* along with it would
+delete what it holds. A test caught that within a minute of the first attempt.
