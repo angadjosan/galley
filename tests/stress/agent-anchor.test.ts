@@ -440,6 +440,77 @@ describe('KNOWN BUG: an unedited document orphans every anchor when paragraphs r
   });
 });
 
+describe('KNOWN BUG: a deleted list is claimed by the list that absorbed its items', () => {
+  // `textSimilarity` (packages/anchor/src/fingerprint.ts:151) falls back to the
+  // overlap coefficient when both shingle sets are large and their size ratio
+  // is under `OVERLAP_MAX_SIZE_RATIO` (2.5). Its own comment names the case it
+  // is supposed to exclude — "a deleted block's sentences were folded into a
+  // surviving neighbour" — but the guard is on set size, and two lists merged
+  // into one stay well inside 2.5x. Containment then scores 1.0, discounted to
+  // 0.95, and the deleted list's anchor attaches to the merged one.
+  //
+  // Container blocks are the ones that matter here: a list cannot carry an
+  // inline marker at all (see the marker rationale in
+  // packages/markdown/src/parse.ts:15), so it depends entirely on this path.
+  //
+  // This is also what makes `packages/anchor/test/benchmark.test.ts` fail once
+  // list-heavy documents are in the corpus: at seed 0xa9c40 it reports four
+  // misattachments, all of this shape, against a gate of zero.
+  const before =
+    '# Runbook\n\n' +
+    'Preparation steps:\n\n' +
+    '* provision the staging cluster and confirm every node reports healthy\n' +
+    '* run the pending schema migration against the staging database instance\n\n' +
+    'Verification steps:\n\n' +
+    '- confirm the health endpoint returns a green status for every region\n' +
+    '- notify the on-call engineer that the deploy window has now opened\n';
+  // The preparation list is deleted; its items are folded into the other list.
+  const after =
+    '# Runbook\n\n' +
+    'Verification steps:\n\n' +
+    '- confirm the health endpoint returns a green status for every region\n' +
+    '- notify the on-call engineer that the deploy window has now opened\n' +
+    '- provision the staging cluster and confirm every node reports healthy\n' +
+    '- run the pending schema migration against the staging database instance\n';
+
+  function resolveDeletedList() {
+    const doc = parseDocument(before);
+    const prints = fingerprintDocument(doc);
+    const index = doc.blocks.findIndex((b) => b.type === 'list' && b.text.includes('provision'));
+    return reanchor(
+      [{ id: 'comment-on-preparation-list', fingerprint: prints[index]! }],
+      parseDocument(after),
+    ).resolutions[0]!;
+  }
+
+  it.fails('orphans a comment on a list that no longer exists', () => {
+    expect(resolveDeletedList().blockIndex).toBe(null);
+  });
+
+  it('demonstrates the defect, and that containment is what drives it', () => {
+    const r = resolveDeletedList();
+    expect(r.method).toBe('fuzzy');
+    expect(r.confidence).toBeGreaterThan(0.8);
+    expect(r.runnerUp).toBe(0);
+    expect(parseDocument(after).blocks[r.blockIndex!]!.text).toContain('confirm the health endpoint');
+
+    // The deleted list's trigrams are wholly contained in the surviving one,
+    // and the size ratio sits under the 2.5 guard, so the overlap path fires.
+    const deleted = shingle(
+      parseDocument(before).blocks.find((b) => b.type === 'list' && b.text.includes('provision'))!
+        .text,
+    );
+    const survivor = shingle(parseDocument(after).blocks.find((b) => b.type === 'list')!.text);
+    expect(overlapCoefficient(deleted, survivor)).toBe(1);
+    expect(Math.max(deleted.size, survivor.size) / Math.min(deleted.size, survivor.size)).toBeLessThan(
+      2.5,
+    );
+    expect(textSimilarity(deleted, survivor)).toBeCloseTo(0.95, 2);
+    // Dice alone would have scored it far lower.
+    expect(diceSimilarity(deleted, survivor)).toBeLessThan(0.75);
+  });
+});
+
 describe('KNOWN BUG: an anchor jumps to a near-identical twin when its own block is deleted', () => {
   // The ambiguity guard compares a candidate against the *other candidates that
   // still exist*. When a document contains two near-identical paragraphs and

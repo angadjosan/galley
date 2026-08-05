@@ -63,14 +63,17 @@ describe('documents', () => {
     ).rejects.toMatchObject({ status: 409 });
   });
 
-  it('rejects a path that escapes the workspace', async () => {
+  it('rejects a path that escapes the workspace, with a 400 rather than a 500', async () => {
+    // A refusal is a correct answer to a bad request. Returning 500 says the
+    // server broke, which is both wrong and the kind of thing that pages
+    // someone at 3am over a typo.
     const h = await open();
-    await expect(
-      h.json('/v1/docs', {
-        method: 'POST',
-        body: JSON.stringify({ path: '../../etc/passwd', content: 'x' }),
-      }),
-    ).rejects.toThrow(/may not contain/);
+    for (const path of ['../../etc/passwd', 'specs/../../escape', '.', '   ', '//', 'a/../b']) {
+      await expect(
+        h.json('/v1/docs', { method: 'POST', body: JSON.stringify({ path, content: 'x' }) }),
+        `path ${JSON.stringify(path)} was not refused with a 400`,
+      ).rejects.toMatchObject({ status: 400 });
+    }
   });
 
   it('strips id markers from every read', async () => {

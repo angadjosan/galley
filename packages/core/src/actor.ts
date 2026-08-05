@@ -25,6 +25,7 @@ import {
 import { describePrincipal, type Principal } from './principals.js';
 import {
   History,
+  isPlumbing,
   revisionAuthor,
   summarize,
   touchedBlocks,
@@ -656,10 +657,15 @@ export class DocumentActor {
   checkpoint(name: string, principal: Principal): Promise<Checkpoint> {
     return this.sequencer.run(this.docId, async () => {
       this.assertLive();
+      // Name the ticket of the latest *revision*, not the current cursor.
+      // Checkpointing issues its own ticket, so the cursor is already past the
+      // last change — and a checkpoint at a ticket no revision holds names a
+      // moment the timeline cannot show and `restore` cannot find.
+      const latest = this.history.list(1)[0];
       const checkpoint: Checkpoint = {
         id: blockId(),
         name,
-        ticket: this.sequencer.watermark.cursor,
+        ticket: latest?.ticket ?? this.sequencer.watermark.cursor,
         at: this.now(),
         byId: principal.id,
       };
@@ -728,6 +734,7 @@ export class DocumentActor {
     summary?: string;
     blockIds?: readonly string[];
   }): void {
+    if (isPlumbing(input.ops)) return;
     const author = revisionAuthor(input.principal);
     const revision: Revision = {
       ticket: input.ticket,

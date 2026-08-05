@@ -216,3 +216,37 @@ describe('restore', () => {
     await expect(actor.restore(999_999, PRIYA)).rejects.toThrow(/no revision at ticket 999999/);
   });
 });
+
+describe('a checkpoint names a moment the timeline can show', () => {
+  it('points at the latest revision, not at a ticket nothing holds', async () => {
+    // Checkpointing issues its own sequencer ticket, so the cursor is already
+    // past the last change. A checkpoint at that ticket names a moment the
+    // timeline cannot render and `restore` cannot find.
+    const { actor, ids } = await seeded();
+    await actor.applyOps([{ kind: 'replace', target: ids[1]!, markdown: 'The named version.' }], PRIYA);
+    const checkpoint = await actor.checkpoint('review copy', PRIYA);
+
+    const revisions = actor.listRevisions();
+    expect(revisions.map((r) => r.ticket)).toContain(checkpoint.ticket);
+
+    // And restoring it works, which is the whole point of naming it.
+    await actor.applyOps([{ kind: 'replace', target: ids[1]!, markdown: 'A later edit.' }], PRIYA);
+    await actor.restore(checkpoint.ticket, PRIYA);
+    expect(await actor.read()).toContain('The named version.');
+  });
+});
+
+describe('the timeline shows changes, not plumbing', () => {
+  it('does not record a revision for materializing an id', async () => {
+    // Materializing an id is Galley writing its own bookkeeping. Nobody wrote
+    // anything, and putting it in the timeline buries the real changes.
+    const actor = new DocumentActor(GalleyDocument.create(DOC));
+    await actor.applyOps([{ kind: 'materialize', target: '@1', id: 'x1' }], PRIYA);
+    expect(actor.listRevisions()).toEqual([]);
+    expect(actor.attributionFor('x1'), 'minting an id does not make you the author').toBeUndefined();
+
+    await actor.applyOps([{ kind: 'replace', target: 'x1', markdown: 'A real change.' }], PRIYA);
+    expect(actor.listRevisions()).toHaveLength(1);
+    expect(actor.attributionFor('x1')!.authorName).toBe('priya');
+  });
+});

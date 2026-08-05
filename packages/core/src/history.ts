@@ -115,6 +115,18 @@ function manyOf(kind: string): string {
   }
 }
 
+/**
+ * True when an operation set only writes Galley's own plumbing.
+ *
+ * Materializing an id is not a change to the document — nobody wrote anything —
+ * and putting it in the timeline buries the changes people actually made under
+ * a wall of "anchored a block". Attribution skips it for the same reason:
+ * minting an id does not make you the author of the paragraph.
+ */
+export function isPlumbing(ops: readonly BlockOp[]): boolean {
+  return ops.length > 0 && ops.every((op) => op.kind === 'materialize' || op.kind === 'dematerialize');
+}
+
 /** Block ids an operation set touches, for attribution. */
 export function touchedBlocks(ops: readonly BlockOp[]): string[] {
   const ids = new Set<string>();

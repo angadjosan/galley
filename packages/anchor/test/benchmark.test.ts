@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { makeRng, type Rng } from '@galley/concurrency';
 import { parseDocument, type ParsedDocument } from '@galley/markdown';
-import { anchorsFor, fingerprintBlock, reanchor, type Anchor } from '../src/index.js';
+import { anchorsFor, fingerprintBlock, normalizeText, reanchor, type Anchor } from '../src/index.js';
 
 const CORPUS_DIR = join(import.meta.dirname, '../../../corpus/roundtrip');
 /**
@@ -275,14 +275,27 @@ function runTrial(doc: ParsedDocument, rng: Rng, intensity: number, tally: Tally
     });
 
     if (acceptable.length === 0) {
-      // Nothing of *this* block survives — but an identical block elsewhere in
-      // the document may. Matching that one is correct behaviour, not a
-      // misattachment, and there is no way for the matcher to tell them apart;
-      // that is the ambiguity case, tested directly in `reanchor.test.ts`.
-      const duplicated = rewritten.blocks.some(
-        (b) => b.depth === 0 && b.text.trim() === anchor.fingerprint.text.trim(),
-      );
-      if (duplicated) continue;
+      // Nothing of *this* block survives as its own block — but its content may
+      // still be on the page, in two ways the matcher cannot be blamed for:
+      //
+      //  - an identical block elsewhere, which is the ambiguity case tested
+      //    directly in `reanchor.test.ts`;
+      //  - **absorption**: deleting a paragraph between two lists makes them
+      //    adjacent, and CommonMark merges them into one. The deleted list's
+      //    items are now inside the survivor, so matching it is defensible
+      //    rather than wrong.
+      //
+      // Both are excluded from the misattachment count and from the survival
+      // rate; neither is quietly counted as a success.
+      const wantedText = normalizeText(anchor.fingerprint.text).trim();
+      const absorbed =
+        wantedText.length > 0 &&
+        rewritten.blocks.some((b) => {
+          if (b.depth !== 0) return false;
+          const candidate = normalizeText(b.text).trim();
+          return candidate === wantedText || candidate.includes(wantedText);
+        });
+      if (absorbed) continue;
 
       // Orphaning is the only correct answer; pointing at any surviving block
       // is a misattachment.
