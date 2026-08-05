@@ -11,4 +11,5 @@ export * from './reconcile.js';
 export * from './document.js';
 export * from './principals.js';
 export * from './sidecar.js';
+export * from './context.js';
 export * from './actor.js';

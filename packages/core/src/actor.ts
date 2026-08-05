@@ -143,9 +143,22 @@ export class DocumentActor {
     }
   }
 
+  /**
+   * One block's source, by materialized id or by `@index`.
+   *
+   * `@index` exists because not every block carries a durable id — only ones
+   * that acquired something durable do. A search hit or a citation on an
+   * un-annotated paragraph still has to resolve, and minting an id just to
+   * answer a read would write a marker into the file for nothing.
+   */
   async readBlock(id: string): Promise<string | null> {
     return this.lock.withRead(() => {
-      const block = this.doc.parsed().blocks.find((b) => b.id === id);
+      const blocks = this.doc.parsed().blocks;
+      if (id.startsWith('@')) {
+        const index = Number(id.slice(1));
+        return Number.isInteger(index) ? (blocks[index]?.source ?? null) : null;
+      }
+      const block = blocks.find((b) => b.id === id);
       return block ? block.source : null;
     });
   }
@@ -585,6 +598,32 @@ export class DocumentActor {
         this.emit({ kind: 'suggestion', suggestion });
       }
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Rehydration
+  // -------------------------------------------------------------------------
+
+  /**
+   * Restore sidecar state loaded from storage.
+   *
+   * A document that was evicted and reopened must come back with its comments,
+   * proposals and orphan tray intact — otherwise eviction is a data-loss
+   * mechanism that only shows up under memory pressure, which is the worst
+   * possible time to discover it. `adopt*` deliberately does not emit events:
+   * nothing has happened, the actor is merely catching up with what is already
+   * durable.
+   */
+  adoptComment(comment: Comment): void {
+    this.comments.set(comment.id, comment);
+  }
+
+  adoptSuggestion(suggestion: Suggestion): void {
+    this.suggestions.set(suggestion.id, suggestion);
+  }
+
+  adoptOrphan(orphan: OrphanedAnchor): void {
+    this.orphanTray.set(orphan.anchorId, orphan);
   }
 
   // -------------------------------------------------------------------------

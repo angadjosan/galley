@@ -316,3 +316,65 @@ Staleness is judged on **content hashes, not timestamps**. A block edited and
 then edited back is byte-identical to what the proposer saw — but it still goes
 stale on the first edit, and stays stale, because the author never saw the round
 trip and the reviewer should know one happened.
+
+---
+
+## D14 — `node:sqlite`, loaded through `process.getBuiltinModule`
+
+**Storage:** `node:sqlite` rather than `better-sqlite3`. It ships with the
+runtime, so there is no native build step in the install path — which matters
+disproportionately for a product whose CLI people install on a laptop and expect
+to work immediately. It carries FTS5, which is the only non-obvious requirement.
+
+**Loading:** `process.getBuiltinModule('node:sqlite')`, not a static import.
+Bundlers do not yet recognise it as a builtin and try to resolve it as a package
+on disk. This form is opaque to static analysis and resolves to the same module
+at runtime, so the test runner, a bundled CLI, and a plain `node` process all
+behave identically. A bundler config workaround would have to be repeated in
+every consumer; this is fixed once, here.
+
+**The synchronous API is a feature.** A synchronous critical section cannot be
+interleaved by the event loop, so a multi-statement transaction is atomic
+without any locking discipline of its own. The obligation it creates is stated
+in the file: every statement is prepared once and no query is unbounded.
+
+---
+
+## D15 — A slow sync client is disconnected, never dropped-to and never waited-on
+
+Three options for a WebSocket client that stops reading:
+
+| Policy | Failure |
+|---|---|
+| Block | One stalled browser tab stalls everyone's editing. |
+| Drop frames | The client misses a CRDT operation and is **permanently diverged**, while looking fine. |
+| Disconnect | Costs that client a reconnect. Costs everyone else nothing. |
+
+Disconnect is the only one that cannot leave a document looking correct while
+being wrong. The outbound channel is therefore `reject`-on-full rather than
+`drop-oldest`: a full buffer means "this client is behind", and the answer is to
+close it with a reason and let it resync from a snapshot.
+
+Two follow-on details the tests forced out:
+
+**A graceful close must flush before the socket goes.** The first implementation
+closed the socket inside `close()`, which threw away the queued `ended` frame —
+the one frame the client most needs, because it says *why*. The channel now
+closes, the writer drains it, and the writer closes the socket.
+
+**A close handshake needs a grace period.** `ws` waits 30 seconds for the peer
+to answer a close, and the peer being closed is very often precisely the one
+that stopped reading. That pinned a socket, a connection slot and a document
+reference for 30 seconds per dead client. There is now a one-second grace period
+and then `terminate()`. Found because a test took 30 seconds; it was a server
+defect, not a slow test.
+
+---
+
+## D16 — Whole-document replacement is refused by the server, not just the CLI
+
+`idea.md` puts this in the CLI: "the CLI enforces the shape, because etiquette
+that isn't enforced is a suggestion to a model." The same argument applies one
+layer down — the CLI is not the only thing that will ever call the API. An
+operation set that deletes every anchored block in a document is refused with a
+message naming the alternative, at the HTTP boundary.
