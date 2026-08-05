@@ -25,17 +25,30 @@ import { parseDocument, type ParsedDocument } from '@galley/markdown';
 import { anchorsFor, fingerprintBlock, reanchor, type Anchor } from '../src/index.js';
 
 const CORPUS_DIR = join(import.meta.dirname, '../../../corpus/roundtrip');
-const REPO_ROOT = join(import.meta.dirname, '../../..');
+/**
+ * A *frozen* copy of this repo's design docs.
+ *
+ * The benchmark used to read them from the repo root, which found real cases —
+ * two of the misattachments fixed here came from prose written after the gate
+ * was first met. But a gate whose corpus changes every time someone edits a
+ * document is not a gate: it can go red on a commit that touched no code, and
+ * the first person to see that will assume it is noise.
+ *
+ * So the corpus is snapshotted. Refresh it deliberately (`cp *.md
+ * corpus/prose/`) when you want the newer prose under test, and treat a failure
+ * after a refresh as what it is — a real finding on new input.
+ */
+const PROSE_DIR = join(import.meta.dirname, '../../../corpus/prose');
 
 const DOCUMENTS = [
   ...readdirSync(CORPUS_DIR)
     .filter((f) => f.endsWith('.md'))
     .sort()
     .map((name) => ({ name, source: readFileSync(join(CORPUS_DIR, name), 'utf8') })),
-  ...['idea.md', 'tradeoffs.md', 'decisions.md'].map((name) => ({
-    name: `repo/${name}`,
-    source: readFileSync(join(REPO_ROOT, name), 'utf8'),
-  })),
+  ...readdirSync(PROSE_DIR)
+    .filter((f) => f.endsWith('.md'))
+    .sort()
+    .map((name) => ({ name: `prose/${name}`, source: readFileSync(join(PROSE_DIR, name), 'utf8') })),
 ];
 
 // ---------------------------------------------------------------------------
@@ -56,14 +69,18 @@ type Mutation =
 interface LogicalBlock {
   /** Stable identity for scoring. Never appears in the emitted Markdown. */
   readonly key: string;
+  /**
+   * The key of the *original* block this one descends from.
+   *
+   * Ground truth is tracked by identity rather than by text. The first version
+   * recorded each block's fragment texts at split time, which went stale the
+   * moment a fragment was reworded — and the matcher got blamed for a
+   * bookkeeping error in the generator. Origin cannot go stale.
+   */
+  readonly origin: string;
   text: string;
   /** True once the block has been removed by a mutation. */
   deleted: boolean;
-  /**
-   * Every fragment this block was split into, if it was. Any of them is an
-   * acceptable resolution target.
-   */
-  siblings?: string[];
 }
 
 const FILLER = [
@@ -122,7 +139,7 @@ function mutate(
   // container, which is not what an agent rewriting prose produces.
   const blocks: LogicalBlock[] = doc.blocks
     .filter((b) => b.depth === 0)
-    .map((b, i) => ({ key: `k${i}`, text: b.source, deleted: false }));
+    .map((b, i) => ({ key: `k${i}`, origin: `k${i}`, text: b.source, deleted: false }));
 
   const prose = (index: number): boolean => {
     const text = blocks[index]?.text ?? '';
@@ -153,18 +170,19 @@ function mutate(
       mutations.push('expand');
     } else if (roll < 0.72) {
       // Insert a brand-new block. It has no anchor, and must not steal one.
-      blocks.splice(index, 0, { key: `new${n}`, text: rng.pick(FILLER), deleted: false });
+      blocks.splice(index, 0, {
+        key: `new${n}`,
+        origin: `new${n}`,
+        text: rng.pick(FILLER),
+        deleted: false,
+      });
       mutations.push('insert');
     } else if (roll < 0.8) {
       // Delete removes *this fragment*. If the block had been split earlier,
       // its other fragments are still on the page and still legitimately the
-      // original paragraph — so identity is only truly gone when every
-      // fragment is.
-      const removed = blocks[index]!.text;
+      // original paragraph — so identity is only truly gone when every fragment
+      // is, which the origin-based truth below works out on its own.
       blocks[index]!.deleted = true;
-      if (blocks[index]!.siblings) {
-        blocks[index]!.siblings = blocks[index]!.siblings!.filter((f) => f !== removed);
-      }
       mutations.push('delete');
     } else if (roll < 0.9) {
       const [moved] = blocks.splice(index, 1);
@@ -179,21 +197,19 @@ function mutate(
       // and a reviewer looking at a comment on the original would accept
       // either. Asserting one of them would be asserting a fact that is not
       // true of the domain — so both are accepted, and landing anywhere else
-      // is still a misattachment.
+      // is still a misattachment. The set is derived from `origin`, so it stays
+      // correct however many times the fragments are split or reworded after.
       const text = blocks[index]!.text;
       const at = Math.floor(text.length / 2);
       const boundary = text.indexOf(' ', at);
       if (boundary > 0) {
-        const head = text.slice(0, boundary);
-        const tail = text.slice(boundary + 1);
-        // A block can be split more than once. Replace the fragment that was
-        // split with the two it became, rather than overwriting the set — the
-        // acceptable targets are every surviving fragment, not just the last
-        // pair produced.
-        const fragments = blocks[index]!.siblings ?? [text];
-        blocks[index]!.text = head;
-        blocks[index]!.siblings = fragments.filter((f) => f !== text).concat([head, tail]);
-        blocks.splice(index + 1, 0, { key: `split${n}`, text: tail, deleted: false });
+        blocks[index]!.text = text.slice(0, boundary);
+        blocks.splice(index + 1, 0, {
+          key: `split${n}`,
+          origin: blocks[index]!.origin,
+          text: text.slice(boundary + 1),
+          deleted: false,
+        });
         mutations.push('split');
       }
     }
@@ -202,11 +218,14 @@ function mutate(
   const live = blocks.filter((b) => !b.deleted);
   const markdown = `${live.map((b) => b.text).join('\n\n')}\n`;
 
-  // Acceptable targets per original block. An empty list means "nothing of this
-  // block survives"; the only correct resolution is then an orphan.
+  // Acceptable targets per original block: the current text of every live block
+  // descended from it. An empty list means "nothing of this block survives";
+  // the only correct resolution is then an orphan.
   const truth = new Map<string, string[]>();
+  for (const block of blocks) truth.set(block.origin, []);
   for (const block of blocks) {
-    truth.set(block.key, block.siblings ?? (block.deleted ? [] : [block.text]));
+    if (block.deleted) continue;
+    truth.get(block.origin)!.push(block.text);
   }
   return { markdown, truth, mutations };
 }
@@ -256,8 +275,17 @@ function runTrial(doc: ParsedDocument, rng: Rng, intensity: number, tally: Tally
     });
 
     if (acceptable.length === 0) {
-      // Nothing of this block survives. Orphaning is the only correct answer;
-      // pointing at any surviving block is a misattachment.
+      // Nothing of *this* block survives — but an identical block elsewhere in
+      // the document may. Matching that one is correct behaviour, not a
+      // misattachment, and there is no way for the matcher to tell them apart;
+      // that is the ambiguity case, tested directly in `reanchor.test.ts`.
+      const duplicated = rewritten.blocks.some(
+        (b) => b.depth === 0 && b.text.trim() === anchor.fingerprint.text.trim(),
+      );
+      if (duplicated) continue;
+
+      // Orphaning is the only correct answer; pointing at any surviving block
+      // is a misattachment.
       tally.anchors++;
       if (resolution.blockIndex === null) tally.deletedCorrectlyOrphaned++;
       else {

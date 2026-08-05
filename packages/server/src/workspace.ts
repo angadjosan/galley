@@ -119,6 +119,7 @@ export class Workspace {
     await this.persist(doc.docId, true);
     this.audit(principal, 'document.create', doc.docId, normalized);
     this.counters.inc('documents-created');
+    void this.evictIfNeeded();
     return actor;
   }
 
@@ -135,7 +136,7 @@ export class Workspace {
     try {
       // Single-flight *and* a keyed lock: the first collapses concurrent
       // callers, the second keeps an open from racing an evict of the same id.
-      return await this.loads.run(docId, () =>
+      const actor = await this.loads.run(docId, () =>
         this.locks.runExclusive(docId, async () => {
           const again = this.open.get(docId);
           if (again) {
@@ -145,12 +146,20 @@ export class Workspace {
           const stored = await this.store.read(() => this.store.getDocument(docId));
           if (!stored) throw new Error(`no document ${docId}`);
           const doc = GalleyDocument.open(stored.snapshot);
-          const actor = this.attach(doc, stored.path);
-          this.rehydrate(actor, docId);
+          const loaded = this.attach(doc, stored.path);
+          this.rehydrate(loaded, docId);
           this.counters.inc('open-miss');
-          return actor;
+          return loaded;
         }),
       );
+      // Eviction takes *other* documents' locks, so it must run with none held.
+      // Doing it inside the open above is a textbook lock-order inversion: two
+      // concurrent opens each hold their own document and reach for the other's.
+      // The `KeyedMutex` order check caught exactly that under the cross-document
+      // storm — a deadlock that would otherwise have shown up as a hang under
+      // memory pressure, months later.
+      void this.evictIfNeeded();
+      return actor;
     } finally {
       stop();
     }
@@ -205,7 +214,6 @@ export class Workspace {
       }
     })();
 
-    void this.evictIfNeeded();
     return actor;
   }
 
@@ -325,9 +333,27 @@ export class Workspace {
     });
   }
 
-  /** Evict the least recently used idle documents until under the cap. */
+  /**
+   * Evict the least recently used idle documents until under the cap.
+   *
+   * **Must be called with no document lock held.** It acquires other
+   * documents' locks, and doing that from inside one is a lock-order inversion.
+   */
   private async evictIfNeeded(): Promise<void> {
+    if (this.evicting) return;
     if (this.open.size <= this.maxOpen) return;
+    this.evicting = true;
+    try {
+      await this.evictNow();
+    } catch {
+      // An eviction that loses a race with a close is not an error; the next
+      // open will try again.
+    } finally {
+      this.evicting = false;
+    }
+  }
+
+  private async evictNow(): Promise<void> {
     const candidates = [...this.open.entries()]
       // Never evict a document with work in flight: closing it underneath a
       // running operation would drop the operation.
@@ -340,6 +366,8 @@ export class Workspace {
       this.counters.inc('evictions');
     }
   }
+
+  private evicting = false;
 
   // -------------------------------------------------------------------------
   // Search
