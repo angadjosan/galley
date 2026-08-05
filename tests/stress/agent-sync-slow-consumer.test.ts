@@ -127,19 +127,30 @@ describe('slow-consumer isolation', () => {
     }
   }, 300_000);
 
-  it('measures whether a stalled subscriber is ever evicted, and what it costs until then', async () => {
+  it('measures whether a stalled subscriber is ever evicted, and where its frames pile up', async () => {
     // Claim under test, from sync.ts: "a client that cannot keep up is closed
     // with a reason, and reconnects with a fresh snapshot". The outbound
     // Channel has capacity 512 and overflow 'reject', so the eviction is
     // supposed to fire once 512 frames are outstanding for one client.
     //
-    // Whether it *can* fire depends on the writer loop in server.ts applying
-    // backpressure from the socket back into the channel.
+    // Whether it *can* fire depends on the writer loop in server.ts pushing
+    // socket backpressure back into the channel. That loop calls
+    // `socket.send(...)` without waiting for a drain callback, so this test
+    // asks where the bytes actually accumulate.
+    //
+    // The frames are presence broadcasts rather than document edits: presence
+    // takes the same `offer()` path into the same outbound channel, and unlike
+    // an edit it does not grow the document, so 2000 frames cost O(1) each
+    // rather than O(document) each.
     const f = await fixture('slow-eviction');
     const docId = await f.createDoc('specs/slow-eviction', DOC);
     const url = f.syncUrl(docId);
     const writer = new SyncClient(url);
     const victim = new SyncClient(url);
+    // The server echoes a client-supplied cursor verbatim to every peer, so a
+    // large blockId is the cheapest way to make each broadcast frame big
+    // enough that a paused socket genuinely cannot absorb it in kernel buffers.
+    const fatBlockId = 'b'.repeat(8_000);
 
     try {
       await Promise.all([writer.welcomed(), victim.welcomed()]);
@@ -147,22 +158,22 @@ describe('slow-consumer isolation', () => {
       await tick(20);
 
       const samples: { frames: number; channelDepth: number; buffered: number }[] = [];
-      const total = 4_000; // ~8x the outbound channel's 512-frame capacity.
+      const total = 2_000; // ~4x the outbound channel's 512-frame capacity.
       for (let i = 0; i < total; i++) {
-        writer.edit(`Flood ${i}.`);
-        if (i % 500 === 499) {
+        writer.presence(fatBlockId, i);
+        if (i % 250 === 249) {
           await tick(5);
-          const connection = f.server.hub
-            .connectionsFor(docId)
-            .find((c) => c.socket !== writer.socket && !c.isClosed);
+          // Connections are returned in attach order: the writer connected
+          // first, the victim second.
+          const victimConn = f.server.hub.connectionsFor(docId)[1];
           samples.push({
             frames: i + 1,
-            channelDepth: connection?.outbound.depth ?? -1,
-            buffered: connection?.socket.bufferedAmount ?? -1,
+            channelDepth: victimConn?.outbound.depth ?? -1,
+            buffered: victimConn?.socket.bufferedAmount ?? -1,
           });
         }
       }
-      await tick(300);
+      await tick(500);
 
       console.log('stalled subscriber, frames offered vs where they are held:');
       console.log('  frames    outbound channel depth    socket bufferedAmount');
@@ -173,24 +184,31 @@ describe('slow-consumer isolation', () => {
         );
       }
       const evictions = f.server.hub.counters.get('slow-client-disconnects');
+      const last = samples[samples.length - 1]!;
       console.log(`  slow-client-disconnects after ${total} frames: ${evictions}`);
       console.log(`  victim socket state: ${victim.isOpen ? 'open' : 'closed'}`);
-      const last = samples[samples.length - 1]!;
       console.log(
-        `  memory held on behalf of one stalled client: ${(last.buffered / 1_000_000).toFixed(2)} MB ` +
-          `across ${last.channelDepth} channel slots + the socket write buffer`,
+        `  peak memory held for one stalled client: ` +
+          `${(Math.max(...samples.map((s) => s.buffered)) / 1_000_000).toFixed(2)} MB in the socket ` +
+          `write buffer, ${Math.max(...samples.map((s) => s.channelDepth))} frames in the channel`,
+      );
+      console.log(
+        `  offered ~${((total * fatBlockId.length) / 1_000_000).toFixed(1)} MB; ` +
+          `channel cap is 512 frames`,
       );
 
       // Shape: the frames offered to a stalled client have to be *somewhere*.
-      // Either the channel is holding them (in which case the 512-frame cap
-      // fires and the client is evicted), or the socket write buffer is, in
-      // which case the cap is unreachable and the memory is unbounded. This
-      // asserts that exactly one of those is true and prints which — the
-      // failure mode worth catching is neither being true, i.e. frames lost.
-      const held = last.channelDepth >= 0 || evictions > 0;
-      expect(held, 'frames offered to a stalled client vanished without eviction').toBe(true);
+      // Either the channel holds them (the 512-frame cap fires and the client
+      // is evicted), or the socket write buffer does, in which case the cap is
+      // unreachable and server memory grows with client-controlled input. This
+      // asserts one of the two is observably true, and prints which.
+      const heldSomewhere = last.buffered > 0 || last.channelDepth > 0 || evictions > 0;
+      expect(heldSomewhere, 'frames offered to a stalled client vanished without eviction').toBe(
+        true,
+      );
 
-      // The outbound channel is capacity-bounded by construction.
+      // The outbound channel is capacity-bounded by construction, whatever the
+      // socket buffer does.
       expect(last.channelDepth).toBeLessThanOrEqual(512);
     } finally {
       closeAll([writer, victim]);

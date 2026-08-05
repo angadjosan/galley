@@ -20,7 +20,15 @@
 import { describe, expect, it } from 'vitest';
 import { makeRng } from '@galley/concurrency';
 import { parseDocument } from '@galley/markdown';
-import { fingerprintDocument, reanchor, type Anchor } from '@galley/anchor';
+import {
+  diceSimilarity,
+  fingerprintDocument,
+  overlapCoefficient,
+  reanchor,
+  shingle,
+  textSimilarity,
+  type Anchor,
+} from '@galley/anchor';
 
 const TOPICS = [
   'the refund window is thirty calendar days measured from the delivery date',

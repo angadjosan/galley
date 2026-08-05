@@ -196,3 +196,27 @@ a local edit made during someone else's keystroke is resolved by the server
 rather than locally. Both are invisible at the latency the sync path actually
 runs at, and both become better rather than different when the local replica
 lands.
+
+---
+
+## Validating inbound CRDT updates: trust versus a snapshot round trip
+
+**Status:** decided (validate). See `decisions.md` D29.
+
+**Taken:** every inbound `update` frame is applied to a throwaway copy of the
+document and checked — does the document still know which document it is? — and
+only then applied for real.
+
+**Rejected:** trusting the connection. The client authenticated, and it has
+write access to *this* document, so the reasoning goes that its operations are
+its own business. That reasoning is wrong in one specific way: a client with
+write access to document A can send A's operations on B's socket, and CRDT
+operations from a different document merge without complaint because both use
+the same container names. The result parses, so nothing downstream notices.
+
+**Cost accepted:** a snapshot round trip per inbound update. Measurable, and
+cheap next to a document that quietly claims a foreign identity.
+
+**Better later:** Loro exposes enough to check the incoming ops' container ids
+directly, which would make this O(update) rather than O(document). Worth doing
+when the sync path is next touched; not worth blocking correctness on now.

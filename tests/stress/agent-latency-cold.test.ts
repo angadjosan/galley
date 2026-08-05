@@ -173,14 +173,15 @@ describe('cold versus warm documents', () => {
           `${(largest.cold / largest.warm).toFixed(1)}× a warm one`,
       ).toBeLessThan(20);
 
-      // The penalty grows with the document, because the reload is proportional
-      // to the snapshot. Flat growth would mean the reload is dominated by fixed
-      // cost and the cap could be much smaller than it is.
+      // The reload grows with the document, because it is proportional to the
+      // snapshot. Flat growth would mean the reload is dominated by fixed cost,
+      // and the cap could be far smaller than it is.
       const smallest = rows[0]!;
       expect(
-        largest.cold - largest.warm,
-        'the eviction penalty did not grow with document size',
-      ).toBeGreaterThan(smallest.cold - smallest.warm);
+        largest.open,
+        `the reload did not grow with document size: ${smallest.open.toFixed(2)}ms at ` +
+          `${smallest.blocks} blocks, ${largest.open.toFixed(2)}ms at ${largest.blocks}`,
+      ).toBeGreaterThan(smallest.open);
     } finally {
       await server.close();
     }

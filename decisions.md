@@ -666,3 +666,78 @@ Every command path now funnels through one wrapper that converts a synchronous
 throw into a rejection. Found by the chaos suite asserting that a faulted
 document refuses work — the assertion passed for the wrong reason until the
 error stopped escaping the promise.
+
+---
+
+## D29 — Seven bugs from adversarial testing, and what they have in common
+
+Two subagents were pointed at the product with one instruction — find bugs, do
+not fix them — and found seven. Recorded together because the pattern matters
+more than the individual fixes.
+
+**1. A `null` WebSocket frame killed the process.** `JSON.parse('null')`
+succeeds, and `null.t` throws inside a `void`-ed handler: an unhandled
+rejection, and under Node's default policy a dead server. Twenty-eight other
+malformed frames were handled correctly; the one that got through was the one
+that *parsed*. Frames are now validated as tagged objects before anything reads
+the tag.
+
+**2. A CRDT update from another document merged cleanly.** Two documents use the
+same container names, so a foreign update spliced its frontmatter — and its
+`galley:` identity — into the target. The result still parsed, which made it
+worse rather than better: nothing downstream noticed, and `galley pull` would
+have written a file claiming to be a document it was not. Updates are now
+applied to a throwaway copy and checked for identity before they are accepted.
+That costs a snapshot round trip per inbound update, which is the honest price
+of not trusting a client's operations.
+
+**3–4. Path handling.** Traversal and empty paths returned 500 instead of 400 —
+the refusal was right, the status said the server broke. And `.` was accepted as
+a path, which `galley pull` wrote to disk as `..md`.
+
+**5. Concurrent create across two processes.** `Store` takes a file and enables
+WAL, so two servers over one database is a supported deployment. There the
+check-then-insert lost to the unique constraint, surfaced a raw SQLite error as
+a 500, left an unpersistable ghost document open, and broke shutdown forever
+after. The constraint is now the authority and the loser cleans up after itself.
+
+**6. `galley pull` destroyed local work.** It overwrote a modified file with no
+warning and exit 0 — and `galley status` reported that file as modified
+immediately beforehand, so the CLI had the information to refuse and did not.
+
+**7. The whole-document-replacement rule refused ordinary edits**, and `push`
+was a two-way diff. See D30.
+
+**What they have in common:** every one is a case where the *unhappy* path was
+never exercised, and five of the seven produce a wrong answer rather than an
+error — a dead process, a document with a foreign identity, a lost file. The
+happy paths had 446 tests. That is the argument for adversarial testing as a
+distinct activity rather than more of the same tests.
+
+---
+
+## D30 — `galley push` is a three-way merge
+
+The first implementation diffed the local copy against the *server's current*
+state. That silently reverted a colleague's concurrent edit: a block this user
+never touched appeared in the diff as "changed back", and push dutifully changed
+it back.
+
+`pull` now writes a **base** copy alongside the working copy — git's index, in
+effect — and `push` diffs against the base. It sends what *this user* changed
+and nothing else, so a concurrent edit to a different block is left alone.
+
+The remaining hazard is a `@N` target, which names a *position* in the base. If
+the remote has moved, that position may hold a different block, and editing the
+wrong block is the one outcome worse than refusing. The precondition is checked
+directly against the bytes — does index N still hold what it held in the base? —
+rather than inferred from "the document changed somewhere", which would refuse
+almost every push.
+
+The replacement rule that gates push and suggest was also wrong for small
+documents: editing the one paragraph of a two-block document is a 50% change.
+It now refuses only when *nothing* survived, or when a document with enough
+blocks to have an opinion lost a large majority of them. The asymmetry is
+deliberate: a false positive is a hard block on someone's real work with no way
+around it, and a big-but-not-total diff is handled fine as a lot of scoped
+operations.
