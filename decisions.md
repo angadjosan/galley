@@ -158,3 +158,77 @@ refuse two proposals touching the same bytes — fired on it.
 Treating that as a conflict would make an idempotent reordering fail on its
 second application, which is exactly what a retrying agent does. The move now
 detects that the destination lies inside the vacated region and emits nothing.
+
+---
+
+## D9 — Re-anchoring: ambiguity is judged on content, never on context
+
+**Context:** `idea.md` sets the gate — ≥95% anchor survival across realistic
+agent rewrites, **zero silent misattachments**, and says explicitly that the two
+are not traded off against each other.
+
+**Decision:** three signals, in strict priority.
+
+1. **A materialized id wins outright.** No inference runs at all.
+2. **Fuzzy matching** combines text similarity (0.62), neighbour hashes (0.12),
+   heading trail (0.10), relative position (0.08) and nesting depth (0.08),
+   with block type as a *hard gate* rather than a weighted signal — a heading
+   and a paragraph with the same words are not the same block.
+3. **Below threshold, or ambiguous, the anchor orphans** carrying its
+   last-known text.
+
+Two rules do the real work of holding misattachments at zero:
+
+**A minimum text similarity vetoes any match, regardless of the combined
+score.** Without it, a block whose content was replaced outright still gets
+claimed by an anchor purely because it sits at the same index, under the same
+heading, between the same neighbours. That is a misattachment dressed up as high
+confidence.
+
+**The ambiguity margin is measured on the text signal alone.** This is the
+subtle one, and it came out of the benchmark. When an agent splits a paragraph
+in two, both halves are equally the original — but one of them inherits the
+original's neighbours and position, so the *combined* score separates them
+cleanly and the anchor lands on it with 0.90 confidence. Context broke a tie
+that content could not, and it broke it arbitrarily. Judging the margin on text
+sends the anchor to the orphan tray instead, where a human decides which half
+their comment was about.
+
+**Similarity is Dice plus containment.** Dice alone punishes the two commonest
+agent edits — "tighten this" and "expand on this" — because its denominator is
+the sum of both sizes; a paragraph that doubled in length scores ~0.67 against
+its own original. The overlap coefficient reads that as containment. It is only
+consulted for texts long enough for containment to be evidence, and only when
+the size ratio is under 2.5:1 — beyond that, containment means something else
+entirely (a short paragraph quoted inside a long one), which was the source of
+the last misattachment in the benchmark.
+
+**Assignment is one-to-one and globally greedy.** The highest-scoring pair
+anywhere is fixed first and both sides leave the pool. A per-anchor best-match
+loop lets an early anchor claim a block a later anchor matched far better, which
+is how an entire document's comments end up shifted by one paragraph.
+
+**Measured:** 10,421 anchors over the corpus and this repo's own design docs,
+across rewrite intensities from a touch-up to a heavy section rewrite —
+**98.13% survival, 0 misattachments**, and all 242 deleted blocks correctly
+orphaned.
+
+---
+
+## D10 — When the benchmark and the code disagree, check which one is lying
+
+Three rounds of benchmark failures were fixed in the *test*, not the code, and
+that is worth recording because it is the easy thing to get wrong.
+
+The generator originally asserted that a split paragraph had one correct
+successor, that a second split overwrote the first, and that deleting one
+fragment of a split block orphaned the anchor even while other fragments
+survived. All three are false statements about the domain, not bugs in the
+matcher.
+
+The distinction that kept this honest: an assertion was only relaxed when it
+asserted something untrue of the world, and every relaxation *widened the set of
+correct answers without weakening the misattachment gate* — landing outside that
+set is still a failure. The two changes that were genuine code fixes (the text
+similarity veto, and the containment size-ratio cap) both made the matcher
+*stricter*, never more permissive.
