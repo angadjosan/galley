@@ -1,6 +1,10 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { LockOrderError } from './errors.js';
 import { Mutex, type AcquireOptions, type Release } from './mutex.js';
+
+interface HeldLockStore {
+  getStore(): string[] | undefined;
+  run<T>(store: string[], fn: () => T): T;
+}
 
 /**
  * Per-async-context record of which keyed locks the current task holds.
@@ -8,8 +12,26 @@ import { Mutex, type AcquireOptions, type Release } from './mutex.js';
  * `AsyncLocalStorage` follows a logical task across awaits, which is exactly the
  * granularity a lock-order check needs — the thing that can deadlock is a chain
  * of awaits, not a stack frame.
+ *
+ * Resolved at runtime rather than imported, because this package is shared with
+ * the browser and a static `node:async_hooks` import fails there before any
+ * code runs. In a browser the check degrades to a no-op: `KeyedMutex` still
+ * serializes exactly as it does on the server — only the lock-order *diagnostic*
+ * is unavailable, and the cross-document operations it guards are server-side.
  */
-const heldLocks = new AsyncLocalStorage<string[]>();
+function createHeldLockStore(): HeldLockStore {
+  const getBuiltinModule = (globalThis as { process?: { getBuiltinModule?: (id: string) => unknown } })
+    .process?.getBuiltinModule;
+  if (typeof getBuiltinModule === 'function') {
+    const hooks = getBuiltinModule('node:async_hooks') as {
+      AsyncLocalStorage: new () => HeldLockStore;
+    };
+    return new hooks.AsyncLocalStorage();
+  }
+  return { getStore: () => undefined, run: (_store, fn) => fn() };
+}
+
+const heldLocks: HeldLockStore = createHeldLockStore();
 
 /**
  * A map of independently-lockable keys to FIFO mutexes, with a **global lock

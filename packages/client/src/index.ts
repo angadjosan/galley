@@ -81,7 +81,9 @@ export class GalleyClient {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.token = options.token;
     this.timeoutMs = options.timeoutMs ?? 15_000;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    // Bound: an unbound `window.fetch` throws "Illegal invocation" when called
+    // as a method on another object.
+    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
   // -------------------------------------------------------------------------
@@ -100,8 +102,19 @@ export class GalleyClient {
     return documents;
   }
 
-  async read(ref: string): Promise<{ docId: string; path: string; content: string; ticket: number }> {
-    return this.call('GET', `/v1/docs/${encodeURIComponent(ref)}`);
+  /**
+   * Read a document.
+   *
+   * `markers: true` keeps the invisible block-id comments in the returned
+   * Markdown. Only the editor asks for that — it needs the ids to anchor
+   * comments. Every other reader, including every agent, gets the clean form.
+   */
+  async read(
+    ref: string,
+    options: { markers?: boolean } = {},
+  ): Promise<{ docId: string; path: string; content: string; ticket: number }> {
+    const query = options.markers ? '?markers=1' : '';
+    return this.call('GET', `/v1/docs/${encodeURIComponent(ref)}${query}`);
   }
 
   async readBlock(ref: string, blockId: string): Promise<{ blockId: string; content: string }> {

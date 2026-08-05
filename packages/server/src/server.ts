@@ -152,6 +152,7 @@ export function build(options: ServerOptions = {}): GalleyServer {
   app.get('/v1/docs/:ref', async (request) => {
     const session = sessionOf(request);
     const { ref } = request.params as { ref: string };
+    const withMarkers = truthy((request.query as { markers?: string }).markers);
     const actor = await resolve(ref);
     await authorizeDoc(session, actor, 'read');
     const markdown = await actor.read();
@@ -159,9 +160,14 @@ export function build(options: ServerOptions = {}): GalleyServer {
     return {
       docId: actor.docId,
       path: workspace.pathOf(actor.docId),
-      // The clean form: id markers are Galley's plumbing, not the author's
+      // Clean by default: id markers are Galley's plumbing, not the author's
       // content, and a model should never see them.
-      content: renderCleanMarkdown(markdown),
+      //
+      // `?markers=1` returns them, for the editor. That is not a loophole —
+      // the editor *is* the annotation surface, and it needs the ids to know
+      // which paragraph a comment belongs to. Everything downstream of a read
+      // (the CLI, an agent, a pull to disk) uses the clean form.
+      content: withMarkers ? markdown : renderCleanMarkdown(markdown),
       ticket: actor.sequencer.watermark.cursor,
     };
   });
@@ -548,6 +554,10 @@ function assertNotWholeDocumentReplacement(ops: readonly BlockOp[], actor: Docum
         'scoped replace/insert/move operations so block identity survives it',
     );
   }
+}
+
+function truthy(value: string | undefined): boolean {
+  return value === '1' || value === 'true' || value === '';
 }
 
 function statusFor(error: Error): number {

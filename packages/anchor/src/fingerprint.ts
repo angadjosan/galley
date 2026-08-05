@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { Block, ParsedDocument } from '@galley/markdown';
 
 /**
@@ -50,8 +49,37 @@ export function normalizeText(text: string): string {
     .trim();
 }
 
+/**
+ * A 128-bit content fingerprint, in portable JavaScript.
+ *
+ * Deliberately not `node:crypto`: this runs in the browser too — the editor
+ * computes the same fingerprints the server does, and it must compute them
+ * *identically*, or a staleness check would disagree across surfaces. A
+ * WebCrypto digest is asynchronous, and every caller here is synchronous.
+ *
+ * Non-cryptographic is the right call and worth saying out loud: this is a
+ * content fingerprint, not a credential. Nothing trusts it against an
+ * adversary — it answers "is this the same paragraph", and at 128 bits the
+ * accidental-collision probability across a workspace's blocks is far below
+ * the probability of the storage layer losing them. Token hashing, which *is*
+ * adversarial, uses SHA-256 in `@galley/server` and always will.
+ *
+ * FNV-1a over four independently-offset lanes.
+ */
+const FNV_PRIME = 16777619;
+const LANE_OFFSETS = [2166136261, 2246822519, 3266489917, 668265263];
+
 export function hashText(text: string): string {
-  return createHash('sha256').update(text).digest('base64url').slice(0, 22);
+  const lanes = [...LANE_OFFSETS];
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    for (let lane = 0; lane < lanes.length; lane++) {
+      // Mixing the index in per lane keeps the lanes from degenerating into
+      // four copies of the same value for repetitive text.
+      lanes[lane] = Math.imul((lanes[lane]! ^ (code + lane * 0x9e37 + i)) >>> 0, FNV_PRIME) >>> 0;
+    }
+  }
+  return lanes.map((lane) => lane.toString(36).padStart(7, '0')).join('');
 }
 
 /**

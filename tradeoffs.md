@@ -152,3 +152,47 @@ every customer document silently restructured.
 **Taken:** appended inline at the end of the block. Full reasoning in
 `decisions.md` D5, including the capability it gives up — only paragraphs and
 headings can carry a materialized id.
+
+---
+
+## Editor: soft line breaks in an edited block
+
+**Status:** decided (fold them). Recorded because it is a visible behaviour
+change and the alternative is defensible.
+
+**Taken:** an edited block's hard-wrapped source is reflowed onto one line.
+Untouched blocks keep their wrapping exactly, because they are re-emitted from
+their stored bytes.
+
+**Rejected:** preserving the author's wrap columns through an edit. It requires
+guessing where the wrap points *should* now be, which is a reformatting decision
+made on the author's behalf — precisely what the round-trip engine refuses to do
+everywhere else. A reflowed paragraph is a one-line diff on a paragraph the user
+just edited; a re-wrapped one is a multi-line diff they did not ask for.
+
+**Consequence:** teams that hard-wrap prose at 80 columns will see edited
+paragraphs become long lines. If that turns out to matter, the fix is a
+per-workspace wrap width applied only to blocks the editor already rewrote —
+which stays inside the rule, since those bytes were being regenerated anyway.
+
+---
+
+## The browser and the CRDT
+
+**Status:** decided (refetch on change; the CRDT stays server-side for now).
+
+**Taken:** the WebSocket carries CRDT deltas, and the browser client currently
+uses them only as a signal to refetch the document. Concurrent editing converges
+because the *server* is the one applying operations in a defined order.
+
+**Rejected for now:** applying Loro deltas in the browser and rendering from a
+local replica. That is the right long-term shape — it is why the wire protocol
+already carries deltas rather than snapshots — but it moves the merge into the
+surface whose failure mode is *a document that looks fine and is wrong*, and
+correct-and-simple beats clever there for a first version.
+
+**Cost accepted:** a remote change costs a refetch rather than a delta apply, and
+a local edit made during someone else's keystroke is resolved by the server
+rather than locally. Both are invisible at the latency the sync path actually
+runs at, and both become better rather than different when the local replica
+lands.

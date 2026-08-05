@@ -1,0 +1,28 @@
+- generic [ref=f11e3]:
+  - complementary [ref=f11e4]:
+    - generic [ref=f11e5]: Galley
+    - textbox "Search" [ref=f11e13]:
+      - /placeholder: Search blocks…
+    - navigation [ref=f11e14]:
+      - generic [ref=f11e15]:
+        - generic [ref=f11e16]: design
+        - button "Galley design/galley" [ref=f11e17] [cursor=pointer]:
+          - generic [ref=f11e18]: Galley
+          - generic [ref=f11e19]: design/galley
+      - generic [ref=f11e20]:
+        - generic [ref=f11e21]: policies
+        - button "Refund policy policies/refunds" [ref=f11e22] [cursor=pointer]:
+          - generic [ref=f11e23]: Refund policy
+          - generic [ref=f11e24]: policies/refunds
+      - generic [ref=f11e25]:
+        - generic [ref=f11e26]: runbooks
+        - button "Deploy runbook runbooks/deploy" [ref=f11e27] [cursor=pointer]:
+          - generic [ref=f11e28]: Deploy runbook
+          - generic [ref=f11e29]: runbooks/deploy
+      - generic [ref=f11e30]:
+        - generic [ref=f11e31]: specs
+        - button "Checkout v2 specs/checkout-v2" [ref=f11e32] [cursor=pointer]:
+          - generic [ref=f11e33]: Checkout v2
+          - generic [ref=f11e34]: specs/checkout-v2
+    - button "Sign out" [ref=f11e36] [cursor=pointer]
+  - main [ref=f11e38]: Loading…

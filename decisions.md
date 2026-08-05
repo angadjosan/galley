@@ -424,3 +424,114 @@ absence, including of ANSI escapes.
 Exit codes carry meaning a script can branch on: 0 success, 1 a runtime failure
 or an empty result where empty is meaningful (`search` with no hits, `status
 --stale` when something drifted), 2 a usage error.
+
+---
+
+## D19 — The editor re-emits untouched blocks from their stored bytes
+
+The splicing engine guarantees byte stability for edits expressed as block ops.
+The editor is the one component that can break that guarantee anyway, by loading
+a document into ProseMirror and serializing the whole thing back.
+
+So every top-level node carries the Markdown it was built from in a `source`
+attribute, plus its exact separator. On save, a node still deep-equal to the
+node that source produced emits `source` verbatim; only genuinely edited blocks
+reach the serializer. Opening a document and saving it untouched is byte-
+identical across the same corpus the round-trip engine uses, including this
+repo's own design docs.
+
+Two things the editor does change, stated rather than hidden:
+
+- **Soft line breaks in an edited block are folded.** Markdown's line wrapping
+  is not the author's intent — `a\nb` renders as `a b` everywhere — and
+  ProseMirror's `pre-wrap` would otherwise display it as a real break. An
+  untouched block keeps its wrapping; an edited one reflows onto one line, which
+  is what every WYSIWYG does.
+- **A construct the schema cannot model** (a link reference definition, a
+  footnote definition) becomes a `raw_block`: shown, not editable, and re-emitted
+  verbatim. Dropping it would delete content; approximating it would reformat it.
+
+---
+
+## D20 — The browser shares the packages, so the packages cannot assume Node
+
+`@galley/client`, `@galley/core`'s diff and segmentation, `@galley/anchor` and
+`@galley/markdown` all run in the browser as well as on the server — deliberately,
+because a second implementation of block identity would drift from the first,
+and the whole product rests on the two agreeing.
+
+That forced three changes, each of which is better than what it replaced:
+
+- **Content fingerprints are portable JavaScript**, not `node:crypto`. WebCrypto's
+  digest is async and every caller is sync. Non-cryptographic is right and worth
+  saying out loud: it answers "is this the same paragraph", not "is this
+  authentic". Token hashing, which *is* adversarial, stays on SHA-256 in the
+  server and always will.
+- **Ids use `crypto.getRandomValues`**, present and strong in Node 22 and every
+  browser.
+- **`KeyedMutex` resolves `AsyncLocalStorage` at runtime** and degrades to a
+  no-op when it is absent. The mutex still serializes identically; only the
+  lock-order *diagnostic* is unavailable, and the cross-document operations it
+  guards are server-side.
+
+The browser also does not need the CRDT — it refetches on change rather than
+applying deltas locally — so the editor imports `@galley/core/segments` and
+`@galley/core/diff` directly rather than the package index, which would pull in
+Loro's WASM for nothing.
+
+---
+
+## D21 — `?markers=1`: the editor reads the annotated form
+
+`GET /v1/docs/:ref` strips id markers by default. Every agent, the CLI, and
+`galley pull` get the clean bytes `idea.md` promises.
+
+The editor asks for `?markers=1`, and that is not a loophole: the editor **is**
+the annotation surface, and it needs the ids to know which paragraph a comment
+belongs to. Everything downstream of a read still gets the clean form.
+
+The bug this fixed was worth the round trip to find: without markers the editor
+had no block ids at all, so the comment composer stayed disabled and there was
+no way to annotate anything from the app.
+
+---
+
+## D22 — Three bugs from moving markers to the end of a block
+
+D5 moved the id marker from its own line above a block to inline at the end of
+it. Three call sites still assumed the old placement, and all three were found
+by driving the real UI rather than by a unit test:
+
+1. **`segment()`** started a block at `lineStart(markerRange.start)`. With a
+   trailing marker that is the block's *last* line, so a multi-line paragraph's
+   first line was handed to the previous block's separator — and saving an edit
+   duplicated half the paragraph.
+2. **`deleteEdit`** had the same assumption, so deleting a multi-line annotated
+   block left its first line behind.
+3. **`stripTrailingMarker`** in `diffToBlockOps` stripped the marker from *any*
+   replacement text. Correct for a leaf block, whose marker sits outside its
+   content range — and wrong for a container, whose range covers its children
+   and whose trailing marker belongs to its **last child**. Editing any bullet
+   re-serializes the whole list, so a comment on the last bullet was detached
+   every time a sibling was edited.
+
+The general lesson, recorded because it will recur: `markerRange` says *where a
+block's own marker is*, and `range` says *where its content is*. Any code that
+uses one to answer a question about the other is wrong in one of the two marker
+placements, and both placements have now shipped.
+
+---
+
+## D23 — Reconciliation pairs by position when content is unrecognizable
+
+A paragraph rewritten from scratch shares almost no text with what it replaced,
+so similarity matching will not pair it — and calling that a delete plus an
+insert loses the block's identity, which is the one thing this codebase exists
+to preserve.
+
+A third pass pairs leftovers by position, bounded by exact matches on both
+sides: between two blocks that are byte-identical before and after, exactly one
+unmatched block on each side can only be the same block, rewritten. The exact
+anchors are what make it safe — it cannot pair across a region where anything
+else moved — and the strict 1:1 requirement is what keeps it from guessing when
+an edit and an insertion happened in the same gap.

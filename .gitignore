@@ -9,3 +9,4 @@ playwright-report/
 *.log
 tmp/
 .vite/
+.galley-dev-tokens.json

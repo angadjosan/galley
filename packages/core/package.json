@@ -6,7 +6,13 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./diff": "./src/diff.ts",
+    "./segments": "./src/segments.ts",
+    "./reconcile": "./src/reconcile.ts",
+    "./sidecar": "./src/sidecar.ts",
+    "./principals": "./src/principals.ts",
+    "./context": "./src/context.ts"
   },
   "dependencies": {
     "@galley/markdown": "*",

@@ -1,0 +1,10 @@
+- generic [ref=f8e3]:
+  - complementary [ref=f8e4]:
+    - generic [ref=f8e5]: Galley
+    - textbox "Search" [ref=f8e13]:
+      - /placeholder: Search blocks…
+    - navigation [ref=f8e14]
+    - button "Sign out" [ref=f8e16] [cursor=pointer]
+  - generic [ref=f8e17]: "Failed to execute 'fetch' on 'Window': Illegal invocation"
+  - main [ref=f8e18]:
+    - paragraph [ref=f8e19]: No documents yet.

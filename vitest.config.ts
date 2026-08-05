@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['packages/*/test/**/*.test.ts', 'tests/stress/**/*.test.ts'],
+    include: ['packages/*/test/**/*.test.ts', 'apps/*/test/**/*.test.ts', 'tests/stress/**/*.test.ts'],
     exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**'],
     // Stress tests deliberately saturate the event loop; give them room but
     // never let a genuinely deadlocked test hang the suite forever.

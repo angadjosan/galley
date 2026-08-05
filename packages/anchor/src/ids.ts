@@ -1,4 +1,11 @@
-import { randomBytes } from 'node:crypto';
+/**
+ * Web Crypto rather than `node:crypto`, so ids can be minted in the browser as
+ * well as on the server. `globalThis.crypto.getRandomValues` is present and
+ * cryptographically strong in Node 22 and in every browser this app supports.
+ */
+function randomBytes(length: number): Uint8Array {
+  return globalThis.crypto.getRandomValues(new Uint8Array(length));
+}
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 

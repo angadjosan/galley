@@ -62,6 +62,17 @@ export function reconcile(
     newMatched.set(candidate.n, candidate.o);
   }
 
+  // Pass 3: position, bounded by exact matches on both sides.
+  //
+  // A paragraph rewritten from scratch shares almost no text with what it
+  // replaced, so pass 2 will not pair it — and calling that a delete plus an
+  // insert loses the block's identity, which is the single thing this codebase
+  // exists to preserve. Between two blocks that are byte-identical on both
+  // sides, one leftover on each side is the same block, edited. The exact
+  // anchors are what make that safe: this cannot pair across a region where
+  // anything else moved.
+  pairWithinGaps(before.length, after.length, matches, oldMatched, newMatched);
+
   const steps: ReconcileStep[] = [];
   for (let n = 0; n < after.length; n++) {
     const o = newMatched.get(n);
@@ -88,6 +99,39 @@ export function reconcile(
     if (!oldMatched.has(o)) steps.push({ kind: 'delete', sid: before[o]!.sid, from: o });
   }
   return steps;
+}
+
+/**
+ * Pair single leftovers inside each gap between exact matches.
+ *
+ * The gaps are the regions between consecutive LCS anchors (plus the head and
+ * the tail). Within one gap, exactly one unmatched old block and exactly one
+ * unmatched new block can only be the same block rewritten — anything else
+ * would have moved an anchor. More than one on either side is genuinely
+ * ambiguous and is left to become an insert and a delete.
+ */
+function pairWithinGaps(
+  beforeLength: number,
+  afterLength: number,
+  anchors: readonly [number, number][],
+  oldMatched: Map<number, number>,
+  newMatched: Map<number, number>,
+): void {
+  const bounds: [number, number][] = [[-1, -1], ...anchors, [beforeLength, afterLength]];
+
+  for (let i = 1; i < bounds.length; i++) {
+    const [oStart, nStart] = bounds[i - 1]!;
+    const [oEnd, nEnd] = bounds[i]!;
+
+    const looseOld: number[] = [];
+    for (let o = oStart + 1; o < oEnd; o++) if (!oldMatched.has(o)) looseOld.push(o);
+    const looseNew: number[] = [];
+    for (let n = nStart + 1; n < nEnd; n++) if (!newMatched.has(n)) looseNew.push(n);
+
+    if (looseOld.length !== 1 || looseNew.length !== 1) continue;
+    oldMatched.set(looseOld[0]!, looseNew[0]!);
+    newMatched.set(looseNew[0]!, looseOld[0]!);
+  }
 }
 
 /**

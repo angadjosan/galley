@@ -1,0 +1,11 @@
+- generic [ref=f9e3]:
+  - complementary [ref=f9e4]:
+    - generic [ref=f9e5]: Galley
+    - textbox "Search" [ref=f9e13]:
+      - /placeholder: Search blocks…
+    - navigation [ref=f9e14]
+    - button "Sign out" [ref=f9e16] [cursor=pointer]
+  - generic [ref=f9e17]:
+    - generic [ref=f9e18]: Failed to fetch
+    - main [ref=f9e19]:
+      - paragraph [ref=f9e20]: No documents yet.

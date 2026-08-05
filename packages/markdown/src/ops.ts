@@ -165,8 +165,10 @@ function replaceEdit(doc: ParsedDocument, block: Block, markdown: string): TextE
  */
 function deleteEdit(doc: ParsedDocument, block: Block): TextEdit {
   const source = doc.source;
-  const from = lineStartAt(source, block.markerRange?.start ?? block.range.start);
-  let to = lineEndAt(source, block.range.end);
+  // From the block's own first line — not the marker's line, which is the
+  // block's *last* line — through the end of the line the marker sits on.
+  const from = lineStartAt(source, block.range.start);
+  let to = lineEndAt(source, Math.max(block.range.end, block.markerRange?.end ?? 0));
   const run = blankRunAfter(source, to);
   if (run.lines > 0) {
     // Consume the separator this block owned, and give back anything beyond the
@@ -210,7 +212,7 @@ function insertEdit(
   const gap = eol.repeat(measureGap(doc, anchor, side));
 
   if (side === 'after') {
-    const lineEnd = lineEndAt(doc.source, anchor.range.end);
+    const lineEnd = lineEndAt(doc.source, Math.max(anchor.range.end, anchor.markerRange?.end ?? 0));
     const at = blankRunAfter(doc.source, lineEnd).end;
     if (at >= doc.source.length) {
       // End of file: the separator has to go *before* the new block, and the
@@ -224,7 +226,7 @@ function insertEdit(
     return { range: { start: at, end: at }, text: `${body}${eol}${gap}`, label: 'insert' };
   }
 
-  const at = lineStartAt(doc.source, anchor.markerRange?.start ?? anchor.range.start);
+  const at = lineStartAt(doc.source, anchor.range.start);
   return { range: { start: at, end: at }, text: `${body}${eol}${gap}`, label: 'insert' };
 }
 
@@ -232,11 +234,14 @@ function insertEdit(
 function measureGap(doc: ParsedDocument, anchor: Block, side: 'after' | 'before'): number {
   const source = doc.source;
   if (side === 'after') {
-    const run = blankRunAfter(source, lineEndAt(source, anchor.range.end));
+    const run = blankRunAfter(
+      source,
+      lineEndAt(source, Math.max(anchor.range.end, anchor.markerRange?.end ?? 0)),
+    );
     if (run.end < source.length) return run.lines;
     // Last block: mirror the gap that precedes it instead of inventing one.
   }
-  const start = lineStartAt(source, anchor.markerRange?.start ?? anchor.range.start);
+  const start = lineStartAt(source, anchor.range.start);
   let cursor = start;
   let blanks = 0;
   while (cursor > 0) {

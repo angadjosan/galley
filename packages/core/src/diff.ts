@@ -32,19 +32,36 @@ export function diffToBlockOps(before: string, after: string): BlockOp[] {
   });
 
   const ops: BlockOp[] = [];
+  const blockAt = (segmentIndex: number) => parsed.blocks[topLevel[segmentIndex] ?? -1];
   const target = (segmentIndex: number): string => {
-    const block = parsed.blocks[topLevel[segmentIndex] ?? -1];
+    const block = blockAt(segmentIndex);
     return block?.id ? block.id : `@${topLevel[segmentIndex] ?? 0}`;
   };
+
+  /**
+   * Strip a trailing marker only when it belongs to the block being replaced.
+   *
+   * A leaf block's marker sits *outside* its content range, so replacement text
+   * must not carry it — two markers on one block, and the second wins. A
+   * container's range, by contrast, covers its children, and the marker at the
+   * end of its text belongs to its **last child**. Stripping that one deletes a
+   * nested block's identity every time anything in the container is edited.
+   *
+   * `markerRange` is exactly the distinction: it is set only for a block whose
+   * own marker was parsed out of it.
+   */
+  const contentFor = (segmentIndex: number, text: string): string =>
+    blockAt(segmentIndex)?.markerRange ? stripTrailingMarker(text) : text;
 
   for (const step of steps) {
     switch (step.kind) {
       case 'update': {
         const index = Number(step.sid.slice(1));
+        const markdown = contentFor(index, step.text);
         // An empty result is a delete wearing the wrong name; the splicer
         // refuses it, so say what was meant.
-        if (step.text.trim() === '') ops.push({ kind: 'delete', target: target(index) });
-        else ops.push({ kind: 'replace', target: target(index), markdown: step.text });
+        if (markdown.trim() === '') ops.push({ kind: 'delete', target: target(index) });
+        else ops.push({ kind: 'replace', target: target(index), markdown });
         break;
       }
       case 'delete': {
@@ -58,10 +75,13 @@ export function diffToBlockOps(before: string, after: string): BlockOp[] {
         // session boundary, not an edit.
         const anchor = nearestAnchor(steps, step.at);
         if (!anchor) break;
+        // A brand-new block has no identity yet, so any marker in its text came
+        // from the author copying one. Never carry that through.
+        const inserted = stripTrailingMarker(step.text);
         ops.push(
           anchor.side === 'after'
-            ? { kind: 'insert', after: target(anchor.index), markdown: step.text }
-            : { kind: 'insert', before: target(anchor.index), markdown: step.text },
+            ? { kind: 'insert', after: target(anchor.index), markdown: inserted }
+            : { kind: 'insert', before: target(anchor.index), markdown: inserted },
         );
         break;
       }
@@ -70,6 +90,17 @@ export function diffToBlockOps(before: string, after: string): BlockOp[] {
     }
   }
   return ops;
+}
+
+/**
+ * Remove a trailing `<!-- ^id -->` marker and the whitespace in front of it.
+ *
+ * Block ops address a block's *content*; identity lives outside that range and
+ * is managed by `materialize`. A caller that sends a marker inside replacement
+ * text ends up with two markers on one block, and the second one silently wins.
+ */
+function stripTrailingMarker(text: string): string {
+  return text.replace(/[ \t]*<!--\s*\^[A-Za-z0-9_-]{2,64}\s*-->\s*$/, '');
 }
 
 /** Find the nearest kept or updated segment to anchor an insertion against. */

@@ -56,9 +56,14 @@ export function segmentParsed(
   }
 
   const segments: Segment[] = [];
-  // A segment starts at the beginning of its own line so that an inline marker
-  // and any container prefix travel with it.
-  const starts = topLevel.map((b) => lineStart(doc.source, b.markerRange?.start ?? b.range.start));
+  // A segment runs from the start of its own first line to the end of its last,
+  // so a container prefix and the trailing id marker both travel with it.
+  //
+  // The *start* comes from `range`, never from `markerRange`: a marker is
+  // appended at the end of a block, so its line is the block's **last** one.
+  // Using it here would start the segment on that last line and hand every
+  // preceding line to the previous segment's separator.
+  const starts = topLevel.map((b) => lineStart(doc.source, b.range.start));
   const ends = topLevel.map((b) => lineEnd(doc.source, Math.max(b.range.end, b.markerRange?.end ?? 0)));
 
   for (let i = 0; i < topLevel.length; i++) {
