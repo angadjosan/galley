@@ -222,7 +222,9 @@ describe('fan-out', () => {
     await b.waitFor('welcome');
 
     b.send({ t: 'presence', cursor: { blockId: blockIds[1], offset: 4 } });
-    await delay(100);
+    // Presence is coalesced to ~10Hz with a trailing edge, so the frame that
+    // carries a cursor move arrives on the next tick of that timer.
+    await delay(400);
 
     const presence = [...a.frames]
       .reverse()
@@ -443,5 +445,52 @@ describe('protocol hygiene', () => {
 
     expect(b.frames.filter((f) => f.t === 'changed')).toHaveLength(0);
     expect(b.doc?.toMarkdown()).not.toContain('Only in document one.');
+  });
+});
+
+describe('the slow-client policy actually fires', () => {
+  it('disconnects a client whose socket buffer runs past its budget', async () => {
+    // The policy was previously unreachable: the writer hands each frame to
+    // `socket.send` without awaiting the drain, so the outbound channel empties
+    // instantly into ws's *unbounded* userspace buffer and its depth stays at
+    // zero however far behind the peer is. Measured at 14.5MB held for one
+    // paused client and zero disconnects. The budget is now measured where the
+    // backlog actually accumulates.
+    const h = await open({ syncBufferBytes: 4096, syncChannelCapacity: 8 });
+    const { docId, blockIds } = await seedDocument(h);
+
+    const healthy = new TestClient(h.baseUrl, h.tokens.priya, docId);
+    await healthy.ready();
+    await healthy.waitFor('welcome');
+
+    const stalled = new TestClient(h.baseUrl, h.tokens.sam, docId);
+    await stalled.ready();
+    await stalled.waitFor('welcome');
+    stalled.pause();
+    stalled.socket.pause();
+
+    // Enough volume to fill the OS socket buffers on loopback, which are
+    // generous — a stalled client absorbs a surprising amount before the
+    // server's writer notices.
+    const filler = 'x'.repeat(40_000);
+    for (let i = 0; i < 120; i++) {
+      await h.json(`/v1/docs/${docId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          ops: [{ kind: 'replace', target: blockIds[1], markdown: `${filler} ${i}` }],
+        }),
+      });
+    }
+    await delay(500);
+
+    expect(
+      h.server.hub.counters.get('slow-client-disconnects'),
+      'a client that stopped reading was never evicted',
+    ).toBeGreaterThan(0);
+    expect(healthy.socket.readyState, 'the healthy client was collateral damage').toBe(
+      WebSocket.OPEN,
+    );
+    const actor = await h.server.workspace.openDocument(docId);
+    expect(await actor.read()).toContain('119');
   });
 });

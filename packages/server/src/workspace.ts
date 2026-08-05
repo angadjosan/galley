@@ -194,10 +194,18 @@ export class Workspace {
     return this.open.get(docId)?.path;
   }
 
-  list(pathPrefix = ''): { docId: string; path: string; title: string; updatedAt: string }[] {
+  list(
+    pathPrefix = '',
+  ): { docId: string; path: string; title: string; updatedAt: string; ownerId: string | null }[] {
     return this.store
       .listDocuments(this.workspaceId, normalizePath(pathPrefix, true))
-      .map((d) => ({ docId: d.docId, path: d.path, title: d.title, updatedAt: d.updatedAt }));
+      .map((d) => ({
+        docId: d.docId,
+        path: d.path,
+        title: d.title,
+        updatedAt: d.updatedAt,
+        ownerId: d.ownerId,
+      }));
   }
 
   private attach(doc: GalleyDocument, path: string): DocumentActor {
@@ -354,6 +362,10 @@ export class Workspace {
       await this.persist(docId, true);
       entry.unsubscribe();
       this.open.delete(docId);
+      // Release the native allocation. An evicted document is referenced by
+      // nothing that would prompt a collection, so without this the memory is
+      // retained until one happens to run.
+      entry.actor.document.dispose();
       this.counters.inc('closes');
     });
   }
@@ -450,6 +462,7 @@ export class Workspace {
     entry.unsubscribe();
     await entry.actor.close();
     this.open.delete(docId);
+    entry.actor.document.dispose();
   }
 
   private assertOpen(): void {

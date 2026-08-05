@@ -183,8 +183,21 @@ Install the CLI.
     const first = doc.blocks.findIndex((b) => b.type === 'heading' && b.text === 'Setup');
     const anchor: Anchor = { id: 'dup', fingerprint: fingerprintBlock(doc, first) };
 
-    // The document is edited elsewhere, so position no longer disambiguates.
-    const rewritten = parseDocument(source.replace('Run the build.', 'Run the build with --release.'));
+    // The sections are reordered, so neither position nor neighbours identify
+    // which `## Setup` this anchor meant. (An *unchanged* document resolves
+    // exactly and correctly — that is the fast path, tested separately.)
+    const rewritten = parseDocument(`## Build
+
+Run the build.
+
+## Setup
+
+Install the CLI.
+
+## Setup
+
+Install the CLI.
+`);
     const result = reanchor([anchor], rewritten, { ambiguityMargin: 0.2, textAmbiguityMargin: 0.2 });
     const resolution = result.byAnchor.get('dup')!;
     expect(resolution.method).toBe('orphan-ambiguous');
@@ -270,6 +283,69 @@ The service must validate the customer field before charging.
     for (const orphan of result.orphans) {
       expect(orphan.lastKnownText.length, 'an orphan must carry its last-known text').toBeGreaterThan(0);
     }
+  });
+
+  it('resolves every anchor exactly when the document did not change', () => {
+    // Three paragraphs differing only by a step number. Without an exact-match
+    // path the ambiguity margin refuses all of them — against a document that
+    // nobody touched.
+    const source = `# Runbook
+
+Step 1: confirm the release check is green.
+
+Step 2: confirm the release check is green.
+
+Step 3: confirm the release check is green.
+`;
+    const doc = parseDocument(source);
+    const anchors = doc.blocks.map((_, i) => ({ id: `p${i}`, fingerprint: fingerprintBlock(doc, i) }));
+    const result = reanchor(anchors, parseDocument(source));
+
+    expect(result.survivalRate).toBe(1);
+    for (const resolution of result.resolutions) {
+      const index = Number(resolution.anchorId.slice(1));
+      expect(resolution.blockIndex, `${resolution.anchorId} did not resolve to itself`).toBe(index);
+    }
+  });
+
+  it('orphans a deleted paragraph rather than handing it to its near-identical twin', () => {
+    const source = `# Runbook
+
+Step 4: announce the window in the release channel.
+
+Step 5: announce the window in the release channel.
+`;
+    const doc = parseDocument(source);
+    const anchors = doc.blocks.map((_, i) => ({ id: `p${i}`, fingerprint: fingerprintBlock(doc, i) }));
+
+    // Step 4 is deleted. Its twin is the only candidate left.
+    const rewritten = parseDocument(
+      source.replace('Step 4: announce the window in the release channel.\n\n', ''),
+    );
+    const result = reanchor(anchors, rewritten);
+    const deleted = result.byAnchor.get('p1')!;
+    expect(deleted.blockIndex, 'a deleted block took over its twin').toBeNull();
+  });
+
+  it('does not let a container claim a sibling it absorbed', () => {
+    // Deleting a paragraph between two lists makes them adjacent, and
+    // CommonMark merges them. The surviving list now contains the deleted
+    // list's items — but it is not that list, and inheriting its comments is a
+    // misattachment.
+    const source = `- alpha one
+- alpha two
+
+A paragraph between the lists.
+
+- beta one
+- beta two
+`;
+    const doc = parseDocument(source);
+    const first = doc.blocks.findIndex((b) => b.type === 'list');
+    const anchor: Anchor = { id: 'listA', fingerprint: fingerprintBlock(doc, first) };
+
+    const merged = parseDocument('- beta one\n- beta two\n- alpha one\n- alpha two\n');
+    expect(reanchor([anchor], merged).byAnchor.get('listA')!.blockIndex).toBeNull();
   });
 
   it('builds anchors only for blocks that carry an id', () => {

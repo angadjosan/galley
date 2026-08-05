@@ -134,6 +134,18 @@ const OVERLAP_MIN_SHINGLES = 24;
  */
 const OVERLAP_MAX_SIZE_RATIO = 2.5;
 
+/** Absorption: nearly all of the anchor is present… */
+const ABSORPTION_COVERAGE = 0.85;
+/** …but the anchor is a minority of what the candidate now holds. */
+const ABSORPTION_RETENTION = 0.75;
+
+function intersectionSize(a: ReadonlySet<string>, b: ReadonlySet<string>): number {
+  let shared = 0;
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  for (const item of small) if (large.has(item)) shared++;
+  return shared;
+}
+
 /**
  * Textual similarity, combining Dice with a containment measure.
  *
@@ -148,12 +160,54 @@ const OVERLAP_MAX_SIZE_RATIO = 2.5;
  * containment is evidence rather than coincidence: any two short strings share
  * most of their trigrams.
  */
-export function textSimilarity(a: ReadonlySet<string>, b: ReadonlySet<string>): number {
+export function textSimilarity(
+  a: ReadonlySet<string>,
+  b: ReadonlySet<string>,
+  allowContainment = true,
+): number {
+  // No content is not evidence of sameness. `diceSimilarity` conventionally
+  // scores two empty sets at 1, which made every link-reference definition and
+  // every thematic break in a document look identical to every other — and a
+  // deleted one then claimed a survivor with confidence 1.
+  if (a.size === 0 || b.size === 0) return 0;
+
   const dice = diceSimilarity(a, b);
+  if (!allowContainment) {
+    // A container that grew did not get reworded — it absorbed a sibling.
+    // Deleting a paragraph between two lists makes them adjacent, and
+    // CommonMark merges them, so the survivor now contains the deleted list's
+    // items and would otherwise inherit its identity and its comments.
+    //
+    // Absorption has a signature that an edit does not: nearly all of the
+    // anchor is present in the candidate (high coverage), but the anchor is a
+    // minority of the candidate (low retention). An edited container keeps both
+    // high; a rewritten one keeps both low.
+    const shared = intersectionSize(a, b);
+    const coverage = shared / a.size;
+    const retention = shared / b.size;
+    if (coverage >= ABSORPTION_COVERAGE && retention <= ABSORPTION_RETENTION) return 0;
+    return dice;
+  }
   if (a.size < OVERLAP_MIN_SHINGLES || b.size < OVERLAP_MIN_SHINGLES) return dice;
   const ratio = Math.max(a.size, b.size) / Math.min(a.size, b.size);
   if (ratio > OVERLAP_MAX_SIZE_RATIO) return dice;
   return Math.max(dice, 0.95 * overlapCoefficient(a, b));
+}
+
+/**
+ * Block types whose growth means absorption rather than rewording.
+ *
+ * A paragraph legitimately doubles in length when someone expands it, and
+ * containment is the right way to see that. A *container* does not: a list that
+ * now contains another list's items grew because the block between them was
+ * deleted and CommonMark merged them, and treating that as "the same list,
+ * resized" hands the deleted list's identity — and its comments — to its
+ * neighbour. Containers are compared on Dice alone.
+ */
+const CONTAINERS = new Set(['list', 'listItem', 'blockquote', 'callout', 'footnoteDefinition']);
+
+export function allowsContainment(type: string): boolean {
+  return !CONTAINERS.has(type);
 }
 
 /** The heading trail above a block, outermost first. */
@@ -175,7 +229,11 @@ export function headingPathFor(doc: ParsedDocument, index: number): string[] {
 
 export function fingerprintBlock(doc: ParsedDocument, index: number): Fingerprint {
   const block = doc.blocks[index]!;
-  const text = normalizeText(block.text);
+  // Some blocks carry their meaning outside their text: a link reference
+  // definition's identifier and URL are attributes, so `text` is empty. Falling
+  // back to the source keeps them distinguishable — and keeps "both are empty"
+  // from ever being read as "both are the same".
+  const text = normalizeText(block.text.trim() ? block.text : block.source);
   const siblings = doc.blocks.filter((b) => b.parent === block.parent);
   const position = siblings.indexOf(block);
   const prev = position > 0 ? siblings[position - 1] : undefined;
@@ -185,12 +243,12 @@ export function fingerprintBlock(doc: ParsedDocument, index: number): Fingerprin
     type: block.type,
     textHash: hashText(text),
     text,
-    shingles: shingle(block.text),
+    shingles: shingle(text),
     headingPath: headingPathFor(doc, index),
     index,
     total: doc.blocks.length,
-    prevHash: prev ? hashText(normalizeText(prev.text)) : null,
-    nextHash: next ? hashText(normalizeText(next.text)) : null,
+    prevHash: prev ? hashText(normalizeText(prev.text.trim() ? prev.text : prev.source)) : null,
+    nextHash: next ? hashText(normalizeText(next.text.trim() ? next.text : next.source)) : null,
     depth: block.depth,
   };
 }

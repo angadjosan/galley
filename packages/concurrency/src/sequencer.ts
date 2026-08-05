@@ -1,5 +1,6 @@
 import { Deferred } from './deferred.js';
 import { CapacityError, ClosedError } from './errors.js';
+import { monoNow } from './time.js';
 import { Watermark } from './watermark.js';
 
 export interface SequencerOptions {
@@ -35,6 +36,7 @@ interface Task {
   readonly key: string;
   readonly fn: () => unknown;
   readonly deferred: Deferred<unknown>;
+  /** Monotonic milliseconds. See the note on `onSettled` timings. */
   readonly enqueuedAt: number;
 }
 
@@ -131,7 +133,7 @@ export class Sequencer {
     }
 
     const deferred = new Deferred<unknown>();
-    lane.queue.push({ ticket, key, fn, deferred, enqueuedAt: Date.now() });
+    lane.queue.push({ ticket, key, fn, deferred, enqueuedAt: monoNow() });
     if (!lane.running) void this.pump(lane);
     return { ticket, result: deferred.promise as Promise<T> };
   }
@@ -240,7 +242,10 @@ export class Sequencer {
           this.watermark.complete(task.ticket);
           continue;
         }
-        const startedAt = Date.now();
+        // Monotonic, and sub-millisecond. `Date.now()` has millisecond
+        // granularity, and this queue's wait is measured in microseconds — so
+        // the hook that exists to report queueing reported a flat zero.
+        const startedAt = monoNow();
         let ok = true;
         let error: unknown;
         try {
@@ -252,7 +257,7 @@ export class Sequencer {
           task.deferred.reject(err); // isolated: the lane survives.
         } finally {
           this.watermark.complete(task.ticket);
-          const finishedAt = Date.now();
+          const finishedAt = monoNow();
           this.onSettled?.({
             key: task.key,
             ticket: task.ticket,

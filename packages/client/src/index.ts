@@ -76,8 +76,13 @@ export interface StatusRow {
   docId: string;
   path: string;
   updatedAt: string;
+  daysSinceEdit: number;
+  /** Distinct agents that have read this document in the last thirty days. */
+  agentReaders: number;
   pendingSuggestions: number;
   orphanedAnchors: number;
+  /** True when this document needs a person to look at it. */
+  needsAttention: boolean;
 }
 
 /**

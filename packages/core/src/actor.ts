@@ -617,6 +617,9 @@ export class DocumentActor {
 
   /** Mark proposals stale when the text they were written against has moved. */
   private refreshSuggestionStaleness(): void {
+    // Parsing the whole document to check nothing is 19% of a PATCH's p99 on a
+    // document that has never had a proposal — which is most documents.
+    if (this.suggestions.size === 0) return;
     const blocks = new Map(
       this.doc
         .parsed()

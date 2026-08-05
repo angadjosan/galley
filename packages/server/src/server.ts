@@ -6,6 +6,7 @@ import {
   CommentBudgetError,
   SuggestionStateError,
   citationFor,
+  needsAttention,
   renderCleanMarkdown,
   type DocumentActor,
   type Principal,
@@ -21,6 +22,16 @@ export interface ServerOptions extends StoreOptions, WorkspaceOptions {
   requestBudgetMs?: number;
   /** Concurrent in-flight requests before load shedding starts. */
   maxConcurrentRequests?: number;
+  /**
+   * Bytes a sync client may leave unsent before it is disconnected.
+   *
+   * Exposed so the eviction policy can be *proven* rather than asserted: a test
+   * sets it low and shows that a client which stops reading is closed with a
+   * reason, instead of accumulating megabytes in the socket's write buffer.
+   */
+  syncBufferBytes?: number;
+  /** Frames buffered for one sync client before it is considered behind. */
+  syncChannelCapacity?: number;
   logger?: boolean;
 }
 
@@ -384,17 +395,31 @@ export function build(options: ServerOptions = {}): GalleyServer {
   app.get('/v1/status', async (request) => {
     const session = sessionOf(request);
     const documents = workspace.list().filter((doc) => auth.can(session, `/${doc.path}`, 'read'));
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
     const rows = await Promise.all(
       documents.map(async (doc) => {
         const suggestions = store.listSuggestions(doc.docId, 'pending');
         const orphans = store.listOrphans(doc.docId);
-        return {
+        const agentReaders = store.countAgentReaders(doc.docId, thirtyDaysAgo);
+        const daysSinceEdit = Math.floor(
+          (Date.now() - new Date(doc.updatedAt).getTime()) / 86_400_000,
+        );
+        const report = {
           docId: doc.docId,
           path: doc.path,
           updatedAt: doc.updatedAt,
+          lastEditedAt: doc.updatedAt,
+          ownerId: doc.ownerId,
+          daysSinceEdit,
+          agentReaders,
           pendingSuggestions: suggestions.length,
           orphanedAnchors: orphans.length,
         };
+        // The nudge routes to a person: `idea.md` gives a document an `owner:`
+        // precisely so that "this doc feeds three agents and hasn't been
+        // touched in 90 days" has somewhere to go. An unowned document is one
+        // whose staleness is nobody's problem, which is how documents rot.
+        return { ...report, needsAttention: needsAttention(report) };
       }),
     );
     return { documents: rows };
@@ -427,10 +452,12 @@ export function build(options: ServerOptions = {}): GalleyServer {
       const path = workspace.pathOf(actor.docId) ?? actor.docId;
       auth.authorize(session, `/${path}`, 'read');
 
-      connection = new SyncConnection(socket, actor, {
-        peerId: randomUUID(),
-        name: session.principal.name,
-      });
+      connection = new SyncConnection(
+        socket,
+        actor,
+        { peerId: randomUUID(), name: session.principal.name },
+        { maxBufferedBytes: options.syncBufferBytes, capacity: options.syncChannelCapacity },
+      );
       hub.attach(connection);
 
       const snapshot = actor.document.snapshot();
@@ -449,7 +476,18 @@ export function build(options: ServerOptions = {}): GalleyServer {
         try {
           for await (const frame of connection!.outbound) {
             if (socket.readyState !== socket.OPEN) break;
-            socket.send(JSON.stringify(frame));
+            // **Await the send.** Firing and forgetting hands every frame
+            // straight into `ws`'s unbounded userspace buffer, so the outbound
+            // channel never fills, its capacity is never reached, and the
+            // eviction policy this connection documents can never fire —
+            // measured at 14.5MB held for one client that stopped reading.
+            //
+            // Awaiting makes the channel the real backpressure point: a peer
+            // that stops draining parks the writer, the channel fills, `offer`
+            // starts refusing, and the client is closed with a reason.
+            await new Promise<void>((resolve, reject) => {
+              socket.send(JSON.stringify(frame), (err) => (err ? reject(err) : resolve()));
+            });
           }
         } catch {
           // A faulted outbound stream means the document broke; terminate
@@ -550,12 +588,15 @@ export function build(options: ServerOptions = {}): GalleyServer {
           }
           const changed = actor.document.importUpdates(bytes);
           if (changed) {
-            connection.lastVersion = actor.document.versionVector();
-            hub.broadcast(
-              actor.docId,
-              { t: 'update', update: frame.update },
-              connection,
-            );
+            hub.broadcast(actor.docId, { t: 'update', update: frame.update }, connection);
+            // Everyone on this document has now been sent this update, so
+            // everyone's watermark moves — not just the sender's. Advancing
+            // only the sender left every other connection's `lastVersion`
+            // behind, and the next change recomputed a delta from that stale
+            // point: measured at 79× a steady-state delta after two hundred
+            // edits, re-sending operations every client already had.
+            const version = actor.document.versionVector();
+            for (const peer of hub.connectionsFor(actor.docId)) peer.lastVersion = version;
             await workspace.persist(actor.docId, true);
           }
         } catch (err) {

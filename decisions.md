@@ -741,3 +741,90 @@ blocks to have an opinion lost a large majority of them. The asymmetry is
 deliberate: a false positive is a hard block on someone's real work with no way
 around it, and a big-but-not-total diff is handled fine as a lot of scoped
 operations.
+
+---
+
+## D31 — What the latency campaigns found, and what was done about it
+
+Three subagents measured the system rather than reasoning about it. Every one of
+them overturned something believed on the basis of the code reading well.
+
+**The sequencer is not the bottleneck — parsing is.** The premise "per-request
+latency grows with concurrency because a document is serialized" turned out to
+be true of the *observation* and false of the *mechanism*: time queued in the
+`Sequencer` is 0.004–0.018 ms at every concurrency level, the smallest term in a
+request. What grew was off-handler wait, because the handler was CPU-bound —
+and it was CPU-bound because **one mutation parsed the whole document three
+times**: the whole-replacement guard, `applyOps`, and the staleness refresh each
+called `parsed()`, which is `parseDocument(toMarkdown())`. That was 55% of the
+median on a 200-block document.
+
+Fixed by memoizing bytes and parse on the CRDT's version vector — an exact
+invalidation key, since it changes on every commit and import and on nothing
+else — and by skipping the staleness refresh when a document has no proposals,
+which is most documents.
+
+**Three WASM leaks on the hot paths.** Loro's containers are reached through
+handles that a JavaScript collection does not reclaim, because V8 sizes its
+collections by the JavaScript heap and that heap barely moves when a CRDT is
+discarded.
+
+| path | before | after |
+|---|---|---|
+| `toMarkdown()` of a 40-segment document | 2.2 KB retained per read | 16 B |
+| `GalleyDocument.open()` of a 20 KB snapshot | 305 KB retained, 15× the snapshot | 0.3 KB |
+| per-open cost after 1000 opens | 0.87 ms → 2.06 ms | 0.25 ms, flat |
+
+The open path had no release at all; documents now have `dispose()`, and the
+workspace calls it on close and on eviction. Under LRU thrash that was most
+requests.
+
+**Combined effect**, measured: `applyOps` p50 0.63 → 0.44 ms, insert at 200
+blocks p50 9.1 → 6.2 ms, a 200-block read 0.44 → 0.11 ms, HTTP PATCH p50 9.6 →
+4.9 ms, and opening a document 3.5× faster with no drift.
+
+**The sequencer's own observability hook was blind.** `onSettled` reported
+`queuedMs` and `ranMs` from `Date.now()`, which has millisecond granularity —
+against a queue wait measured in microseconds, it reported a flat zero. The one
+hook that exists to report queueing could not see it. Now on `monoNow()`.
+
+---
+
+## D32 — The slow-client policy was documented but unreachable
+
+`SyncConnection` documents disconnecting a client that cannot keep up, and
+implements it with a bounded channel that rejects when full. Measurement showed
+it never fired: **14.5 MB held for one paused client, zero disconnects.**
+
+The writer handed each frame to `socket.send` without awaiting the drain, so the
+channel emptied instantly into `ws`'s *unbounded* userspace buffer. Its depth
+stayed at zero however far behind the peer was, so the capacity was never
+reached and the policy was dead code describing itself.
+
+The writer now awaits the send callback. That makes the channel the real
+backpressure point — a peer that stops draining parks the writer, the channel
+fills, `offer` refuses, and the client is closed with a reason. There is a
+socket-buffer budget as a second line of defence, and a test that sets both low
+and *proves the eviction fires* rather than asserting that it would.
+
+The general lesson, and the reason this is recorded rather than quietly fixed: a
+policy with no test that observes it firing is a comment. Everything about this
+one was correct except that nothing ever reached it.
+
+---
+
+## D33 — Two more sync defects worth the same attention
+
+**Every non-sender's watermark went stale.** The WebSocket write path advanced
+`lastVersion` for the sender only, then relayed the update to everyone else
+without advancing theirs. The next change recomputed each of their deltas from
+that stale point — measured at **79× a steady-state delta** after two hundred
+edits, re-sending operations every client already had. CRDT-idempotent, so not a
+correctness bug; unbounded in a WebSocket-only session, which is every session.
+
+**Presence cost the write path 2.4–3.4×.** A cursor move rebuilt the whole peer
+list and sent it to every connection, so one move was O(peers) frames each
+carrying O(peers) entries — roughly 70 MB/s of egress at 32 clients, for
+information that is stale in a tenth of a second. Presence is now coalesced to
+10 Hz with a trailing edge, and a client's cursor block id is capped, because it
+is echoed to every peer and an oversized one is amplified N times per keystroke.

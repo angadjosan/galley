@@ -55,7 +55,30 @@ export interface ApplyResult {
  * session boundary all need.
  */
 export class GalleyDocument {
+  /**
+   * Cached bytes and parse, keyed on the CRDT's version.
+   *
+   * One mutation used to parse the whole document three times — the
+   * whole-replacement guard, `applyOps`, and the staleness refresh each called
+   * `parsed()`, which is `parseDocument(toMarkdown())`. Measured at 55% of a
+   * PATCH's median on a 200-block document.
+   *
+   * The version vector is the exact invalidation key: it changes on every
+   * commit and on every import, and on nothing else.
+   */
+  private cache: { version: string; markdown?: string; parsed?: ParsedDocument } | null = null;
+
   private constructor(readonly loro: LoroDoc) {}
+
+  private cacheEntry(): { version: string; markdown?: string; parsed?: ParsedDocument } {
+    // `version()` hands back a handle of its own, on a path called for every
+    // read — so it is freed here too. A cache that leaks is not a cache.
+    const vv = this.loro.version();
+    const version = Buffer.from(vv.encode()).toString('base64');
+    release(vv);
+    if (!this.cache || this.cache.version !== version) this.cache = { version };
+    return this.cache;
+  }
 
   // -------------------------------------------------------------------------
   // Construction
@@ -119,7 +142,9 @@ export class GalleyDocument {
 
   /** The document's exact bytes. */
   toMarkdown(): string {
-    return assemble(this.segmented());
+    const entry = this.cacheEntry();
+    entry.markdown ??= assemble(this.segmented());
+    return entry.markdown;
   }
 
   segmented(): SegmentedDocument {
@@ -127,18 +152,32 @@ export class GalleyDocument {
     const segments: Segment[] = [];
     for (let i = 0; i < list.length; i++) {
       const map = list.get(i) as LoroMap;
+      const text = map.get('text') as LoroText;
       segments.push({
         sid: map.get('sid') as string,
-        text: (map.get('text') as LoroText).toString(),
+        text: text.toString(),
         separator: (map.get('sep') as string | undefined) ?? '',
       });
+      // Each `get` hands back a handle backed by WASM memory that is not
+      // reclaimed until a GC runs. This is the hottest read path in the system
+      // — every read and every write calls it — and leaving the handles to the
+      // collector retained kilobytes per read on a medium document. Freeing a
+      // handle releases the handle, not the data.
+      release(text, map);
     }
-    return { preamble: this.loro.getText(PREAMBLE).toString(), segments };
+    const preamble = this.loro.getText(PREAMBLE);
+    const text = preamble.toString();
+    // The container handles themselves leak too, just more slowly than the
+    // per-segment ones: two per call, on a path called for every read.
+    release(preamble, list);
+    return { preamble: text, segments };
   }
 
   /** Parse the current bytes. Callers that need blocks use this, not the CRDT. */
   parsed(): ParsedDocument {
-    return parseDocument(this.toMarkdown());
+    const entry = this.cacheEntry();
+    entry.parsed ??= parseDocument(this.toMarkdown());
+    return entry.parsed;
   }
 
   /** Index of the segment containing a given block id, or -1. */
@@ -222,6 +261,7 @@ export class GalleyDocument {
         if (splice.insert) text.insert(splice.index, splice.insert);
       }
       if ((map.get('sep') as string | undefined) !== step.separator) map.set('sep', step.separator);
+      release(text, map);
     }
 
     // Inserts ascend by target index so each lands in the right place.
@@ -249,6 +289,7 @@ export class GalleyDocument {
       const map = list.get(index) as LoroMap;
       const target = after.segments[step.to]!;
       if ((map.get('sep') as string | undefined) !== target.separator) map.set('sep', target.separator);
+      release(map);
     }
 
     this.loro.commit();
@@ -278,7 +319,10 @@ export class GalleyDocument {
    */
   updatesSince(version?: Uint8Array): Uint8Array {
     if (!version) return this.loro.export({ mode: 'update' });
-    return this.loro.export({ mode: 'update', from: VersionVector.decode(version) });
+    const from = VersionVector.decode(version);
+    const update = this.loro.export({ mode: 'update', from });
+    release(from);
+    return update;
   }
 
   /**
@@ -319,18 +363,42 @@ export class GalleyDocument {
 
   /** Apply remote operations. Returns whether anything changed. */
   importUpdates(update: Uint8Array): boolean {
-    const before = this.loro.version().encode();
+    const before = this.versionVector();
     this.loro.import(update);
-    const after = this.loro.version().encode();
+    const after = this.versionVector();
     return !equalBytes(before, after);
   }
 
   versionVector(): Uint8Array {
-    return this.loro.version().encode();
+    const vv = this.loro.version();
+    const encoded = vv.encode();
+    release(vv);
+    return encoded;
   }
 
   subscribe(handler: () => void): () => void {
     return this.loro.subscribe(() => handler());
+  }
+
+  /**
+   * Release the document's native memory.
+   *
+   * A `LoroDoc` holds a WASM allocation that a garbage collection reclaims only
+   * eventually, and an evicted document is not referenced by anything that
+   * would prompt one. Measured at roughly 300KB retained per open — fifteen
+   * times the snapshot — with per-open cost drifting from 0.9ms to 2.0ms as it
+   * accumulated. Under LRU thrash that is most requests.
+   *
+   * After this the document must not be used again.
+   */
+  dispose(): void {
+    this.cache = null;
+    try {
+      (this.loro as unknown as { free?: () => void }).free?.();
+    } catch {
+      // Already released. Nothing to do, and nothing worth failing a shutdown
+      // over.
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -359,13 +427,16 @@ export class GalleyDocument {
     map.set('sep', separator);
     const container = map.setContainer('text', new LoroText());
     if (text) container.insert(0, text);
+    release(container, map);
   }
 
   /** The list's segment ids, in order. One pass, N WASM calls. */
   private sidOrder(list: LoroMovableList): string[] {
     const out: string[] = new Array(list.length);
     for (let i = 0; i < list.length; i++) {
-      out[i] = (list.get(i) as LoroMap).get('sid') as string;
+      const map = list.get(i) as LoroMap;
+      out[i] = map.get('sid') as string;
+      release(map);
     }
     return out;
   }
@@ -420,6 +491,31 @@ function ensureIdentity(source: string, docId: string, owner?: string): string {
   const entries: Record<string, unknown> = { galley: docId };
   if (owner && parsed.frontmatter?.data.owner === undefined) entries.owner = owner;
   return setFrontmatterKeys(parsed, entries);
+}
+
+/**
+ * Release transient CRDT handles.
+ *
+ * Every `get` on a Loro container returns a handle holding WASM memory that
+ * only a garbage collection reclaims. On the read path that is called on every
+ * read *and* every write, so the handles accumulate faster than the collector
+ * runs — measured at roughly two kilobytes retained per read of a medium
+ * document, against fifty-five bytes for the same traversal with an explicit
+ * free.
+ *
+ * Freeing releases the *handle*, not the data: the document reads back
+ * identically afterwards. Wrapped because a double free throws, and a leak that
+ * turns into a crash is a worse trade than the leak.
+ */
+function release(...handles: { free?: () => void }[]): void {
+  for (const handle of handles) {
+    try {
+      handle.free?.();
+    } catch {
+      // Already released, or a build without explicit frees. Either way there
+      // is nothing to do and nothing worth failing a read over.
+    }
+  }
 }
 
 function equalBytes(a: Uint8Array, b: Uint8Array): boolean {

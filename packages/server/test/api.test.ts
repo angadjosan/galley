@@ -503,3 +503,52 @@ describe('status', () => {
     expect(row.orphanedAnchors).toBe(0);
   });
 });
+
+describe('the staleness nudge', () => {
+  it('flags a document only when machines are acting on a stale one', async () => {
+    // `idea.md`: a doc that feeds agents is worse than useless when it is
+    // wrong, because it launders bad information into confident answers. A
+    // stale document nobody reads is merely untidy.
+    const h = await open();
+    const { docId } = await seedDocument(h);
+
+    const fresh = await h.json<{ documents: { docId: string; needsAttention: boolean; agentReaders: number }[] }>(
+      '/v1/status',
+    );
+    const row = fresh.documents.find((d) => d.docId === docId)!;
+    expect(row.needsAttention, 'a fresh document with no pending work needs nothing').toBe(false);
+
+    // An agent reads it; the read is attributed to the agent, with its sponsor.
+    await h.json(`/v1/docs/${docId}`, { token: h.tokens.bot });
+    const withReader = await h.json<{ documents: { docId: string; agentReaders: number }[] }>(
+      '/v1/status',
+    );
+    expect(withReader.documents.find((d) => d.docId === docId)!.agentReaders).toBe(1);
+  });
+
+  it('flags a document with work waiting on a person', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}/suggestions`, {
+      method: 'POST',
+      token: h.tokens.bot,
+      body: JSON.stringify({
+        ops: [{ kind: 'replace', target: blockIds[1], markdown: 'x' }],
+        rationale: 'r',
+      }),
+    });
+
+    const status = await h.json<{ documents: { docId: string; needsAttention: boolean }[] }>(
+      '/v1/status',
+    );
+    expect(status.documents.find((d) => d.docId === docId)!.needsAttention).toBe(true);
+  });
+
+  it('does not count a human read as an agent reader', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    for (let i = 0; i < 5; i++) await h.json(`/v1/docs/${docId}`);
+    const status = await h.json<{ documents: { docId: string; agentReaders: number }[] }>('/v1/status');
+    expect(status.documents.find((d) => d.docId === docId)!.agentReaders).toBe(0);
+  });
+});

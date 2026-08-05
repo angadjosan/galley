@@ -18,6 +18,19 @@ export type ServerFrame =
   | { readonly t: 'error'; readonly message: string }
   | { readonly t: 'pong' };
 
+/** Longest block id echoed in a presence frame. Ids are short by construction. */
+const MAX_BLOCK_ID_LENGTH = 128;
+
+/**
+ * Minimum gap between presence broadcasts for one document.
+ *
+ * Presence is O(peers) frames each carrying O(peers) entries, so a cursor move
+ * at thirty-two clients is a thousand entries on the wire. Sent on every move it
+ * cost the *write* path 2.4–3.4× and roughly seventy megabytes a second of
+ * egress — for information that is stale in a tenth of a second anyway.
+ */
+const PRESENCE_INTERVAL_MS = 100;
+
 export interface PeerPresence {
   readonly peerId: string;
   readonly name: string;
@@ -31,6 +44,11 @@ export interface SyncConnectionOptions {
   helloTimeoutMs?: number;
   /** Grace period for a close handshake before the socket is terminated. */
   closeGraceMs?: number;
+  /**
+   * Bytes allowed to sit unsent in the socket before the client is considered
+   * unable to keep up.
+   */
+  maxBufferedBytes?: number;
 }
 
 /**
@@ -69,6 +87,8 @@ export class SyncConnection {
   ) {
     this.peerId = identity.peerId;
     this.closeGraceMs = options.closeGraceMs ?? 1_000;
+    this.maxBufferedBytes = options.maxBufferedBytes ?? 1_000_000;
+    this.bufferBudget = this.maxBufferedBytes;
     this.outbound = new Channel<ServerFrame>({
       capacity: options.capacity ?? 512,
       // `reject` rather than `drop-oldest`: a dropped CRDT update would leave
@@ -82,13 +102,41 @@ export class SyncConnection {
     return { peerId: this.peerId, name: this.identity.name, cursor: this.cursor };
   }
 
+  /**
+   * Record this client's cursor.
+   *
+   * The block id is capped: it is echoed to every peer on every move, so an
+   * oversized one is amplified N times per keystroke. A client that sends an
+   * eight-kilobyte id is either broken or hostile, and neither deserves the
+   * bandwidth.
+   */
   setCursor(cursor: PeerPresence['cursor']): void {
-    this.cursor = cursor;
+    if (!cursor) {
+      this.cursor = null;
+      return;
+    }
+    this.cursor = {
+      blockId: String(cursor.blockId).slice(0, MAX_BLOCK_ID_LENGTH),
+      offset: Number.isFinite(cursor.offset) ? cursor.offset : 0,
+    };
   }
 
-  /** Queue a frame. Returns false when the client is too far behind. */
+  /**
+   * Queue a frame. Returns false when the client is too far behind.
+   *
+   * The channel's capacity is not, on its own, a measure of that. The writer
+   * hands each frame to `socket.send` without awaiting the drain, so the
+   * channel empties instantly into `ws`'s **unbounded** userspace buffer — its
+   * depth stays at zero no matter how far behind the peer is, and the eviction
+   * policy this class documents could never fire. Measured: 14.5 MB held for
+   * one paused client and zero disconnects.
+   *
+   * `bufferedAmount` is where the backlog actually accumulates, so that is what
+   * is checked.
+   */
   offer(frame: ServerFrame): boolean {
     if (this.closed) return false;
+    if (this.socket.bufferedAmount > this.maxBufferedBytes) return false;
     return this.outbound.trySend(frame);
   }
 
@@ -130,6 +178,9 @@ export class SyncConnection {
   closeReason = 'closed';
   private terminateTimer: NodeJS.Timeout | null = null;
   private readonly closeGraceMs: number;
+  private readonly maxBufferedBytes: number;
+  /** Exposed for diagnostics and tests. */
+  readonly bufferBudget: number;
 
   fault(cause: unknown): void {
     if (this.closed) return;
@@ -159,6 +210,8 @@ export class SyncHub {
   readonly counters = new Counters();
   private readonly connections = new Map<string, Set<SyncConnection>>();
   private readonly pumps = new Map<string, () => void>();
+  private readonly presenceTimers = new Map<string, NodeJS.Timeout>();
+  private readonly presencePending = new Set<string>();
   private readonly group = new WaitGroup();
 
   get connectionCount(): number {
@@ -214,8 +267,30 @@ export class SyncHub {
     }
   }
 
+  /**
+   * Send presence to everyone on a document, at most ten times a second.
+   *
+   * Coalesced with a trailing edge, so a burst of cursor moves produces one
+   * frame carrying the latest state rather than one frame per move. Presence is
+   * a notification; nobody needs to see keystroke 400 of a fast typist's cursor.
+   */
   broadcastPresence(docId: string): void {
+    if (this.presenceTimers.has(docId)) {
+      this.presencePending.add(docId);
+      return;
+    }
+    this.sendPresence(docId);
+    const timer = setTimeout(() => {
+      this.presenceTimers.delete(docId);
+      if (this.presencePending.delete(docId)) this.broadcastPresence(docId);
+    }, PRESENCE_INTERVAL_MS);
+    timer.unref?.();
+    this.presenceTimers.set(docId, timer);
+  }
+
+  private sendPresence(docId: string): void {
     const peers = this.connectionsFor(docId).map((c) => c.presence);
+    if (peers.length === 0) return;
     this.broadcast(docId, { t: 'presence', peers });
   }
 
@@ -275,6 +350,9 @@ export class SyncHub {
   }
 
   async shutdown(): Promise<void> {
+    for (const timer of this.presenceTimers.values()) clearTimeout(timer);
+    this.presenceTimers.clear();
+    this.presencePending.clear();
     for (const [docId, set] of this.connections) {
       for (const connection of set) connection.close('server shutting down');
       this.pumps.get(docId)?.();

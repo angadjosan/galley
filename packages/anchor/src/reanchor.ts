@@ -1,5 +1,6 @@
 import type { ParsedDocument } from '@galley/markdown';
 import {
+  allowsContainment,
   fingerprintDocument,
   hashText,
   normalizeText,
@@ -85,6 +86,11 @@ export interface ReanchorOptions {
    * their comment was about.
    */
   textAmbiguityMargin?: number;
+  /**
+   * Text similarity above which two anchors are considered indistinguishable
+   * claimants on the same block.
+   */
+  contestedTextSimilarity?: number;
 }
 
 const DEFAULTS: Required<ReanchorOptions> = {
@@ -93,7 +99,11 @@ const DEFAULTS: Required<ReanchorOptions> = {
   candidateFloor: 0.3,
   minTextSimilarity: 0.42,
   textAmbiguityMargin: 0.07,
+  contestedTextSimilarity: 0.8,
 };
+
+/** Types whose content does not identify them, so they are never fuzzy-matched. */
+const UNIDENTIFIABLE = new Set(['html', 'thematicBreak']);
 
 /** Weights over the individual signals. They sum to 1. */
 const WEIGHTS = {
@@ -163,6 +173,51 @@ export function reanchor(
     }
   }
 
+  // Rule 1b: an *exact* structural match resolves immediately.
+  //
+  // This also fixes the twin problem, and does it without a special case: a
+  // block with a near-identical sibling is claimed by *its own* anchor here,
+  // one-to-one, before the fuzzy pass runs. So when one of two near-identical
+  // paragraphs is deleted, the survivor is already taken and the deleted
+  // block's anchor has nothing left to land on — which is the orphan it should
+  // have been all along.
+  //
+  // Same text, same position, same neighbours is not a guess — it is the same
+  // block, and the commonest case of all: a document re-anchored after an edit
+  // somewhere else entirely. Without this, three paragraphs differing only by a
+  // step number orphan *every* anchor against an unchanged document, because
+  // the ambiguity margin sees three candidates with identical text and refuses
+  // all of them. `fingerprint.ts` has always documented `textHash` as the
+  // exact-match fast path; this is where it is finally read.
+  for (const anchor of [...remainingAnchors]) {
+    const print = anchor.fingerprint;
+    // A block with no text — a link reference definition, a thematic break —
+    // has no content to be exact *about*. Matching one to another because both
+    // are empty and sit at the same index is a coin flip wearing a confidence
+    // of 1.
+    if (print.text.trim().length === 0) continue;
+    const exact = targets.findIndex(
+      (candidate, index) =>
+        !claimedBlocks.has(index) &&
+        candidate.type === print.type &&
+        candidate.textHash === print.textHash &&
+        candidate.index === print.index &&
+        candidate.prevHash === print.prevHash &&
+        candidate.nextHash === print.nextHash,
+    );
+    if (exact < 0) continue;
+    claimedBlocks.add(exact);
+    resolutions.set(anchor.id, {
+      anchorId: anchor.id,
+      method: 'fuzzy',
+      blockIndex: exact,
+      confidence: 1,
+      runnerUp: 0,
+      lastKnownText: print.text,
+    });
+    remainingAnchors.splice(remainingAnchors.indexOf(anchor), 1);
+  }
+
   // Rule 2: score every plausible pair, then assign greedily from the top.
   interface Pair {
     anchorId: string;
@@ -179,7 +234,11 @@ export function reanchor(
     const texts = new Map<number, number>();
     for (let i = 0; i < targets.length; i++) {
       if (claimedBlocks.has(i)) continue;
-      const text = textSimilarity(anchor.fingerprint.shingles, targets[i]!.shingles);
+      const text = textSimilarity(
+        anchor.fingerprint.shingles,
+        targets[i]!.shingles,
+        allowsContainment(anchor.fingerprint.type),
+      );
       const score = scorePair(anchor.fingerprint, targets[i]!, config.minTextSimilarity);
       if (score >= config.candidateFloor) {
         pairs.push({ anchorId: anchor.id, blockIndex: i, score, text });
@@ -201,6 +260,39 @@ export function reanchor(
     return best;
   };
 
+  /**
+   * Blocks that more than one anchor claims with near-identical content.
+   *
+   * The mirror of the ambiguity margin: that rule asks whether *one anchor* can
+   * tell two blocks apart, and this one asks whether *one block* can tell two
+   * anchors apart. It is the case where one of two near-identical paragraphs is
+   * deleted and the survivor is edited — the deleted block's anchor then
+   * competes for the survivor on equal terms, and greedy assignment hands it to
+   * whichever scored a hair higher. Nobody can say which anchor was meant, so
+   * neither gets it.
+   */
+  const contested = new Set<number>();
+  {
+    const claimants = new Map<number, number>();
+    for (const [, texts] of perAnchorText) {
+      // Each anchor gets one vote, for the block it matches best. Counting
+      // every candidate above a threshold would make a document of similar
+      // paragraphs contest everything; counting only the best candidate asks
+      // the question that matters — do two anchors *want the same block*?
+      let bestIndex = -1;
+      let bestValue = 0;
+      for (const [index, value] of texts) {
+        if (value > bestValue) {
+          bestValue = value;
+          bestIndex = index;
+        }
+      }
+      if (bestIndex < 0 || bestValue < config.contestedTextSimilarity) continue;
+      claimants.set(bestIndex, (claimants.get(bestIndex) ?? 0) + 1);
+    }
+    for (const [index, count] of claimants) if (count > 1) contested.add(index);
+  }
+
   pairs.sort((a, b) => b.score - a.score || a.blockIndex - b.blockIndex);
   const assignedAnchors = new Set<string>();
 
@@ -212,7 +304,9 @@ export function reanchor(
 
     if (pair.score < config.acceptThreshold) continue; // leave it for the orphan pass
     const rivalText = bestOtherText(pair.anchorId, pair.blockIndex);
+
     if (
+      contested.has(pair.blockIndex) ||
       pair.score - runnerUp < config.ambiguityMargin ||
       pair.text - rivalText < config.textAmbiguityMargin
     ) {
@@ -275,8 +369,16 @@ export function reanchor(
  */
 export function scorePair(a: Fingerprint, b: Fingerprint, minTextSimilarity = 0): number {
   if (a.type !== b.type) return 0;
+  // Some block types have no content that identifies them. A thematic break is
+  // three dashes; an HTML block is very often boilerplate — a wrapper div, a
+  // licence comment — and two of them in one document are indistinguishable by
+  // construction. They also cannot carry an inline marker, so a wrong match
+  // here is a silent misattachment with nothing to catch it. Orphaning is the
+  // honest answer, and it is what "below threshold, the anchor orphans rather
+  // than guessing" means when the content itself carries no signal.
+  if (UNIDENTIFIABLE.has(a.type)) return 0;
 
-  const text = textSimilarity(a.shingles, b.shingles);
+  const text = textSimilarity(a.shingles, b.shingles, allowsContainment(a.type));
   if (text < minTextSimilarity) return 0;
   const neighbours =
     (a.prevHash !== null && a.prevHash === b.prevHash ? 0.5 : 0) +

@@ -482,6 +482,22 @@ export class Store {
     ).run(entry.at, entry.actorId, entry.sponsorId, entry.action, entry.docId, entry.detail);
   }
 
+  /**
+   * How many distinct *agents* have read a document recently.
+   *
+   * This is the signal that turns "old document" into "old document that
+   * machines are acting on" — the only kind worth nudging someone about. A
+   * stale document nobody reads is untidy; a stale document three agents are
+   * quoting launders bad information into confident answers.
+   */
+  countAgentReaders(docId: string, since: string): number {
+    const row = this.prepare(
+      `SELECT COUNT(DISTINCT actor_id) AS n FROM audit
+       WHERE doc_id = ? AND action = 'document.read' AND at >= ? AND sponsor_id IS NOT NULL`,
+    ).get(docId, since) as { n: number } | undefined;
+    return Number(row?.n ?? 0);
+  }
+
   listAudit(docId?: string, limit = 200): AuditEntry[] {
     const rows = (
       docId

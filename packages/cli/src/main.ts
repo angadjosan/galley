@@ -485,6 +485,10 @@ async function statusCommand(args: ParsedArgs, io: Io): Promise<number> {
       state?.stale ? 'stale' : null,
       row.pendingSuggestions > 0 ? `${row.pendingSuggestions} pending` : null,
       row.orphanedAnchors > 0 ? `${row.orphanedAnchors} orphaned` : null,
+      // The nudge from `idea.md`: not "old", but "old and feeding agents".
+      row.agentReaders > 0 && row.daysSinceEdit >= 90
+        ? `${row.daysSinceEdit}d old, read by ${row.agentReaders} agent(s)`
+        : null,
     ].filter(Boolean);
     if (marks.length === 0) continue;
     flagged++;
@@ -495,8 +499,10 @@ async function statusCommand(args: ParsedArgs, io: Io): Promise<number> {
   // `--stale` is the CI form: exit non-zero when a document that feeds agents
   // has drifted, so a job can fail on it.
   if (flagBool(args, 'stale')) {
+    // The CI form: fail a job when a document that feeds production agents has
+    // drifted from what it describes.
     const drifted = rows.some(
-      (row) => local.get(row.docId)?.stale || row.orphanedAnchors > 0,
+      (row) => local.get(row.docId)?.stale || row.orphanedAnchors > 0 || row.needsAttention,
     );
     return drifted ? 1 : 0;
   }
