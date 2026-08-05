@@ -183,32 +183,38 @@ describe('concurrent create', () => {
     a.store.setGrants('u-priya', [{ path: '/', capability: 'admin' }]);
     const priya = { id: 'u-priya', kind: 'human' as const, name: 'priya' };
 
+    const problems: string[] = [];
     try {
       const settled = await Promise.allSettled([
         a.workspace.create('specs/shared', '# A\n\nalpha\n', priya),
         b.workspace.create('specs/shared', '# B\n\nbeta\n', priya),
       ]);
-      const failures = settled.filter((s) => s.status === 'rejected');
-      expect(failures, `seed=${SEED}`).toHaveLength(1);
-      const message = (failures[0] as PromiseRejectedResult).reason.message as string;
-      expect(
-        message,
-        `seed=${SEED}: the loser must report a path conflict, not a raw SQLite error ` +
-          '(the server maps anything else to 500)',
-      ).toMatch(/already exists/);
-
+      const failures = settled.filter((s): s is PromiseRejectedResult => s.status === 'rejected');
+      if (failures.length !== 1) problems.push(`expected exactly one loser, got ${failures.length}`);
+      for (const failure of failures) {
+        const message = String((failure.reason as Error).message);
+        // The loser must report a path conflict. `statusFor` maps "already
+        // exists" to 409 and everything else to 500, so a raw SQLite error here
+        // is a 500 on an ordinary racing create.
+        if (!/already exists/.test(message)) problems.push(`loser reported: ${message}`);
+      }
       const loser = settled[0]!.status === 'rejected' ? a : b;
-      expect(
-        loser.workspace.openDocumentIds(),
-        `seed=${SEED}: a failed create left an unpersistable document open`,
-      ).toHaveLength(0);
+      if (loser.workspace.openDocumentIds().length > 0) {
+        problems.push('a failed create left an unpersistable document open in the workspace');
+      }
     } finally {
       // A failed create must not poison shutdown: `close()` flushes every open
       // document, and the ghost's flush re-hits the UNIQUE index.
-      await expect(a.close()).resolves.toBeUndefined();
-      await expect(b.close()).resolves.toBeUndefined();
+      for (const [name, server] of [['a', a], ['b', b]] as const) {
+        const closed = await server.close().then(
+          () => null,
+          (err: Error) => err.message,
+        );
+        if (closed) problems.push(`server ${name} could not shut down: ${closed}`);
+      }
       rmSync(dir, { recursive: true, force: true });
     }
+    expect(problems, `seed=${SEED}`).toEqual([]);
   });
 });
 

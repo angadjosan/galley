@@ -23,13 +23,23 @@ import {
   type SuggestionState,
 } from './sidecar.js';
 import { describePrincipal, type Principal } from './principals.js';
+import {
+  History,
+  revisionAuthor,
+  summarize,
+  touchedBlocks,
+  type BlockAttribution,
+  type Checkpoint,
+  type Revision,
+} from './history.js';
 
 export type DocumentEvent =
   | { readonly kind: 'changed'; readonly docId: string; readonly ticket: number; readonly by: string }
   | { readonly kind: 'comment'; readonly comment: Comment }
   | { readonly kind: 'suggestion'; readonly suggestion: Suggestion }
   | { readonly kind: 'orphaned'; readonly docId: string; readonly anchors: readonly OrphanedAnchor[] }
-  | { readonly kind: 'session-ended'; readonly docId: string; readonly reason: SessionEndReason };
+  | { readonly kind: 'session-ended'; readonly docId: string; readonly reason: SessionEndReason }
+  | { readonly kind: 'revision'; readonly docId: string; readonly revision: Revision };
 
 export type SessionEndReason = 'whole-file-replacement' | 'closed' | 'faulted';
 
@@ -95,6 +105,7 @@ export class DocumentActor {
   private readonly feedCapacity: number;
   private readonly now: () => string;
   private readonly persistBreaker = new CircuitBreaker({ name: 'persist' });
+  readonly history = new History();
   private sessionEnded: SessionEndReason | null = null;
 
   constructor(
@@ -243,6 +254,7 @@ export class DocumentActor {
             const result = await this.lock.withWrite(() => this.doc.applyOps(ops));
             this.counters.inc('applied-ops', ops.length);
             this.refreshSuggestionStaleness();
+            this.recordRevision({ ops, principal, ticket, kind: 'edit', content: result.source });
             this.emit({
               kind: 'changed',
               docId: this.docId,
@@ -399,7 +411,18 @@ export class DocumentActor {
           );
         }
 
-        await this.lock.withWrite(() => this.doc.applyOps(suggestion.ops));
+        const applied = await this.lock.withWrite(() => this.doc.applyOps(suggestion.ops));
+        // Attributed to the *proposer*, not the accepter. `idea.md`: "becomes
+        // ops, attributed to the proposer" — the reviewer's act is the
+        // acceptance, which the audit trail records separately.
+        this.recordRevision({
+          ops: suggestion.ops,
+          principal: { id: suggestion.authorId, kind: 'agent', name: suggestion.authorId, sponsorId: principal.id },
+          ticket: this.sequencer.watermark.cursor,
+          kind: 'suggestion-accepted',
+          content: applied.source,
+          summary: `accepted a proposal: ${summarize(suggestion.ops)}`,
+        });
         suggestion.state = 'accepted';
         suggestion.resolvedAt = this.now();
         suggestion.resolvedBy = principal.id;
@@ -473,6 +496,15 @@ export class DocumentActor {
       const anchors = anchorsFor(await this.lock.withRead(() => this.doc.parsed()));
       await this.lock.withWrite(() => this.doc.setMarkdown(source));
       const orphans = this.reconcileAnchors(anchors);
+      this.recordRevision({
+        ops: [],
+        principal,
+        ticket: this.sequencer.watermark.cursor,
+        kind: 'external',
+        content: source,
+        summary: `${magnitude.changed} of ${magnitude.total} blocks changed outside Galley`,
+        blockIds: anchors.map((a) => a.id),
+      });
 
       this.counters.inc('external-edits');
       this.emit({
@@ -601,6 +633,116 @@ export class DocumentActor {
   }
 
   // -------------------------------------------------------------------------
+  // History
+  // -------------------------------------------------------------------------
+
+  listRevisions(limit = 100): Revision[] {
+    return this.history.list(limit);
+  }
+
+  listCheckpoints(): Checkpoint[] {
+    return this.history.listCheckpoints();
+  }
+
+  attributionFor(blockId: string): BlockAttribution | undefined {
+    return this.history.attributionFor(blockId);
+  }
+
+  allAttribution(): BlockAttribution[] {
+    return this.history.allAttribution();
+  }
+
+  /** Name the current version, so it can be returned to by name later. */
+  checkpoint(name: string, principal: Principal): Promise<Checkpoint> {
+    return this.sequencer.run(this.docId, async () => {
+      this.assertLive();
+      const checkpoint: Checkpoint = {
+        id: blockId(),
+        name,
+        ticket: this.sequencer.watermark.cursor,
+        at: this.now(),
+        byId: principal.id,
+      };
+      this.history.addCheckpoint(checkpoint);
+      this.counters.inc('checkpoints');
+      return checkpoint;
+    });
+  }
+
+  /**
+   * Return the document to an earlier version.
+   *
+   * A restore is an **ordinary forward edit**, not a rewind: the earlier bytes
+   * are applied as a new revision on top of history, so nothing is erased and
+   * the restore itself is visible in the timeline. That is what lets a user
+   * undo a restore by restoring again, and it is why the word "revert" never
+   * has to appear anywhere near "rebase".
+   */
+  restore(ticket: number, principal: Principal, requestId?: string): Promise<ApplyResult> {
+    return this.command(requestId, () =>
+      this.sequencer.run(this.docId, async () => {
+        this.assertLive();
+        // A ticket beyond the document's own version is not "the latest" — it
+        // is a request for a version that never existed, and answering it with
+        // the current state would silently turn a typo into a no-op the user
+        // believes did something.
+        const cursor = this.sequencer.watermark.cursor;
+        if (ticket > cursor) {
+          throw new Error(
+            `no revision at ticket ${ticket}; this document is at ${cursor}`,
+          );
+        }
+        const revision = this.history.at(ticket);
+        if (!revision) throw new Error(`no revision at or before ticket ${ticket}`);
+
+        const anchors = anchorsFor(await this.lock.withRead(() => this.doc.parsed()));
+        const result = await this.lock.withWrite(() => this.doc.setMarkdown(revision.content));
+        this.reconcileAnchors(anchors);
+        this.recordRevision({
+          ops: [],
+          principal,
+          ticket: this.sequencer.watermark.cursor,
+          kind: 'restore',
+          content: result.source,
+          summary: `restored the version from ${revision.at}`,
+          blockIds: anchors.map((a) => a.id),
+        });
+        this.counters.inc('restores');
+        this.emit({
+          kind: 'changed',
+          docId: this.docId,
+          ticket: this.sequencer.watermark.cursor,
+          by: describePrincipal(principal),
+        });
+        return result;
+      }),
+    );
+  }
+
+  private recordRevision(input: {
+    ops: readonly BlockOp[];
+    principal: Principal;
+    ticket: number;
+    kind: Revision['kind'];
+    content: string;
+    summary?: string;
+    blockIds?: readonly string[];
+  }): void {
+    const author = revisionAuthor(input.principal);
+    const revision: Revision = {
+      ticket: input.ticket,
+      at: this.now(),
+      kind: input.kind,
+      ...author,
+      blockIds: input.blockIds ?? touchedBlocks(input.ops),
+      summary: input.summary ?? summarize(input.ops),
+      content: input.content,
+    };
+    this.history.record(revision);
+    this.emit({ kind: 'revision', docId: this.docId, revision });
+  }
+
+  // -------------------------------------------------------------------------
   // Rehydration
   // -------------------------------------------------------------------------
 
@@ -624,6 +766,10 @@ export class DocumentActor {
 
   adoptOrphan(orphan: OrphanedAnchor): void {
     this.orphanTray.set(orphan.anchorId, orphan);
+  }
+
+  adoptHistory(revisions: readonly Revision[], checkpoints: readonly Checkpoint[]): void {
+    this.history.adopt(revisions, checkpoints);
   }
 
   // -------------------------------------------------------------------------

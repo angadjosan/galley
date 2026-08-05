@@ -13,7 +13,7 @@ import {
 import type { BlockOp } from '@galley/markdown';
 import { Auth, AuthError, type Session } from './auth.js';
 import { Store, type StoreOptions } from './store.js';
-import { Workspace, normalizePath, type WorkspaceOptions } from './workspace.js';
+import { InvalidPathError, Workspace, normalizePath, type WorkspaceOptions } from './workspace.js';
 import { SyncConnection, SyncHub, type ClientFrame } from './sync.js';
 
 export interface ServerOptions extends StoreOptions, WorkspaceOptions {
@@ -305,6 +305,54 @@ export function build(options: ServerOptions = {}): GalleyServer {
     return { suggestion };
   });
 
+  app.get('/v1/docs/:ref/history', async (request) => {
+    const session = sessionOf(request);
+    const actor = await resolve((request.params as { ref: string }).ref);
+    await authorizeDoc(session, actor, 'read');
+    const limit = Math.min(500, Number((request.query as { limit?: string }).limit) || 100);
+    return {
+      // The content of each revision is deliberately omitted from the list: a
+      // timeline is a list of moments, and shipping every version of the
+      // document to render one is a megabyte to draw a scrollbar.
+      revisions: actor.listRevisions(limit).map(({ content: _content, ...rest }) => rest),
+      checkpoints: actor.listCheckpoints(),
+      attribution: actor.allAttribution(),
+    };
+  });
+
+  app.get('/v1/docs/:ref/history/:ticket', async (request, reply) => {
+    const session = sessionOf(request);
+    const { ref, ticket } = request.params as { ref: string; ticket: string };
+    const actor = await resolve(ref);
+    await authorizeDoc(session, actor, 'read');
+    const revision = actor.history.at(Number(ticket));
+    if (!revision) return reply.code(404).send({ error: `no revision at or before ${ticket}` });
+    return { revision: { ...revision, content: renderCleanMarkdown(revision.content) } };
+  });
+
+  app.post('/v1/docs/:ref/checkpoints', async (request, reply) => {
+    const session = sessionOf(request);
+    const actor = await resolve((request.params as { ref: string }).ref);
+    await authorizeDoc(session, actor, 'write');
+    const { name } = request.body as { name?: string };
+    if (!name?.trim()) return reply.code(400).send({ error: 'a checkpoint needs a name' });
+    const checkpoint = await actor.checkpoint(name.trim(), principalOf(session));
+    await store.transaction(() => store.putCheckpoint(actor.docId, checkpoint.id, checkpoint));
+    workspace.audit(principalOf(session), 'checkpoint.create', actor.docId, checkpoint.name);
+    return reply.code(201).send({ checkpoint });
+  });
+
+  app.post('/v1/docs/:ref/restore', async (request, reply) => {
+    const session = sessionOf(request);
+    const actor = await resolve((request.params as { ref: string }).ref);
+    await authorizeDoc(session, actor, 'write');
+    const { ticket, requestId } = request.body as { ticket?: number; requestId?: string };
+    if (typeof ticket !== 'number') return reply.code(400).send({ error: 'ticket is required' });
+    const result = await actor.restore(ticket, principalOf(session), requestId);
+    workspace.audit(principalOf(session), 'document.restore', actor.docId, String(ticket));
+    return { content: renderCleanMarkdown(result.source) };
+  });
+
   app.get('/v1/docs/:ref/orphans', async (request) => {
     const session = sessionOf(request);
     const actor = await resolve((request.params as { ref: string }).ref);
@@ -455,7 +503,20 @@ export function build(options: ServerOptions = {}): GalleyServer {
   ): Promise<void> {
     let frame: ClientFrame;
     try {
-      frame = JSON.parse(raw.toString('utf8')) as ClientFrame;
+      const parsed: unknown = JSON.parse(raw.toString('utf8'));
+      // `JSON.parse('null')` succeeds and returns null, and `null.t` throws —
+      // in a `void`-ed handler, which is an unhandled rejection and, under
+      // Node's default policy, a dead server. Every frame is validated as a
+      // tagged object before anything reads its tag.
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        connection.offer({ t: 'error', message: 'a frame must be an object' });
+        return;
+      }
+      if (typeof (parsed as { t?: unknown }).t !== 'string') {
+        connection.offer({ t: 'error', message: 'a frame must have a string `t`' });
+        return;
+      }
+      frame = parsed as ClientFrame;
     } catch {
       connection.offer({ t: 'error', message: 'malformed frame' });
       return;
@@ -477,6 +538,16 @@ export function build(options: ServerOptions = {}): GalleyServer {
         }
         try {
           const bytes = Buffer.from(frame.update, 'base64');
+          // A CRDT update from a *different* document merges cleanly — both use
+          // the same container names — and splices a foreign frontmatter block,
+          // with a foreign `galley:` identity, into this one. The bytes still
+          // parse, which makes it worse: `galley pull` would write that file to
+          // disk and the document would claim to be something it is not.
+          const check = actor.document.validateUpdate(bytes);
+          if (!check.ok) {
+            connection.offer({ t: 'error', message: `rejected update: ${check.reason}` });
+            return;
+          }
           const changed = actor.document.importUpdates(bytes);
           if (changed) {
             connection.lastVersion = actor.document.versionVector();
@@ -562,6 +633,7 @@ function truthy(value: string | undefined): boolean {
 
 function statusFor(error: Error): number {
   if (error instanceof AuthError) return error.status;
+  if (error instanceof InvalidPathError) return 400;
   if (error instanceof CommentBudgetError) return 429;
   if (error instanceof SuggestionStateError) return 409;
   if (error instanceof CapacityError) return 400;

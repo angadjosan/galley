@@ -74,6 +74,19 @@ export function manifestPath(root: string): string {
   return join(resolve(root), '.galley', 'manifest.json');
 }
 
+/**
+ * Where a pulled document's *base* copy lives.
+ *
+ * The base is what the working copy was pulled from — git's index, in effect.
+ * `push` needs it to answer "what did **I** change", which is a different
+ * question from "how does my copy differ from the server's". Without it, a push
+ * computed as a two-way diff reverts whatever a colleague changed in the
+ * meantime, silently and with an exit code of 0.
+ */
+export function basePath(root: string, docId: string): string {
+  return join(resolve(root), '.galley', 'base', `${docId}.md`);
+}
+
 export function readManifest(root: string): Manifest | null {
   const path = manifestPath(root);
   if (!existsSync(path)) return null;

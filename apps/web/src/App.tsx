@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { GalleyClient, Comment, Suggestion, OrphanedAnchor, SearchHit, DocumentSummary } from '@galley/client';
+import type {
+  GalleyClient,
+  Comment,
+  Suggestion,
+  OrphanedAnchor,
+  SearchHit,
+  DocumentSummary,
+  RevisionSummary,
+  CheckpointSummary,
+  AttributionSummary,
+} from '@galley/client';
 import { diffToBlockOps } from '@galley/core/diff';
 import { parseDocument } from '@galley/markdown';
 import { Editor, type EditorHandle } from './editor/Editor.js';
@@ -13,7 +23,7 @@ import {
   type PeerPresence,
 } from './api.js';
 
-type Rail = 'comments' | 'suggestions' | 'orphans';
+type Rail = 'comments' | 'suggestions' | 'orphans' | 'history';
 type SaveState = 'saved' | 'saving' | 'dirty' | 'error';
 
 export function App(): JSX.Element {
@@ -212,6 +222,11 @@ function DocumentView({
   const [comments, setComments] = useState<Comment[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [orphans, setOrphans] = useState<OrphanedAnchor[]>([]);
+  const [history, setHistory] = useState<{
+    revisions: RevisionSummary[];
+    checkpoints: CheckpointSummary[];
+    attribution: AttributionSummary[];
+  }>({ revisions: [], checkpoints: [], attribution: [] });
   const [peers, setPeers] = useState<PeerPresence[]>([]);
   const [activeBlock, setActiveBlock] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -220,11 +235,12 @@ function DocumentView({
   const live = useRef<LiveConnection | null>(null);
 
   const loadAll = useCallback(async () => {
-    const [doc, threads, proposals, tray] = await Promise.all([
+    const [doc, threads, proposals, tray, timeline] = await Promise.all([
       client.read(docId, { markers: true }),
       client.comments(docId),
       client.suggestions(docId),
       client.orphans(docId),
+      client.history(docId),
     ]);
     serverContent.current = doc.content;
     setLoaded({ path: doc.path, content: doc.content });
@@ -232,6 +248,7 @@ function DocumentView({
     setComments(threads);
     setSuggestions(proposals);
     setOrphans(tray);
+    setHistory(timeline);
     setSave('saved');
   }, [client, docId]);
 
@@ -367,6 +384,9 @@ function DocumentView({
             <RailTab id="orphans" active={rail} onSelect={setRail} count={orphans.length}>
               Orphans
             </RailTab>
+            <RailTab id="history" active={rail} onSelect={setRail} count={0}>
+              History
+            </RailTab>
           </div>
 
           {rail === 'comments' && (
@@ -393,6 +413,23 @@ function DocumentView({
               onReject={async (id) => {
                 await client.rejectSuggestion(docId, id);
                 setSuggestions(await client.suggestions(docId));
+              }}
+            />
+          )}
+
+          {rail === 'history' && (
+            <HistoryRail
+              revisions={history.revisions}
+              checkpoints={history.checkpoints}
+              attribution={history.attribution}
+              activeBlock={activeBlock}
+              onCheckpoint={async (name) => {
+                await client.checkpoint(docId, name);
+                setHistory(await client.history(docId));
+              }}
+              onRestore={async (ticket) => {
+                await client.restore(docId, ticket);
+                await loadAll();
               }}
             />
           )}
@@ -577,6 +614,110 @@ function OrphansRail({
       ))}
     </div>
   );
+}
+
+/**
+ * The timeline.
+ *
+ * `idea.md`: users get a scrubbable timeline, named checkpoints, per-block
+ * attribution and restore — and never see the word "commit", "branch", "merge"
+ * or "rebase". The vocabulary here is chosen to hold that line: a revision is
+ * "edited a block", a checkpoint is a name someone gave a moment, and a restore
+ * says what it brings back rather than what it undoes.
+ */
+function HistoryRail({
+  revisions,
+  checkpoints,
+  attribution,
+  activeBlock,
+  onCheckpoint,
+  onRestore,
+}: {
+  revisions: RevisionSummary[];
+  checkpoints: CheckpointSummary[];
+  attribution: AttributionSummary[];
+  activeBlock: string | null;
+  onCheckpoint(name: string): Promise<void>;
+  onRestore(ticket: number): Promise<void>;
+}): JSX.Element {
+  const [name, setName] = useState('');
+  const byTicket = useMemo(
+    () => new Map(checkpoints.map((c) => [c.ticket, c])),
+    [checkpoints],
+  );
+  const current = activeBlock ? attribution.find((a) => a.blockId === activeBlock) : undefined;
+
+  return (
+    <div className="rail-body" data-testid="history-rail">
+      {current && (
+        <div className="attribution" data-testid="attribution">
+          <span className="attribution-label">This block</span>
+          <span className="who">
+            {current.authorName}
+            {current.byAgent && <span className="tag agent">agent</span>}
+          </span>
+          <time dateTime={current.at}>{when(current.at)}</time>
+        </div>
+      )}
+
+      <form
+        className="composer compact"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (!name.trim()) return;
+          await onCheckpoint(name.trim());
+          setName('');
+        }}
+      >
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Name this version…"
+          data-testid="checkpoint-input"
+        />
+        <button type="submit" className="ghost" disabled={!name.trim()} data-testid="checkpoint-submit">
+          Save point
+        </button>
+      </form>
+
+      {revisions.length === 0 && <p className="rail-empty">No changes yet.</p>}
+      <ol className="timeline">
+        {revisions.map((revision) => {
+          const checkpoint = byTicket.get(revision.ticket);
+          return (
+            <li key={revision.ticket} className="revision" data-testid="revision">
+              <span className={`dot ${revision.byAgent ? 'agent' : ''}`} />
+              <div className="revision-body">
+                {checkpoint && <span className="checkpoint-name">{checkpoint.name}</span>}
+                <span className="revision-summary">{revision.summary}</span>
+                <span className="revision-meta">
+                  {revision.authorName}
+                  {revision.byAgent && <span className="tag agent">agent</span>} · {when(revision.at)}
+                </span>
+              </div>
+              <button
+                className="ghost tiny"
+                onClick={() => void onRestore(revision.ticket)}
+                data-testid={`restore-${revision.ticket}`}
+                title="Bring this version back"
+              >
+                Restore
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+/** A short, human relative time. Absolute dates read as noise in a timeline. */
+function when(iso: string): string {
+  const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h ago`;
+  return new Date(iso).toLocaleDateString();
 }
 
 // ---------------------------------------------------------------------------

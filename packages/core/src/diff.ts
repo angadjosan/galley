@@ -119,8 +119,32 @@ function nearestAnchor(
   return best ? { index: best.index, side: best.side } : null;
 }
 
-/** True when `after` is a wholesale replacement rather than a set of edits. */
-export function isWholeDocumentReplacement(before: string, after: string, threshold = 0.5): boolean {
+/**
+ * True when `after` is a wholesale replacement rather than a set of edits.
+ *
+ * This gates `galley push` and `galley suggest`, so a false positive is a hard
+ * block on a person's real work: their edit is refused and there is no way to
+ * land it. That asymmetry sets the rule.
+ *
+ * A simple "half the blocks changed" test fails badly on small documents —
+ * editing the one paragraph of a two-block document is 50% — and on the
+ * ordinary "the remote moved while I was editing" case, which is precisely
+ * when someone needs push to work. So:
+ *
+ * - **Nothing survived** is always a replacement, at any size. That is the
+ *   branch-switch case the rule exists for.
+ * - Otherwise it takes a document with enough blocks to have an opinion, and a
+ *   large majority of them changed.
+ *
+ * A big-but-not-total diff is not refused; it is simply expressed as a lot of
+ * scoped operations, which the engine handles and a reviewer can read.
+ */
+export function isWholeDocumentReplacement(
+  before: string,
+  after: string,
+  threshold = 0.7,
+  minimumBlocks = 5,
+): boolean {
   const beforeBlocks = new Set(
     parseDocument(before)
       .blocks.filter((b) => b.depth === 0)
@@ -130,8 +154,12 @@ export function isWholeDocumentReplacement(before: string, after: string, thresh
     .blocks.filter((b) => b.depth === 0)
     .map((b) => b.source);
   if (beforeBlocks.size === 0) return false;
+
   let survived = 0;
   for (const block of afterBlocks) if (beforeBlocks.has(block)) survived++;
+  if (survived === 0) return true;
+
   const total = Math.max(beforeBlocks.size, afterBlocks.length, 1);
+  if (total < minimumBlocks) return false;
   return (total - survived) / total >= threshold;
 }

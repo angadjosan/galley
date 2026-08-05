@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { Semaphore } from '@galley/concurrency';
 import { GalleyApiError, GalleyClient } from '@galley/client';
@@ -7,6 +7,7 @@ import { diffToBlockOps, isWholeDocumentReplacement } from '@galley/core';
 import { parseDocument } from '@galley/markdown';
 import { flagBool, flagNumber, flagString, parseArgs, parseRef, type ParsedArgs } from './args.js';
 import {
+  basePath,
   readManifest,
   resolveCredentials,
   writeConfig,
@@ -32,7 +33,7 @@ usage: galley <command> [options]
 
   auth login --server <url> --token <token>   store credentials
   ls [prefix]                                 list documents
-  pull <dir> [--prefix p]                     mirror a workspace to disk
+  pull <dir> [--prefix p] [--force]           mirror a workspace to disk
   push [dir] [--write]                        send local edits back
   status [dir]                                what changed, what is stale, what is pending
   read <ref>                                  clean Markdown on stdout (ref: path or path#block)
@@ -233,15 +234,44 @@ async function pullCommand(args: ParsedArgs, io: Io): Promise<number> {
   // Bounded concurrency: a large workspace should not open five hundred
   // sockets, and the server sheds load rather than queueing.
   const slots = new Semaphore(8, 'pull');
-  const entries: Record<string, ManifestEntry> = {};
+  const previous = readManifest(root);
+  const entries: Record<string, ManifestEntry> = { ...(previous?.entries ?? {}) };
+  const force = flagBool(args, 'force');
+  const skipped: string[] = [];
 
   await Promise.all(
     documents.map((doc) =>
       slots.run(async () => {
-        const fetched = await api.read(doc.docId);
         const file = fileFor(root, doc.path);
+        const known = previous?.entries[doc.docId];
+
+        // Never overwrite work that has not been pushed. `galley status`
+        // already reports such a file as modified, so the CLI has the
+        // information to refuse — silently replacing it is data loss with an
+        // exit code of 0, which is the worst way to lose data.
+        if (!force && existsSync(file)) {
+          const local = readFileSync(file, 'utf8');
+          const isTracked = known !== undefined;
+          const isModified = isTracked && hash(local) !== known.hash;
+          if (!isTracked || isModified) {
+            skipped.push(
+              isTracked
+                ? `${doc.path} (modified locally — push it, or pull --force to discard)`
+                : `${doc.path} (a file is already there — pull --force to overwrite)`,
+            );
+            return;
+          }
+        }
+
+        const fetched = await api.read(doc.docId);
         mkdirSync(dirname(file), { recursive: true });
         writeFileSync(file, fetched.content);
+        // The base copy: what this working copy was pulled from. `push` diffs
+        // against it rather than against the server's current state, so it
+        // sends what *this user* changed and nothing else.
+        const base = basePath(root, doc.docId);
+        mkdirSync(dirname(base), { recursive: true });
+        writeFileSync(base, fetched.content);
         entries[doc.docId] = {
           docId: doc.docId,
           path: doc.path,
@@ -255,14 +285,18 @@ async function pullCommand(args: ParsedArgs, io: Io): Promise<number> {
   );
 
   writeManifest(root, { server: credentials.server, entries });
-  io.out(`pulled ${documents.length} document(s) into ${relative(process.cwd(), root) || '.'}\n`);
-  return 0;
+  const pulled = documents.length - skipped.length;
+  io.out(`pulled ${pulled} document(s) into ${relative(process.cwd(), root) || '.'}\n`);
+  for (const line of skipped) io.err(`skipped ${line}\n`);
+  return skipped.length > 0 ? 1 : 0;
 }
 
 interface LocalChange {
   entry: ManifestEntry;
   local: string;
   remote: string;
+  /** What the working copy was pulled from. The third point of the merge. */
+  base: string;
 }
 
 async function collectChanges(root: string, api: GalleyClient): Promise<LocalChange[]> {
@@ -283,7 +317,15 @@ async function collectChanges(root: string, api: GalleyClient): Promise<LocalCha
         }
         if (hash(local) === entry.hash) return;
         const remote = await api.read(entry.docId);
-        changes.push({ entry, local, remote: remote.content });
+        let base: string;
+        try {
+          base = readFileSync(basePath(root, entry.docId), 'utf8');
+        } catch {
+          // No base copy — an older mirror. Fall back to the remote, which is
+          // the two-way behaviour, and say so at the call site.
+          base = remote.content;
+        }
+        changes.push({ entry, local, remote: remote.content, base });
       }),
     ),
   );
@@ -316,18 +358,37 @@ async function pushCommand(args: ParsedArgs, io: Io): Promise<number> {
   let pushed = 0;
   let refused = 0;
   for (const change of changes) {
-    if (isWholeDocumentReplacement(change.remote, change.local)) {
+    if (isWholeDocumentReplacement(change.base, change.local)) {
       io.err(
-        `refusing ${change.entry.path}: the local copy shares almost nothing with the current ` +
-          `version. That is a new document version, not an edit — pull again, or create a new ` +
-          `document if this was meant to replace it.\n`,
+        `refusing ${change.entry.path}: the local copy shares almost nothing with the version it ` +
+          `was pulled from. That is a new document version, not an edit — pull again, or create a ` +
+          `new document if this was meant to replace it.\n`,
       );
       refused++;
       continue;
     }
 
-    const ops = diffToBlockOps(change.remote, change.local);
+    // Three-way: diff against the *base*, not the remote. A two-way diff would
+    // treat a colleague's edit to a block this user never touched as a change
+    // to be undone, and push would quietly revert their work.
+    const ops = diffToBlockOps(change.base, change.local);
     if (ops.length === 0) continue;
+
+    // A `@N` target names a *position* in the base document. If the remote has
+    // moved, that position may now hold a different block — and editing the
+    // wrong block is the one outcome worse than refusing. So each positional
+    // target's precondition is checked directly rather than assumed: does the
+    // block at that index still hold what it held in the base?
+    const unsafe = unsafePositionalTargets(change.base, change.remote, ops);
+    if (unsafe.length > 0) {
+      io.err(
+        `refusing ${change.entry.path}: it changed on the server under ${unsafe.length} of your ` +
+          `edits, and those blocks have no durable id to follow — run \`galley pull\` and redo ` +
+          `them, or comment on them first so they get one.\n`,
+      );
+      refused++;
+      continue;
+    }
 
     if (direct) {
       await api.applyOps(change.entry.docId, ops, `push:${change.entry.docId}:${hash(change.local)}`);
@@ -347,6 +408,35 @@ async function pushCommand(args: ParsedArgs, io: Io): Promise<number> {
     io.out(`hint: run \`galley pull\` to bring your copy back in step\n`);
   }
   return refused > 0 ? 1 : 0;
+}
+
+/**
+ * Positional (`@N`) targets whose block moved or changed on the server.
+ *
+ * A materialized id follows its block anywhere, so it is never unsafe. An index
+ * is only safe while the block at that index is still the one the edit was
+ * written against, which this checks against the actual bytes rather than
+ * inferring from "the document changed somewhere".
+ */
+function unsafePositionalTargets(
+  base: string,
+  remote: string,
+  ops: readonly { kind: string; [key: string]: unknown }[],
+): string[] {
+  if (base === remote) return [];
+  const baseBlocks = parseDocument(base).blocks;
+  const remoteBlocks = parseDocument(remote).blocks;
+  const unsafe: string[] = [];
+
+  for (const op of ops) {
+    for (const value of Object.values(op)) {
+      if (typeof value !== 'string' || !value.startsWith('@')) continue;
+      const index = Number(value.slice(1));
+      if (!Number.isInteger(index)) continue;
+      if (baseBlocks[index]?.source !== remoteBlocks[index]?.source) unsafe.push(value);
+    }
+  }
+  return unsafe;
 }
 
 /**

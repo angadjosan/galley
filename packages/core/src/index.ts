@@ -13,4 +13,5 @@ export * from './principals.js';
 export * from './sidecar.js';
 export * from './context.js';
 export * from './diff.js';
+export * from './history.js';
 export * from './actor.js';

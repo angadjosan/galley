@@ -339,3 +339,65 @@ test.describe('accessibility and resilience', () => {
     expect(overflow, 'the page scrolls horizontally at a narrow viewport').toBeLessThanOrEqual(1);
   });
 });
+
+test.describe('history', () => {
+  test('shows a timeline, names a version, and brings one back', async ({ page }) => {
+    await openSpec(page);
+
+    // Make a change worth remembering, then name it.
+    await caretAtEndOf(page, '.prose p');
+    await page.keyboard.type(' The good version.');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    await page.getByTestId('rail-history').click();
+    await expect(page.getByTestId('revision').first()).toBeVisible();
+    await page.getByTestId('checkpoint-input').fill('before the rewrite');
+    await page.getByTestId('checkpoint-submit').click();
+    await expect(page.getByTestId('history-rail')).toContainText('before the rewrite');
+
+    // Regret it.
+    await caretAtEndOf(page, '.prose p');
+    await page.keyboard.type(' A regrettable addition.');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    await expect(page.locator('.prose')).toContainText('A regrettable addition.');
+
+    // Bring the named version back.
+    await page.getByTestId('rail-history').click();
+    const named = page.locator('[data-testid="revision"]').filter({ hasText: 'before the rewrite' });
+    await named.first().hover();
+    await named.first().getByRole('button', { name: 'Restore' }).click();
+
+    await expect(page.locator('.prose')).toContainText('The good version.', { timeout: 15_000 });
+    await expect(page.locator('.prose')).not.toContainText('A regrettable addition.');
+
+    // The restore is itself in the timeline — nothing was erased.
+    await page.getByTestId('rail-history').click();
+    await expect(page.getByTestId('history-rail')).toContainText('restored the version');
+  });
+
+  test('says who wrote the selected block, and whether it was a person', async ({ page }) => {
+    await openSpec(page);
+    await page.locator('.prose p').first().click();
+    await caretAtEndOf(page, '.prose p');
+    await page.keyboard.type(' Written by a person.');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    await page.getByTestId('rail-history').click();
+    await page.locator('.prose p').first().click();
+    await expect(page.getByTestId('attribution')).toBeVisible();
+    await expect(page.getByTestId('attribution')).toContainText('priya');
+  });
+
+  test('never uses git vocabulary anywhere in the interface', async ({ page }) => {
+    // `idea.md`: users never get commits, branches, merges, conflicts, or the
+    // word "rebase". This asserts the promise at the surface where it matters.
+    await openSpec(page);
+    for (const rail of ['comments', 'suggestions', 'orphans', 'history']) {
+      await page.getByTestId(`rail-${rail}`).click();
+    }
+    const text = (await page.locator('body').innerText()).toLowerCase();
+    for (const forbidden of ['commit', 'branch', 'rebase', 'merge conflict']) {
+      expect(text, `the interface used the word "${forbidden}"`).not.toContain(forbidden);
+    }
+  });
+});

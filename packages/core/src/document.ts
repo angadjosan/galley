@@ -281,6 +281,42 @@ export class GalleyDocument {
     return this.loro.export({ mode: 'update', from: VersionVector.decode(version) });
   }
 
+  /**
+   * Would applying this update keep the document being *this* document?
+   *
+   * Two `GalleyDocument`s use the same container names, so an update from a
+   * different document merges cleanly and splices its frontmatter — and its
+   * `galley:` identity — into this one. The bytes still parse, which makes it
+   * worse rather than better: nothing downstream notices, and the file written
+   * to disk claims to be a document it is not.
+   *
+   * The check applies the update to a throwaway copy and asks whether the
+   * document still knows who it is. That costs a snapshot round trip per
+   * inbound update, which is the honest price of not trusting a client's
+   * operations — and cheap next to the alternative.
+   */
+  validateUpdate(update: Uint8Array): { ok: true } | { ok: false; reason: string } {
+    let probe: GalleyDocument;
+    try {
+      probe = GalleyDocument.open(this.snapshot());
+      probe.importUpdates(update);
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : 'unreadable update' };
+    }
+    if (probe.docId !== this.docId) {
+      return { ok: false, reason: 'this update belongs to a different document' };
+    }
+    const markdown = probe.toMarkdown();
+    const frontmatterBlocks = (markdown.match(/^---$/gm) ?? []).length;
+    if (frontmatterBlocks > 2) {
+      return { ok: false, reason: 'this update would add a second frontmatter block' };
+    }
+    if ((markdown.match(/^galley:/gm) ?? []).length > 1) {
+      return { ok: false, reason: 'this update would give the document a second identity' };
+    }
+    return { ok: true };
+  }
+
   /** Apply remote operations. Returns whether anything changed. */
   importUpdates(update: Uint8Array): boolean {
     const before = this.loro.version().encode();

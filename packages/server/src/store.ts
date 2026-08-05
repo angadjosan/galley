@@ -117,6 +117,21 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 CREATE INDEX IF NOT EXISTS audit_doc ON audit(doc_id, id);
 
+CREATE TABLE IF NOT EXISTS revisions (
+  doc_id  TEXT NOT NULL,
+  ticket  INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (doc_id, ticket)
+);
+CREATE INDEX IF NOT EXISTS revisions_doc ON revisions(doc_id, ticket);
+
+CREATE TABLE IF NOT EXISTS checkpoints (
+  id      TEXT PRIMARY KEY,
+  doc_id  TEXT NOT NULL,
+  payload TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS checkpoints_doc ON checkpoints(doc_id);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS blocks_fts USING fts5(
   block_id UNINDEXED,
   doc_id   UNINDEXED,
@@ -365,6 +380,8 @@ export class Store {
     this.prepare('DELETE FROM suggestions WHERE doc_id = ?').run(docId);
     this.prepare('DELETE FROM orphans WHERE doc_id = ?').run(docId);
     this.prepare('DELETE FROM blocks_fts WHERE doc_id = ?').run(docId);
+    this.prepare('DELETE FROM revisions WHERE doc_id = ?').run(docId);
+    this.prepare('DELETE FROM checkpoints WHERE doc_id = ?').run(docId);
   }
 
   // -------------------------------------------------------------------------
@@ -420,6 +437,38 @@ export class Store {
       payload: string;
     }[];
     return rows.map((r) => JSON.parse(r.payload) as OrphanedAnchor);
+  }
+
+  // -------------------------------------------------------------------------
+  // History
+  // -------------------------------------------------------------------------
+
+  putRevision(docId: string, ticket: number, revision: unknown): void {
+    this.prepare(
+      `INSERT INTO revisions (doc_id, ticket, payload) VALUES (?, ?, ?)
+       ON CONFLICT(doc_id, ticket) DO UPDATE SET payload = excluded.payload`,
+    ).run(docId, ticket, JSON.stringify(revision));
+  }
+
+  listRevisions<T>(docId: string, limit = 200): T[] {
+    const rows = this.prepare(
+      'SELECT payload FROM revisions WHERE doc_id = ? ORDER BY ticket ASC LIMIT ?',
+    ).all(docId, limit) as { payload: string }[];
+    return rows.map((r) => JSON.parse(r.payload) as T);
+  }
+
+  putCheckpoint(docId: string, id: string, checkpoint: unknown): void {
+    this.prepare(
+      `INSERT INTO checkpoints (id, doc_id, payload) VALUES (?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET payload = excluded.payload`,
+    ).run(id, docId, JSON.stringify(checkpoint));
+  }
+
+  listCheckpoints<T>(docId: string): T[] {
+    const rows = this.prepare('SELECT payload FROM checkpoints WHERE doc_id = ?').all(docId) as {
+      payload: string;
+    }[];
+    return rows.map((r) => JSON.parse(r.payload) as T);
   }
 
   // -------------------------------------------------------------------------

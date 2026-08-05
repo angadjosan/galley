@@ -12,8 +12,10 @@ import {
   DocumentActor,
   GalleyDocument,
   headingContextFor,
+  type Checkpoint,
   type DocumentEvent,
   type Principal,
+  type Revision,
 } from '@galley/core';
 import { parseDocument } from '@galley/markdown';
 import type { Store } from './store.js';
@@ -116,7 +118,21 @@ export class Workspace {
       title: title ?? deriveTitle(source, normalized),
     });
     const actor = this.attach(doc, normalized);
-    await this.persist(doc.docId, true);
+    try {
+      await this.persist(doc.docId, true);
+    } catch (err) {
+      // The pre-check above cannot be atomic across processes — `Store` supports
+      // a shared file, so two servers over one database is a real deployment.
+      // The unique constraint is the authority; a loser must not leave a ghost
+      // actor behind, or the workspace holds a document that can never be
+      // persisted and shutdown fails on it forever.
+      this.open.get(doc.docId)?.unsubscribe();
+      this.open.delete(doc.docId);
+      if (String(err).includes('UNIQUE constraint failed')) {
+        throw new Error(`a document already exists at ${normalized}`);
+      }
+      throw err;
+    }
     this.audit(principal, 'document.create', doc.docId, normalized);
     this.counters.inc('documents-created');
     void this.evictIfNeeded();
@@ -237,6 +253,11 @@ export class Workspace {
           for (const orphan of event.anchors) this.store.putOrphan(orphan);
         });
         break;
+      case 'revision':
+        void this.store.transaction(() =>
+          this.store.putRevision(docId, event.revision.ticket, event.revision),
+        );
+        break;
       case 'session-ended':
         void this.close(docId);
         break;
@@ -311,6 +332,10 @@ export class Workspace {
     for (const comment of this.store.listComments(docId)) actor.adoptComment(comment);
     for (const suggestion of this.store.listSuggestions(docId)) actor.adoptSuggestion(suggestion);
     for (const orphan of this.store.listOrphans(docId)) actor.adoptOrphan(orphan);
+    actor.adoptHistory(
+      this.store.listRevisions<Revision>(docId),
+      this.store.listCheckpoints<Checkpoint>(docId),
+    );
   }
 
   /**
@@ -450,14 +475,38 @@ export function indexableBlocks(
   return out;
 }
 
+/**
+ * A malformed document path.
+ *
+ * Its own type so the HTTP layer can answer 400 rather than 500. A refusal is a
+ * correct answer to a bad request; returning 500 says the server broke, which
+ * is both wrong and the kind of thing that pages someone at 3am.
+ */
+export class InvalidPathError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidPathError';
+  }
+}
+
 export function normalizePath(path: string, allowEmpty = false): string {
   const trimmed = path.trim().replace(/^\/+|\/+$/g, '');
   if (!trimmed) {
     if (allowEmpty) return '';
-    throw new Error('a document path cannot be empty');
+    throw new InvalidPathError('a document path cannot be empty');
   }
-  if (trimmed.includes('..')) throw new Error(`path ${path} may not contain ".."`);
-  return trimmed;
+  const segments = trimmed.split('/');
+  for (const segment of segments) {
+    // `..` is the obvious one. `.` is the one that gets missed, and it lands a
+    // document at a path that `galley pull` writes to disk as `..md`.
+    if (segment === '' || segment === '.' || segment === '..') {
+      throw new InvalidPathError(
+        `path ${JSON.stringify(path)} has an empty or relative segment; use a plain path like specs/checkout-v2`,
+      );
+    }
+    if (segment.includes('\0')) throw new InvalidPathError('a path may not contain a null byte');
+  }
+  return segments.join('/');
 }
 
 function deriveTitle(source: string, fallback: string): string {

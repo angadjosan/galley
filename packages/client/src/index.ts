@@ -42,6 +42,36 @@ export interface SearchHit {
   score: number;
 }
 
+export interface RevisionSummary {
+  ticket: number;
+  at: string;
+  kind: string;
+  authorId: string;
+  authorName: string;
+  sponsorId: string | null;
+  byAgent: boolean;
+  blockIds: string[];
+  summary: string;
+}
+
+export interface CheckpointSummary {
+  id: string;
+  name: string;
+  ticket: number;
+  at: string;
+  byId: string;
+}
+
+export interface AttributionSummary {
+  blockId: string;
+  authorId: string;
+  authorName: string;
+  at: string;
+  byAgent: boolean;
+  sponsorId: string | null;
+  ticket: number;
+}
+
 export interface StatusRow {
   docId: string;
   path: string;
@@ -218,6 +248,34 @@ export class GalleyClient {
       `/v1/docs/${encodeURIComponent(ref)}/citations/${encodeURIComponent(blockId)}`,
     );
     return citation;
+  }
+
+  async history(
+    ref: string,
+    limit = 100,
+  ): Promise<{
+    revisions: RevisionSummary[];
+    checkpoints: CheckpointSummary[];
+    attribution: AttributionSummary[];
+  }> {
+    return this.call('GET', `/v1/docs/${encodeURIComponent(ref)}/history?limit=${limit}`);
+  }
+
+  async revisionAt(ref: string, ticket: number): Promise<{ revision: RevisionSummary & { content: string } }> {
+    return this.call('GET', `/v1/docs/${encodeURIComponent(ref)}/history/${ticket}`);
+  }
+
+  async checkpoint(ref: string, name: string): Promise<CheckpointSummary> {
+    const { checkpoint } = await this.call<{ checkpoint: CheckpointSummary }>(
+      'POST',
+      `/v1/docs/${encodeURIComponent(ref)}/checkpoints`,
+      { name },
+    );
+    return checkpoint;
+  }
+
+  async restore(ref: string, ticket: number): Promise<{ content: string }> {
+    return this.call('POST', `/v1/docs/${encodeURIComponent(ref)}/restore`, { ticket });
   }
 
   async status(): Promise<StatusRow[]> {
