@@ -52,6 +52,11 @@ async function seed(count: number, blocks: number, maxOpen: number): Promise<Rig
   store.createWorkspace('default', 'lat4-mem');
   const workspace = new Workspace(store, {
     maxOpenDocuments: maxOpen,
+    // An evicted document's memory is freed 15s after the eviction in
+    // production, so a caller still holding the actor cannot be overtaken by
+    // the free. That grace is longer than this test's whole run, which would
+    // make every retention figure below meaningless, so it is turned down here.
+    disposeGraceMs: 50,
     persistDebounceMs: 20,
   });
   const ids: string[] = [];

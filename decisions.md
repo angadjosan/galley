@@ -980,3 +980,62 @@ zero disconnects, and correctness held under every load either round applied. Th
 fix is periodic history compaction, which changes what a version vector means to
 a connected peer and therefore belongs with a resync protocol rather than in a
 latency pass.
+
+---
+
+## D37 — Five engine defects, and one crash that only the fixes could expose
+
+The last of the adversarial findings, cleared.
+
+**An escaped pipe in a plain table cell was escaped twice.** The inline
+serializer escaped it, then the table serializer escaped it again, producing a
+literal backslash followed by a *bare* pipe. The next parse read that pipe as a
+cell boundary: a body row silently grew a column, and a header row stopped
+matching the delimiter row, which makes GFM drop the table to a paragraph. The
+table serializer now escapes only a pipe the inline serializer emitted verbatim,
+which is the one inside a code span.
+
+**A line-start escape was applied wherever a run of inline content began.**
+`**1. The first phase.**` became `**\1. The first phase.**` — and a backslash
+before a digit is not an escape in CommonMark, so the reader simply saw the
+backslash, and the next save escaped *that* backslash, one per save forever. It
+fired on this repo's own design docs. `serializeInline` now takes the flag
+explicitly: emphasis, strong, strikethrough, links, headings and table cells all
+pass `false`, because each puts characters in front of its content, and a hard
+break sets it back to true.
+
+Fixing that exposed a second defect underneath it: even where the escape *was*
+wanted, `\1.` is not how you escape an ordered-list marker. The backslash goes
+before the delimiter — `1\.` — so the escape never worked and the backslash was
+always visible.
+
+**A marker left alone in a list item lost its block.** When every other inline is
+removed, CommonMark reads the item's content as an html *block* rather than a
+paragraph with an html child, so nothing claimed the id and `renderClean`
+stopped stripping the comment: raw plumbing reached a reader. A marker with no
+following block now belongs to the container that holds it — with its range
+narrowed to the comment and the whitespace in front of it, because the `- ` is
+the list's own syntax and deleting it with the marker removes the item. The
+fuzzer caught that within one run, as a broken materialize/dematerialize inverse
+on an empty list item.
+
+Every corpus entry now reaches a byte-exact fixed point under forced full
+re-serialization. The `DRIFTS` exemption list is empty.
+
+**And a crash that could not happen while eviction was broken.** With eviction
+fixed to actually run, the cross-document storm started dying with
+`null pointer passed to rust`. `openDocument` hands the actor back to a caller
+that works with it *outside* the workspace lock, so an eviction can land between
+the two, and freeing the CRDT there turns the caller's next read into a hard
+crash. An evicted document's memory is now freed after a grace period longer
+than any request's budget. The first version of that leaked worse than the
+original — a superseded grace timer was cancelled but its document never freed,
+73 KB per open — which the memory test caught immediately.
+
+**Sidecar writes had no error handler.** Comments, suggestions, orphans and
+revisions are mirrored to storage from the actor's event feed with
+`void store.transaction(...)`, so a disk failure became an unhandled rejection,
+and Node's default policy for an unhandled rejection is to terminate the process.
+A chaos run that failed four consecutive transactions surfaced it: the document
+survived, the retry worked, and the server died anyway. A sidecar record that
+cannot be written is now a counted loss.

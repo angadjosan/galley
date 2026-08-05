@@ -254,7 +254,7 @@ describe('fan-out saturation: many editors on one document', () => {
    * which is the proof that it is not a queue: what the storm left behind is
    * merged CRDT history, and nothing compacts it.
    */
-  it('leaves no residue after a storm and still does not return to baseline', async () => {
+  it('leaves no residue after a storm, and stays within a bounded degradation', async () => {
     fx = await fixture('lat4-fanout-recovery');
     const n = 12;
     const docId = await fx.createDoc('specs/recover', bigDoc(BLOCKS));
@@ -335,10 +335,19 @@ describe('fan-out saturation: many editors on one document', () => {
     // The document did not grow — the block count is unchanged.
     expect(actor.document.parsed().blocks.length).toBe(blocksBefore);
 
-    // And latency does not come back. Quiet time buys nothing: the settled
-    // window is not meaningfully faster than the immediate one.
-    expect(i0.p50).toBeGreaterThan(b.p50 * 1.15);
-    expect(s.p50).toBeGreaterThan(b.p50 * 1.15);
-    expect(s.p50).toBeGreaterThan(i0.p50 * 0.6);
+    // Quiet time buys little: the settled window is not much faster than the
+    // immediate one, because what a storm leaves behind is un-compacted CRDT
+    // history rather than a queue that drains. That is the discriminator this
+    // test exists for, and it is stated as a *bound* rather than as "it never
+    // recovers": with the per-frame reindex and the validateUpdate leak gone,
+    // some runs now come back to baseline and some do not, and either is fine
+    // so long as the degradation is bounded and nothing is left queued.
+    expect(s.p50, 'a quiet period is now doing work it should not need to').toBeGreaterThan(
+      i0.p50 * 0.6,
+    );
+    expect(
+      s.p50,
+      'post-storm latency is more than 3x baseline; history growth is worse than measured',
+    ).toBeLessThan(b.p50 * 3);
   }, 300_000);
 });

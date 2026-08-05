@@ -218,18 +218,13 @@ function walk(source: string, seed: number, steps: number): Violation[] {
 }
 
 /**
- * The marker invariant is the one the engine still breaks — see
- * `KNOWN BUG: a marker left alone in a list item is not a paragraph any more`
- * at the bottom — so the general walk excludes it and it is pinned separately
- * with a minimal reproduction.
- *
- * The other shape that used to break it, a marker pushed out of last position
- * by a continuation line, is fixed and is now pinned as a passing regression.
+ * Every invariant is checked. This wrapper exists only because two separate
+ * shapes used to strand a marker — one pushed out of last position by a
+ * continuation line, one left alone in a list item — and both are now fixed and
+ * pinned as regressions below.
  */
 function walkExcludingKnownBugs(source: string, seed: number, steps: number): Violation[] {
-  return walk(source, seed, steps).filter(
-    (v) => v.invariant !== 'every marker in the bytes belongs to a block',
-  );
+  return walk(source, seed, steps);
 }
 
 describe('cumulative block-op fuzzing', () => {
@@ -261,8 +256,8 @@ describe('cumulative block-op fuzzing', () => {
         continue;
       }
       doc = parseDocument(next);
-      // Only assert on documents where every marker is still attributed; the
-      // stranded-marker case is a known bug pinned below.
+      // Every marker in the bytes should be attributed to a block; a mismatch
+      // is the stranded-marker shape, and both known instances are fixed.
       const markers = (next.match(MARKER_IN_TEXT) ?? []).length;
       const ids = doc.blocks.filter((b) => b.id !== null).length;
       if (markers !== ids) break;
@@ -390,28 +385,35 @@ describe('KNOWN BUG: inserting next to a block in a tight container merges into 
   });
 });
 
-describe('KNOWN BUG: a marker left alone in a list item is not a paragraph any more', () => {
+describe('a marker left alone in a list item still belongs to that item', () => {
   // When every other inline in a list item's paragraph is removed, the marker
   // is all that is left — and CommonMark then reads the item's content as an
   // *html block*, not a paragraph with an html child. `trailingMarker` returns
-  // null for anything that is not a paragraph or heading, so the id is lost and
-  // `renderClean` stops stripping the comment: raw plumbing reaches an agent.
+  // null for anything that is not a paragraph or heading, so the id was lost
+  // and `renderClean` stopped stripping the comment: raw plumbing reached an
+  // agent. This is what invariant 4 caught in the cumulative walk.
   //
-  // This is what invariant 4 catches in the cumulative walk, which is why
-  // `walkExcludingKnownBugs` still has to filter it out.
+  // A marker with no following block to annotate now belongs to the container
+  // that holds it. Its range is the comment and the whitespace in front of it,
+  // *not* the whole line — the `- ` is the list's own syntax, and deleting it
+  // with the marker would remove the item, which broke the
+  // materialize/dematerialize inverse on an empty list item.
   const stranded = '- <!-- ^abc123 -->\n- two\n';
 
-  it.fails('attributes a marker that is the whole of a list item', () => {
+  it('attributes a marker that is the whole of a list item', () => {
     expect(parseDocument(stranded).blocks.map((b) => b.id).filter(Boolean)).toContain('abc123');
   });
 
-  it('demonstrates the defect concretely', () => {
+  it('strips it from a clean read, and removes exactly it on dematerialize', () => {
     const doc = parseDocument(stranded);
-    expect(doc.blocks.map((b) => b.id).filter(Boolean)).toEqual([]);
-    // The marker is in the bytes and no block claims it, so it leaks.
-    expect(renderClean(doc)).toContain('<!-- ^abc123 -->');
-    // At top level the same marker alone *is* attributed — the difference is
-    // purely that a list item wraps it.
+    expect(renderClean(doc)).not.toContain('<!-- ^abc123 -->');
+    expect(renderClean(doc)).toBe('-\n- two\n');
+    // The inverse: removing the id leaves the item, not a hole where it was.
+    expect(applyBlockOps(doc, [{ kind: 'dematerialize', target: 'abc123' }]).source).toBe(
+      '-\n- two\n',
+    );
+    // At top level the same marker alone is attributed to the block below it,
+    // which is the case that always worked and is checked here as the contrast.
     expect(
       parseDocument('<!-- ^abc123 -->\n\nBody.\n').blocks.map((b) => b.id).filter(Boolean),
     ).toEqual(['abc123']);

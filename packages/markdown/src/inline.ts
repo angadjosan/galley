@@ -10,7 +10,7 @@ import type { StyleProfile } from './types.js';
 const ALWAYS_ESCAPE = /[\\`*[\]<>~|]/g;
 
 /** Characters that only mean something at the start of a line. */
-const LINE_START_ESCAPE = /^(\s*)([#>+\-=]|\d+[.)])/;
+const LINE_START_ESCAPE = /^(\s*)([#>+\-=]|(\d+)([.)]))/;
 
 /**
  * Escape literal text so it survives a round trip through the parser.
@@ -32,7 +32,16 @@ export function escapeText(value: string, atLineStart = true): string {
   // and a backslash before a digit is not an escape — the reader just sees it.
   // It fires on this repo's own design docs.
   if (atLineStart) {
-    escaped = escaped.replace(LINE_START_ESCAPE, (_m, ws: string, marker: string) => `${ws}\\${marker}`);
+    escaped = escaped.replace(
+      LINE_START_ESCAPE,
+      (_m, ws: string, marker: string, digits: string | undefined, delimiter: string | undefined) =>
+        // For an ordered-list marker the backslash goes before the *delimiter*:
+        // `1\.`, not `\1.`. A backslash before a digit is not an escape in
+        // CommonMark, so the escape did not work *and* the reader saw the
+        // backslash — and the next pass escaped that backslash, so the document
+        // grew one per save.
+        digits !== undefined ? `${ws}${digits}\\${delimiter}` : `${ws}\\${marker}`,
+    );
   }
   return escaped;
 }
@@ -52,10 +61,25 @@ function codeFenceFor(value: string): string {
  * why a serializer that is merely *good* is sufficient, rather than one that
  * has to be byte-perfect against every author's habits.
  */
-export function serializeInline(nodes: readonly PhrasingContent[], style: StyleProfile): string {
-  // Only the first node can begin a line; everything after it is mid-line by
-  // construction, and a `#` or `1.` there means nothing to the parser.
-  return nodes.map((node, index) => serializeNode(node, style, index === 0)).join('');
+export function serializeInline(
+  nodes: readonly PhrasingContent[],
+  style: StyleProfile,
+  atLineStart = true,
+): string {
+  // Only a node that actually begins a line can need a line-start escape.
+  // That is the first node of a *block*, or the first after a hard break —
+  // never the first child of emphasis, a link, or a heading's `# `, because
+  // those all put characters in front of it. Passing `index === 0` regardless
+  // of context turned `**1. The first phase.**` into `**\1. The first phase.**`,
+  // and a backslash before a digit is not an escape in CommonMark, so the
+  // reader simply saw the backslash. It fired on this repo's own design docs.
+  let lineStart = atLineStart;
+  const parts: string[] = [];
+  for (const node of nodes) {
+    parts.push(serializeNode(node, style, lineStart));
+    lineStart = node.type === 'break';
+  }
+  return parts.join('');
 }
 
 function serializeNode(node: PhrasingContent, style: StyleProfile, atLineStart = false): string {
@@ -63,11 +87,11 @@ function serializeNode(node: PhrasingContent, style: StyleProfile, atLineStart =
     case 'text':
       return escapeText(node.value, atLineStart);
     case 'emphasis':
-      return `${style.emphasis}${serializeInline(node.children, style)}${style.emphasis}`;
+      return `${style.emphasis}${serializeInline(node.children, style, false)}${style.emphasis}`;
     case 'strong':
-      return `${style.strong}${serializeInline(node.children, style)}${style.strong}`;
+      return `${style.strong}${serializeInline(node.children, style, false)}${style.strong}`;
     case 'delete':
-      return `~~${serializeInline(node.children, style)}~~`;
+      return `~~${serializeInline(node.children, style, false)}~~`;
     case 'inlineCode': {
       const fence = codeFenceFor(node.value);
       // A value that starts or ends with a backtick needs padding spaces, which
@@ -77,14 +101,14 @@ function serializeNode(node: PhrasingContent, style: StyleProfile, atLineStart =
     }
     case 'link': {
       const title = node.title ? ` "${node.title.replace(/"/g, '\\"')}"` : '';
-      return `[${serializeInline(node.children, style)}](${encodeUrl(node.url)}${title})`;
+      return `[${serializeInline(node.children, style, false)}](${encodeUrl(node.url)}${title})`;
     }
     case 'image': {
       const title = node.title ? ` "${node.title.replace(/"/g, '\\"')}"` : '';
       return `![${escapeText(node.alt ?? '')}](${encodeUrl(node.url)}${title})`;
     }
     case 'linkReference':
-      return `[${serializeInline(node.children, style)}][${node.identifier}]`;
+      return `[${serializeInline(node.children, style, false)}][${node.identifier}]`;
     case 'imageReference':
       return `![${escapeText(node.alt ?? '')}][${node.identifier}]`;
     case 'break':
@@ -96,7 +120,7 @@ function serializeNode(node: PhrasingContent, style: StyleProfile, atLineStart =
     default: {
       // Unknown phrasing node: fall back to its text rather than dropping it.
       const anyNode = node as { children?: PhrasingContent[]; value?: string };
-      if (anyNode.children) return serializeInline(anyNode.children, style);
+      if (anyNode.children) return serializeInline(anyNode.children, style, atLineStart);
       return anyNode.value ?? '';
     }
   }

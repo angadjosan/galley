@@ -129,7 +129,12 @@ function collectBlocks(
   parent: number,
   path: readonly number[],
 ): void {
-  let pendingMarker: { id: string; range: SourceRange } | null = null;
+  // `range` is the marker's whole line, which is what removing it from *above*
+  // a block has to delete. `inner` is the comment itself with the whitespace in
+  // front of it, which is what removing it from a container has to delete — the
+  // rest of that line is the container's own syntax (`- `, `> `), not the
+  // marker's.
+  let pendingMarker: { id: string; range: SourceRange; inner: SourceRange } | null = null;
 
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i]!;
@@ -146,12 +151,20 @@ function collectBlocks(
         // makes removal inexact: deleting just the comment from `> <!-- ^id -->`
         // leaves a stray `> ` behind, and re-materializing then stacks another
         // prefix on top of it.
+        let innerStart = range.start;
+        while (
+          innerStart > 0 &&
+          (source[innerStart - 1] === ' ' || source[innerStart - 1] === '\t')
+        ) {
+          innerStart--;
+        }
         pendingMarker = {
           id: match[1]!,
           range: {
             start: source.lastIndexOf('\n', range.start - 1) + 1,
             end: skipEol(source, range.end),
           },
+          inner: { start: innerStart, end: range.end },
         };
         continue;
       }
@@ -208,6 +221,19 @@ function collectBlocks(
 
     if (CONTAINER_TYPES.has(node.type) && 'children' in node) {
       collectBlocks(node.children as RootContent[], source, out, depth + 1, index, nodePath);
+    }
+  }
+
+  // A marker that is the *only* content of its container has no following block
+  // to annotate. CommonMark reads `- <!-- ^id -->` as a list item whose content
+  // is an html **block** rather than a paragraph containing an html child, so
+  // neither the pending-marker path above nor `trailingMarker` claims it: the
+  // block lost its id and `renderClean` stopped stripping the marker, leaking
+  // plumbing to a reader. It belongs to the container that holds it.
+  if (pendingMarker && parent >= 0) {
+    const container = out[parent];
+    if (container && !container.id) {
+      out[parent] = { ...container, id: pendingMarker.id, markerRange: pendingMarker.inner };
     }
   }
 }

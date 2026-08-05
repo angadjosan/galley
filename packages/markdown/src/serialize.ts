@@ -17,7 +17,11 @@ export function serializeFlow(node: RootContent, style: StyleProfile): string {
       return serializeInline(node.children, style);
 
     case 'heading': {
-      const text = serializeInline(node.children, style);
+      // A heading's inline content follows `# `, so nothing in it begins a
+      // line. Setext is the exception and it does not matter: `#`, `>` and a
+      // list marker are all meaningless after the heading has already been
+      // recognised.
+      const text = serializeInline(node.children, style, false);
       if (style.headingStyle === 'setext' && node.depth <= 2) {
         const underline = (node.depth === 1 ? '=' : '-').repeat(Math.max(3, visualLength(text)));
         return `${text}${eol}${underline}`;
@@ -99,8 +103,16 @@ function serializeTable(
   // serializer emits it verbatim — ends the cell. Unescaped, the table gains a
   // column, the code span is torn in half, and GFM truncates the over-long row,
   // deleting content.
+  // `(?<!\\)` because the inline serializer already escapes a pipe that came
+  // from literal text. Escaping again produced `\\|` — a literal backslash
+  // followed by a *bare* pipe — which ends the cell: a body row silently grew a
+  // column, and a header row stopped matching the delimiter row, which makes
+  // GFM drop the table to a paragraph. What still needs escaping here is a pipe
+  // the inline serializer emits verbatim, which is the one inside a code span.
   const cells = rows.map((row) =>
-    row.children.map((cell) => serializeInline(cell.children, style).replace(/\|/g, '\\|')),
+    row.children.map((cell) =>
+      serializeInline(cell.children, style, false).replace(/(?<!\\)\|/g, '\\|'),
+    ),
   );
   const columns = Math.max(align.length, ...cells.map((r) => r.length), 1);
   const widths = new Array<number>(columns).fill(3);

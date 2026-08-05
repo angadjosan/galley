@@ -122,17 +122,16 @@ describe('forced full re-serialization', () => {
   // Claim: re-serialized output is itself stable — serializing it again is a
   // fixed point, so an edited document does not keep drifting on every save.
   //
-  // Three corpus entries fail this today, each for a reason pinned below with a
-  // minimal reproduction: an escaped pipe in a plain table cell, and a spurious
-  // line-start escape injected inside emphasis. They are named here rather than
-  // filtered by a predicate so that fixing one turns this list into a lie
-  // loudly — which is exactly what happened to `04-crlf.md`, whose stray-CR
-  // drift is fixed and which is therefore no longer listed.
-  const DRIFTS = new Set([
-    '08-tables-refs-links.md', // `\|` in a plain table cell — see KNOWN BUG below
-    'repo/idea.md', // spurious line-start escape inside emphasis
-    'repo/decisions.md', // spurious line-start escape inside emphasis
-  ]);
+  // Four corpus entries used to fail this, each for a reason pinned below with
+  // a minimal reproduction: a stray CR on every block of a CRLF document, an
+  // escaped pipe in a plain table cell, and a spurious line-start escape
+  // injected inside emphasis. All are fixed, so the list is empty — it was
+  // named rather than derived from a predicate precisely so that fixing one
+  // turned it into a lie loudly.
+  // Empty, and kept as a named set rather than deleted: every corpus entry
+  // reaches a fixed point today, and the day one stops doing so this is where
+  // the exemption would have to be written down and justified.
+  const DRIFTS = new Set<string>([]);
 
   it.each(corpus.filter((c) => !DRIFTS.has(c.name)))(
     '$name reaches a fixed point after one re-serialization',
@@ -388,54 +387,70 @@ describe('a CRLF document keeps its carriage returns through re-serialization', 
  * KNOWN BUGS.
  * ============================================================================
  */
-describe('KNOWN BUG: a line-start escape is injected inside emphasis', () => {
-  // `escapeText` applies `LINE_START_ESCAPE` to every text node it is handed
-  // (packages/markdown/src/inline.ts:30) without knowing whether that node
-  // actually begins a line. A text node inside `**…**` that happens to start
-  // with `1.` or `98.` gets a backslash it does not need — and a backslash
-  // before a digit is not an escape in CommonMark, so the reader sees the
-  // backslash. The document's visible content changes.
-  it.fails('does not escape a number that only looks like a list marker', () => {
+describe('a line-start escape is applied only where a line actually starts', () => {
+  // `escapeText` applied `LINE_START_ESCAPE` to whichever text node happened to
+  // be first in the run it was handed, without knowing whether that run began a
+  // line. A text node inside `**…**` starting with `1.` got a backslash it did
+  // not need — and a backslash before a digit is not an escape in CommonMark,
+  // so the reader simply saw the backslash. Worse, the next pass read that
+  // backslash as literal text and escaped it again, so the document grew one
+  // per save. It fired on this repo's own design docs.
+  //
+  // `serializeInline` now takes the flag explicitly: emphasis, strong, strike,
+  // links, headings and table cells all pass `false`, because each puts
+  // characters in front of its content. A hard break sets it back to true.
+  it('does not escape a number that only looks like a list marker', () => {
     const out = forceReserialize(markdownToDoc('**1. The first phase.** Body follows.\n'));
     expect(out).toBe('**1. The first phase.** Body follows.\n');
   });
 
-  it('demonstrates the defect concretely, including the second-pass doubling', () => {
-    const once = forceReserialize(markdownToDoc('**1. The first phase.** Body follows.\n'));
-    expect(once).toBe('**\\1. The first phase.** Body follows.\n');
-    // The next pass reads that backslash as literal text and escapes it again.
-    const twice = forceReserialize(markdownToDoc(once));
-    expect(twice).toBe('**\\\\1. The first phase.** Body follows.\n');
+  it('still escapes one that really does begin a line, and is a fixed point', () => {
+    // A paragraph whose text genuinely starts with `1.` would otherwise become
+    // an ordered list on reparse, so this escape has to survive the fix.
+    const once = forceReserialize(markdownToDoc('1\\. Not a list item.\n'));
+    expect(parseDocument(once).blocks.map((b) => b.type)).toEqual(['paragraph']);
+    expect(forceReserialize(markdownToDoc(once))).toBe(once);
+
+    // And the emphasis case does not accumulate a backslash per save.
+    const emph = forceReserialize(markdownToDoc('**1. The first phase.** Body follows.\n'));
+    expect(forceReserialize(markdownToDoc(emph))).toBe(emph);
+
+    // After a hard break the next text is at a line start again.
+    const broken = forceReserialize(markdownToDoc('Line one.\\\n2\\. Not a list.\n'));
+    expect(parseDocument(broken).blocks.map((b) => b.type)).toEqual(['paragraph']);
   });
 });
 
-describe('KNOWN BUG: an escaped pipe in plain table cell text is re-escaped as a literal backslash', () => {
-  // A `\|` in a cell that is *not* inside a code span comes back as `\\|`: the
-  // backslash is escaped as a literal backslash and the pipe is then left bare.
-  // The next parse reads that pipe as a cell boundary. In a body row the table
-  // silently grows a column; in the *header* row the column count no longer
-  // matches the delimiter row, so GFM stops seeing a table at all and the whole
-  // thing degrades to a paragraph.
+describe('an escaped pipe in plain table cell text stays escaped, once', () => {
+  // A `\|` in a cell that is *not* inside a code span came back as `\\|`: the
+  // inline serializer escaped the pipe, and then the table serializer escaped
+  // it again, producing a literal backslash followed by a *bare* pipe. The next
+  // parse read that pipe as a cell boundary. In a body row the table silently
+  // grew a column; in the *header* row the column count stopped matching the
+  // delimiter row, so GFM stopped seeing a table at all and the whole thing
+  // degraded to a paragraph — the sharpest form of data loss in the engine.
   //
-  // This is why `08-tables-refs-links.md` is still in `DRIFTS` above, and why
-  // its structural check fails.
-  it.fails('keeps an escaped pipe in a plain header cell', () => {
+  // The table serializer now escapes only a pipe the inline serializer emitted
+  // verbatim, which is the one inside a code span.
+  it('keeps an escaped pipe in a plain header cell', () => {
     const source = '| left \\| pipe | b |\n| --- | --- |\n| a | c |\n';
     const out = forceReserialize(markdownToDoc(source));
     expect(parseDocument(out).blocks.map((b) => b.type)).toEqual(['table']);
   });
 
-  it('demonstrates the defect concretely, in a header cell and in a body cell', () => {
+  it('pins the exact bytes, in a header cell and in a body cell', () => {
     const header = '| left \\| pipe | b |\n| --- | --- |\n| a | c |\n';
     const once = forceReserialize(markdownToDoc(header));
-    expect(once).toBe('| left \\\\| pipe | b   |\n| ------------- | --- |\n| a             | c   |\n');
-    // The table is gone entirely — it reparses as a single paragraph.
-    expect(parseDocument(once).blocks.map((b) => b.type)).toEqual(['paragraph']);
+    expect(once).toBe('| left \\| pipe | b   |\n| ------------ | --- |\n| a            | c   |\n');
+    expect(parseDocument(once).blocks.map((b) => b.type)).toEqual(['table']);
+    // And it is a fixed point: the escape does not accumulate a backslash per
+    // save, which is how this compounded.
+    expect(forceReserialize(markdownToDoc(once))).toBe(once);
 
     const body = '| a | b |\n| --- | --- |\n| x \\| y | z |\n';
-    expect(forceReserialize(markdownToDoc(body))).toBe(
-      '| a       | b   |\n| ------- | --- |\n| x \\\\| y | z   |\n',
-    );
+    const bodyOut = forceReserialize(markdownToDoc(body));
+    expect(parseDocument(bodyOut).blocks.map((b) => b.type)).toEqual(['table']);
+    expect(forceReserialize(markdownToDoc(bodyOut))).toBe(bodyOut);
   });
 });
 

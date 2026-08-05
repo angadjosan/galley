@@ -402,3 +402,65 @@ describe('shutdown under load', () => {
     }
   }, 60_000);
 });
+
+describe('a failing disk does not take the process with it', () => {
+  // Sidecar records — comments, suggestions, orphans, revisions — are mirrored
+  // to storage from the actor's event feed, off the request's critical path.
+  // They were written with `void store.transaction(...)` and no handler, so a
+  // disk failure became an unhandled rejection, and Node's default policy for
+  // an unhandled rejection is to terminate the process. The document survived,
+  // the retry worked, and the server died anyway.
+  it('counts a failed sidecar write instead of rejecting unhandled', async () => {
+    const { server, baseUrl, headers, docId } = await serverFixture();
+    try {
+      // Only the sidecar write fails. Failing *every* transaction would also
+      // fail the document's own persist, which is a different path with its own
+      // retry, and would test that instead of this.
+      const original = server.store.putComment.bind(server.store);
+      (server.store as unknown as { putComment: typeof original }).putComment = () => {
+        throw new Error('disk unavailable');
+      };
+
+      // A comment anchors to a block id, so one has to exist first. This
+      // materialize goes through `persist`, which is untouched by the stub.
+      const actor = await server.workspace.openDocument(docId);
+      const index = actor.document
+        .parsed()
+        .blocks.findIndex((b) => b.type === 'paragraph');
+      await fetch(`${baseUrl}/v1/docs/${docId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ ops: [{ kind: 'materialize', target: `@${index}`, id: 'cm01' }] }),
+      });
+
+      const before = server.workspace.counters.get('sidecar-write-failures');
+      const posted = await fetch(`${baseUrl}/v1/docs/${docId}/comments`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          blockId: 'cm01',
+          body: 'A comment whose sidecar write will fail.',
+        }),
+      });
+      expect(posted.status).toBe(201);
+
+      // Let the feed drain. The assertion that matters is that we get here at
+      // all: an unhandled rejection would have taken the worker down.
+      await delay(150);
+      (server.store as unknown as { putComment: typeof original }).putComment = original;
+
+      expect(
+        server.workspace.counters.get('sidecar-write-failures'),
+        'a failed sidecar write was not counted',
+      ).toBeGreaterThan(before);
+
+      // And the document itself is unharmed: its bytes go through `persist`,
+      // which retries and leaves the entry dirty until it succeeds.
+      const read = await fetch(`${baseUrl}/v1/docs/${docId}`, { headers });
+      expect(read.status).toBe(200);
+      expect(((await read.json()) as { content: string }).content).toContain('Roll back first');
+    } finally {
+      await server.close();
+    }
+  });
+});

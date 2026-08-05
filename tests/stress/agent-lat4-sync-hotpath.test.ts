@@ -381,8 +381,20 @@ describe('the WebSocket write path, per frame', () => {
         `${(large!.ms / small!.ms).toFixed(1)}× the cost, ${(large!.kb / small!.kb).toFixed(1)}× the retention`,
     );
 
-    // The update barely changes; the cost and the retention track the document.
+    // The *cost* still tracks the document, because validating an update means
+    // opening a copy of the document and rendering it — that is the price of
+    // not trusting a client's operations, and D36 records why the underlying
+    // linearity is architectural.
     expect(large!.ms).toBeGreaterThan(small!.ms * 2);
-    expect(large!.kb).toBeGreaterThan(small!.kb * 2);
+
+    // The *retention* no longer does. It used to: 0.59 KB at 20 blocks against
+    // 392 KB at 320, a 64× spread on a 1.0× change in update size, which is the
+    // signature of holding a whole document rather than a whole update. It is
+    // now flat and near zero at every size.
+    for (const r of rows) {
+      expect(r.kb, `validateUpdate retains ${r.kb.toFixed(1)}KB at ${r.blocks} blocks`).toBeLessThan(
+        16,
+      );
+    }
   }, 180_000);
 });

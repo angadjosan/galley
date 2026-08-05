@@ -24,6 +24,14 @@ export interface WorkspaceOptions {
   workspaceId?: string;
   /** Maximum documents held open at once. Idle ones are evicted first. */
   maxOpenDocuments?: number;
+  /**
+   * How long an evicted document's native memory is held before it is freed.
+   *
+   * Must exceed the longest a caller can hold an actor it obtained from
+   * `openDocument`, because the free is what would otherwise overtake it. Set
+   * low in tests that measure retention.
+   */
+  disposeGraceMs?: number;
   /** Concurrent snapshot writes. Bounded so a burst cannot swamp the disk. */
   persistConcurrency?: number;
   /** Quiet period before a changed document is snapshotted. */
@@ -72,6 +80,7 @@ export class Workspace {
   private readonly inFlight = new WaitGroup();
   private readonly maxOpen: number;
   private readonly debounceMs: number;
+  private readonly disposeGraceMs: number;
   private readonly budget: CommentBudget;
   private closed = false;
 
@@ -82,6 +91,7 @@ export class Workspace {
     this.workspaceId = options.workspaceId ?? 'default';
     this.maxOpen = options.maxOpenDocuments ?? 256;
     this.debounceMs = options.persistDebounceMs ?? 250;
+    this.disposeGraceMs = options.disposeGraceMs ?? 15_000;
     this.persistSlots = new Semaphore(options.persistConcurrency ?? 4, 'persist');
     this.budget = options.commentBudget ?? new CommentBudget();
   }
@@ -259,23 +269,23 @@ export class Workspace {
         this.schedulePersist(docId);
         break;
       case 'comment':
-        void this.store.transaction(() => this.store.putComment(event.comment));
+        this.mirror('comment', () => this.store.putComment(event.comment));
         break;
       case 'suggestion':
-        void this.store.transaction(() => this.store.putSuggestion(event.suggestion));
+        this.mirror('suggestion', () => this.store.putSuggestion(event.suggestion));
         break;
       case 'orphaned':
-        void this.store.transaction(() => {
+        this.mirror('orphan', () => {
           for (const orphan of event.anchors) this.store.putOrphan(orphan);
         });
         break;
       case 'revision':
-        void this.store.transaction(() =>
+        this.mirror('revision', () =>
           this.store.putRevision(docId, event.revision.ticket, event.revision),
         );
         break;
       case 'session-ended':
-        void this.close(docId);
+        void this.close(docId).catch(() => this.counters.inc('sidecar-write-failures'));
         break;
     }
   }
@@ -296,6 +306,25 @@ export class Workspace {
     if (!entry) return;
     entry.dirty = true;
     this.schedulePersist(docId);
+  }
+
+  /**
+   * Mirror one sidecar record to storage without blocking the event loop that
+   * produced it.
+   *
+   * The `catch` is the point. These were `void store.transaction(...)` with no
+   * handler, so a disk failure became an **unhandled rejection** — which under
+   * Node's default policy terminates the process. A chaos run that failed four
+   * consecutive transactions surfaced it: the document survived, the retry
+   * worked, and the server died anyway. A sidecar record that cannot be written
+   * is a counted loss, not a crash; the document's own bytes go through
+   * `persist`, which retries and leaves the entry dirty.
+   */
+  private mirror(kind: string, write: () => void): void {
+    void this.store.transaction(write).catch(() => {
+      this.counters.inc('sidecar-write-failures');
+      this.counters.inc(`sidecar-write-failures.${kind}`);
+    });
   }
 
   private schedulePersist(docId: string): void {
@@ -395,7 +424,16 @@ export class Workspace {
       // Release the native allocation. An evicted document is referenced by
       // nothing that would prompt a collection, so without this the memory is
       // retained until one happens to run.
-      entry.actor.document.dispose();
+      //
+      // **After a grace period, not immediately.** `openDocument` hands the
+      // actor back to a caller that then works with it *outside* this lock, so
+      // an eviction can land between the two. Freeing the CRDT there turns the
+      // caller's next read into `null pointer passed to rust` — a hard crash,
+      // and one that only started appearing once eviction was fixed to actually
+      // run. The grace is longer than any request's budget, so a caller holding
+      // an actor cannot be overtaken by the free; a caller holding one for
+      // longer than that has a worse problem than memory.
+      this.disposeAfterGrace(docId, entry.actor.document);
       this.counters.inc('closes');
     });
   }
@@ -456,6 +494,32 @@ export class Workspace {
     return closed > 0;
   }
 
+  /** Documents removed from the map whose native memory has not been freed yet. */
+  private readonly pendingDispose = new Map<string, { doc: GalleyDocument; timer: NodeJS.Timeout }>();
+
+  private disposeAfterGrace(docId: string, doc: GalleyDocument): void {
+    const previous = this.pendingDispose.get(docId);
+    if (previous) {
+      clearTimeout(previous.timer);
+      previous.doc.dispose();
+    }
+    const timer = setTimeout(() => {
+      this.pendingDispose.delete(docId);
+      doc.dispose();
+    }, this.disposeGraceMs);
+    timer.unref?.();
+    this.pendingDispose.set(docId, { doc, timer });
+  }
+
+  /** Free everything still waiting on its grace timer. Shutdown only. */
+  private flushPendingDispose(): void {
+    for (const [, pending] of this.pendingDispose) {
+      clearTimeout(pending.timer);
+      pending.doc.dispose();
+    }
+    this.pendingDispose.clear();
+  }
+
   private evicting = false;
   private evictWanted = false;
   private evictPass: Promise<void> = Promise.resolve();
@@ -507,6 +571,7 @@ export class Workspace {
     }
     await Promise.all(ids.map((docId) => this.flushAndDetach(docId)));
     await this.inFlight.wait();
+    this.flushPendingDispose();
   }
 
   private async flushAndDetach(docId: string): Promise<void> {
