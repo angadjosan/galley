@@ -54,3 +54,15 @@ Option B. Cloud is the home, local is a checkout. The lost capability is worth l
 
 - **Path mapping is required, not optional.** Prompts and `CLAUDE.md` must land at a specific path for an agent to auto-load them, so `pull` needs an explicit doc→path map rather than dumping into a folder.
 - **Staleness becomes the whole local UX.** A teammate edits a prompt in the browser and your local copy is stale until you pull. That's git's model, which engineers already have intuitions for — `galley status` carries it.
+
+---
+
+## Branch variants: fork the doc, or diverge and review
+
+**Status:** decided (`idea.md` v0.3, hard question #1). Recorded here because the rejected option keeps looking attractive.
+
+**Taken:** one canonical version per doc identity. A branch variant is a *divergence*, and editing a diverged file produces suggestions against canonical.
+
+**Rejected:** per-branch doc variants, where the same `galley:` identity carries N versions keyed by ref. Genuinely better for the narrow case of a doc rewritten in lockstep with a long-lived feature branch — but it splits the comment ecosystem across variants, and an annotation layer whose comments are in the other branch is worth nothing. It also drags git vocabulary into a product that spent a whole principle avoiding it.
+
+**Notes:** the decision is cheaper still under Option B above — a branch is just a checkout that hasn't been pushed, and the divergence path is the push path. If B is taken, this entry costs nothing; if A is kept, it costs the diverged-file state in the filesystem event table.

@@ -1,6 +1,6 @@
 # Galley
 
-**Design doc, v0.2**
+**Design doc, v0.3**
 
 A galley proof is the draft you circulate before publication — the version that exists to be marked up. That's the product.
 
@@ -101,7 +101,7 @@ galley read specs/checkout-v2          # clean Markdown on stdout
 galley read specs/checkout-v2#a1b2c3   # one block
 galley search "refund policy"          # matching blocks, as doc#block refs
 galley comment <ref> "..."             # anchored comment
-galley suggest <ref> --from patch.md   # propose an edit
+galley suggest <ref> --from patch.md   # propose an edit (block-scoped ops)
 galley status                          # what changed, what's stale, what's pending
 ```
 
@@ -113,7 +113,7 @@ Two things follow from this that a server surface doesn't give you:
 
 **Skills carry the etiquette that the CLI can't enforce.** The CLI gives an agent *capability*; a Galley skill gives it *behavior* — the citation convention, the comment budget, suggestion-before-write, how to scope a rewrite so block identity survives. Skills are files, so they version with the workspace and travel to whatever harness the user runs. Ship a first-party one, let teams fork it.
 
-**Permissions.** `galley auth login` issues a scoped token. An agent's permissions are the same object as a human's: read `/policies`, suggest on `/specs`, write nowhere is a normal thing to express. Every command is auditable and replayable, which a persistent session is not.
+**Permissions.** `galley auth login` issues a scoped token to an *(agent, human sponsor)* pair — the agent is its own principal, never an impersonation of the sponsor, and its grants are always a subset of theirs. An agent's permissions are otherwise the same object as a human's: read `/policies`, suggest on `/specs`, write nowhere is a normal thing to express. Every command is auditable and replayable, which a persistent session is not.
 
 The honest cost: a CLI can't push. An agent can't be *notified* that someone replied to its comment — it has to be run again and poll `galley status`. For the workflows above that's fine, and if a subscription surface is ever needed it can wrap the same commands.
 
@@ -198,7 +198,7 @@ The refinement preserves the law rather than excepting it: a whole-file replacem
 | Event | Defined behavior |
 |---|---|
 | Small external diff (below threshold) | Inbound ops, attributed to `local filesystem` |
-| Whole-file replacement (branch switch, revert) | End session, re-ingest as new version, offer restore from history |
+| Whole-file replacement (branch switch, revert) | End session. Standalone doc: re-ingest as a new version, offer restore from history. Repo-mapped doc: mark **diverged**, don't promote — local edits become suggestions against canonical |
 | Atomic save (write temp + rename) | Treat delete+create on the watched path as modify — this is what most editors actually do |
 | Partial / in-progress write | Debounce, validate parse, never apply a half-file |
 | File deleted mid-session | Session continues in cloud, file marked detached, one-click rewrite to disk |
@@ -219,7 +219,9 @@ pending → accepted (becomes ops, attributed to the proposer)
 
 `stale` is the state everyone forgets and it's the one that matters. If the paragraph moved out from under a proposal, show the proposal, mark it stale, never auto-apply it.
 
-**Agent edits are suggestions by default.** This is the trust primitive of the entire product, and it should ship this way even though direct-write demos better. Direct-write is a per-doc, per-agent permission a human grants deliberately.
+A suggestion is a set of **block-scoped ops** — replace, insert, delete, move — not a replacement blob. That's what carries identity through an agent rewrite (see the hard questions, #3), and the CLI rejects whole-document replacement on any doc that has durable anchors.
+
+**Agent edits are suggestions by default.** This is the trust primitive of the entire product, and it should ship this way even though direct-write demos better. Direct-write is a per-doc, per-agent permission a human grants deliberately. An agent-authored suggestion is never auto-accepted, including by a rule its sponsor wrote.
 
 ### Comments
 
@@ -265,12 +267,14 @@ No multiplayer, no comments, no agents, no email. Success condition: open a real
 `galley pull`, `read`, `search`, and a first-party skill. Point a coding agent at it and run Walkthrough A end to end. This is the first moment the product is *for* something — and because the CLI is a binary over the same store the app uses, it costs days, not a quarter.
 
 **3. Comments + suggestions + the review UI.**
-Walkthrough B. Identity has to survive an agent rewriting a commented paragraph — that's the acceptance test, and it validates every decision in the block-identity section.
+Walkthrough B. Identity has to survive an agent rewriting a commented paragraph — that's the acceptance test, and it validates every decision in the block-identity section. Gate: the anchor benchmark in CI, ≥95% survival across a corpus of real agent rewrites, zero silent misattachments.
 
 **4. Real-time multiplayer, presence, history UI.**
 Most expensive item, least uncertain. Loro works. Doing this later costs less than doing it first, because by now you know what the document model actually is.
 
-**5. Email round-trip, typed frontmatter UI, grid tables.**
+**5. The GitHub app, email round-trip, typed frontmatter UI, grid tables.**
+
+The GitHub app is what makes a cloud-native doc reach a repo without anyone cloning it. It's a v1 commitment, but it's low-uncertainty plumbing over an already-settled model, so it sits here rather than earlier.
 
 Email is explicitly a proven mechanic — which means it teaches you nothing and can wait.
 
@@ -280,16 +284,74 @@ Keep one hook: a **generic embed primitive**, so a canvas or anything else can b
 
 ---
 
-## Open problems
+## The hard questions, decided
 
-Real ones, not rhetorical ones.
+These were open in v0.2. Each one now has an answer, with the residual risk stated rather than hidden.
 
-1. **Docs that exist in several branches at once.** For repo-backed docs, the same file has different content on `main` and on a feature branch. Which version is a comment attached to? Galley deliberately has no git vocabulary, and this is the place that hurts. The likely answer is that Galley tracks one canonical version per doc identity and treats branch variants as external edits — but that's an assertion, not yet a design.
-2. **How does a cloud-native doc reach a repo?** Local mirror assumes someone has the folder on their laptop. The person writing the doc usually doesn't. Either something server-side writes to the repo, or repo-backed docs are only ever mirrored by a teammate who has it cloned. This needs a decision before v1 scoping is honest.
-3. **Anchor-loss rate under agent rewriting.** Rule 1 above says identity flows through in-app edits. That's true for a targeted edit and much shakier for "rewrite this whole section." Needs measurement on real rewrites before the suggestion UX can be trusted.
-4. **Permissions for an agent acting on behalf of an absent human.** An agent with Priya's read access, running at 3am, proposing edits — whose act is that, and what does the audit trail say?
-5. **Does the local mirror need a desktop app,** or can the File System Access API carry it in-browser? Desktop is better and costs distribution.
-6. **Does a doc have an owner, or does a workspace?**
+### 1. Docs that exist on several git branches at once
+
+**Decision: one canonical version per doc identity. Galley never holds two versions of the same doc, and a branch variant is not a fork — it's a divergence to be reviewed.**
+
+The `galley:` frontmatter ULID is the identity, and it is deliberately *not* a git ref. Comments, citations, suggestions, and history attach to `doc-identity#block` and nothing else. When a mirrored file's content stops matching the canonical version — which is exactly what a branch switch looks like — the whole-file replacement rule from the filesystem table fires: the session ends, and the file is marked **diverged** rather than ingested. A diverged file is not silently promoted into the doc; editing it produces suggestions against canonical, reviewed like any other.
+
+The consequence to accept: a block that exists only on a feature branch has no anchor, so a comment left on it orphans into the tray. That's correct behavior — a comment on a paragraph that doesn't exist in the canonical doc has nowhere honest to live.
+
+Why this is right rather than merely simple: docs drift across branches far less than code does, and the alternative — per-branch doc variants — splits the comment ecosystem in two, which is the one thing that makes the annotation layer worthless. Galley stays free of git vocabulary because the divergence is expressed in Galley's own primitives.
+
+*(This gets easier still if the checkout model in `tradeoffs.md` is taken: a branch becomes a checkout that hasn't been pushed, and the same suggestion path covers it.)*
+
+### 2. How a cloud-native doc reaches a repo
+
+**Decision: server-side. A Galley GitHub app writes to the repo on the workspace's behalf. The repo is a publishing target, not a peer of the CRDT.**
+
+The workspace declares a map — doc path in Galley → path in the repo → branch — and Galley commits accepted changes itself. The default is a single long-lived PR per doc, updated in place, so review lands in the reviewer's existing workflow; teams that don't want the ceremony can configure direct commits to a designated branch. The PM who wrote the doc never clones anything.
+
+Inbound commits on a mapped path arrive as external edits attributed to `git`, through the same path as any other external edit. A teammate's local mirror is then just an ordinary checkout of that branch, and stops being load-bearing.
+
+Residual risk: the app needs write scope on the repo, which is a real security conversation with any customer whose docs live next to their code. Read-only mode with export-a-patch is the fallback for teams that won't grant it.
+
+### 3. Anchor loss under agent rewriting
+
+**Decision: don't measure the risk, remove it. The CLI refuses whole-document replacement for any doc with durable anchors.**
+
+`galley suggest` takes block-scoped operations — replace, insert, delete, move — each carrying identity. "Rewrite this whole section" is expressed as a sequence of those, not as a new blob of text, so identity flows through by construction rather than by fuzzy matching after the fact. Anchor loss becomes possible only where an agent explicitly deletes a block, which is semantically the right place to lose one. The skill teaches the etiquette; the CLI enforces the shape, because etiquette that isn't enforced is a suggestion to a model.
+
+This still needs a number, so it becomes an acceptance gate rather than an unknown: a benchmark corpus of real agent rewrites over commented docs, run in CI, gating build step 3. **≥95% anchor survival, zero silent misattachments.** A misattachment is a bug of a different class than an orphan and is never traded off against the survival rate.
+
+### 4. An agent acting for an absent human
+
+**Decision: an agent is a first-class principal with its own identity. Never impersonation.**
+
+`galley auth login` issues a token to an *(agent, sponsor)* pair. The agent's permissions are the intersection of the sponsor's grants and the token's declared scope — always a subset, never equal to the human's. The audit trail records both, and reads as `galley-bot/ci, sponsored by priya`. The agent is the actor; the sponsor is accountable for the grant.
+
+What follows:
+
+- Revoking a human's access revokes every token they sponsor. No orphaned 3am agents.
+- Agents cannot sponsor agents. Delegation chains terminate at a person.
+- A suggestion authored by an agent is never auto-accepted, including by rules the sponsor wrote. Suggestion-by-default is what makes an absent sponsor a non-problem: nothing lands while they're asleep.
+
+### 5. Desktop app or File System Access API
+
+**Decision: neither is the mechanism. The CLI is the local mirror.**
+
+`galley pull` is already a binary that puts files on disk, and it's the surface agents use anyway — shipping a desktop app to do the same job buys no capability and costs a distribution channel, code-signing, and an update story. The File System Access API ships as a convenience for the browser-only user who wants a folder open, with its limits stated plainly: Chromium-only, per-session permission prompts, no background watching. If a user needs the mirror to be reliable, they install the CLI.
+
+### 6. Does a doc have an owner, or does a workspace?
+
+**Decision: both, doing different jobs — and only one of them is a permission.**
+
+The **workspace** owns access: membership, permissions, billing. Permissions never come from a doc-level field, which is what keeps this out of per-doc ACL territory.
+
+The **doc** has an `owner:` — an accountability field, a person, defaulting to the creator and freely reassignable. It routes the things that need a human: the staleness nudge ("this doc feeds three agents and hasn't been touched in 90 days"), suggestions nobody has reviewed, and orphaned anchors waiting in the tray. An unowned doc is a doc whose staleness is nobody's problem, which is how docs rot.
+
+---
+
+### Still genuinely unknown
+
+Not open problems in the above sense — things that only measurement answers.
+
+- Whether the ≥95% anchor-survival gate in #3 is achievable at the first attempt, or whether the block-op vocabulary needs a `move` semantic richer than the obvious one.
+- Whether teams will grant repo write scope (#2) often enough that the server-side path is the main one, or whether read-only-plus-patch becomes the default in practice.
 
 ---
 
