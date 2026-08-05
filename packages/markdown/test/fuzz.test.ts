@@ -181,9 +181,12 @@ describe('property: materialize/dematerialize is an exact inverse', () => {
     const ids: string[] = [];
     // Materialize a handful of blocks, then remove every marker again.
     for (let i = 0; i < Math.min(5, candidates.length); i++) {
+      // Only blocks that do not already carry an id: materializing over an
+      // existing one is refused, deliberately, because it would detach every
+      // comment anchored to the old id.
       const anchorable = doc.blocks
         .map((b, idx) => ({ b, idx }))
-        .filter(({ b }) => b.type === 'paragraph' || b.type === 'heading')
+        .filter(({ b }) => (b.type === 'paragraph' || b.type === 'heading') && b.id === null)
         .map(({ idx }) => idx);
       if (anchorable.length === 0) break;
       const index = rng.pick(anchorable);

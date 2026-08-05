@@ -93,7 +93,13 @@ function lineStart(source: string, offset: number): number {
 
 function lineEnd(source: string, offset: number): number {
   const nl = source.indexOf('\n', offset);
-  return nl === -1 ? source.length : nl;
+  if (nl === -1) return source.length;
+  // Exclude a CRLF's carriage return from the block and leave it to the
+  // separator. Keeping it in the text is exact for an *untouched* block and
+  // wrong for an edited one: the re-serialized text has no trailing `\r`, and
+  // the stored separator supplies only the `\n`, so the document silently
+  // acquires mixed line endings one edit at a time.
+  return nl > offset && source[nl - 1] === '\r' ? nl - 1 : nl;
 }
 
 /**

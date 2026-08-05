@@ -19,7 +19,7 @@ const LINE_START_ESCAPE = /^(\s*)([#>+\-=]|\d+[.)])/;
  * under-escaping silently changes a user's document, so where the two conflict
  * this errs toward escaping.
  */
-export function escapeText(value: string): string {
+export function escapeText(value: string, atLineStart = true): string {
   let escaped = value.replace(ALWAYS_ESCAPE, (ch) => `\\${ch}`);
   // Underscores only need escaping at a word boundary, where they could open or
   // close emphasis.
@@ -27,7 +27,13 @@ export function escapeText(value: string): string {
     const idx = match.indexOf('_');
     return `${match.slice(0, idx)}\\_${match.slice(idx + 1)}`;
   });
-  escaped = escaped.replace(LINE_START_ESCAPE, (_m, ws: string, marker: string) => `${ws}\\${marker}`);
+  // Only when this text really is at the start of a line. Applying it to every
+  // text node turns `**1. The first phase.**` into `**\1. The first phase.**`,
+  // and a backslash before a digit is not an escape — the reader just sees it.
+  // It fires on this repo's own design docs.
+  if (atLineStart) {
+    escaped = escaped.replace(LINE_START_ESCAPE, (_m, ws: string, marker: string) => `${ws}\\${marker}`);
+  }
   return escaped;
 }
 
@@ -47,13 +53,15 @@ function codeFenceFor(value: string): string {
  * has to be byte-perfect against every author's habits.
  */
 export function serializeInline(nodes: readonly PhrasingContent[], style: StyleProfile): string {
-  return nodes.map((node) => serializeNode(node, style)).join('');
+  // Only the first node can begin a line; everything after it is mid-line by
+  // construction, and a `#` or `1.` there means nothing to the parser.
+  return nodes.map((node, index) => serializeNode(node, style, index === 0)).join('');
 }
 
-function serializeNode(node: PhrasingContent, style: StyleProfile): string {
+function serializeNode(node: PhrasingContent, style: StyleProfile, atLineStart = false): string {
   switch (node.type) {
     case 'text':
-      return escapeText(node.value);
+      return escapeText(node.value, atLineStart);
     case 'emphasis':
       return `${style.emphasis}${serializeInline(node.children, style)}${style.emphasis}`;
     case 'strong':

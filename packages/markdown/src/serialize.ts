@@ -95,7 +95,13 @@ function serializeTable(
   align: readonly (string | null | undefined)[],
   style: StyleProfile,
 ): string {
-  const cells = rows.map((row) => row.children.map((cell) => serializeInline(cell.children, style)));
+  // A pipe anywhere in a cell — including inside a code span, where the inline
+  // serializer emits it verbatim — ends the cell. Unescaped, the table gains a
+  // column, the code span is torn in half, and GFM truncates the over-long row,
+  // deleting content.
+  const cells = rows.map((row) =>
+    row.children.map((cell) => serializeInline(cell.children, style).replace(/\|/g, '\\|')),
+  );
   const columns = Math.max(align.length, ...cells.map((r) => r.length), 1);
   const widths = new Array<number>(columns).fill(3);
 

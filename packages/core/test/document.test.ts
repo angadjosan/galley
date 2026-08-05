@@ -316,3 +316,32 @@ describe('CRDT convergence', () => {
     expect(parseDocument(texts[0]!).blocks.length).toBeGreaterThan(5);
   });
 });
+
+describe('CRLF documents survive an edit', () => {
+  const CRLF = '# Title\r\n\r\nFirst paragraph.\r\n\r\nSecond paragraph.\r\n';
+
+  it('assembles byte-exactly', () => {
+    expect(assemble(segment(CRLF, (i) => `s${i}`))).toBe(CRLF);
+  });
+
+  it('keeps the carriage return with the separator, not with the block', () => {
+    // Holding it in the text is exact for an untouched block and wrong for an
+    // edited one: the re-serialized text has no trailing `\r` and the separator
+    // supplies only the `\n`, so the document acquires mixed line endings one
+    // edit at a time.
+    const segmented = segment(CRLF, (i) => `s${i}`);
+    for (const s of segmented.segments) {
+      expect(s.text.endsWith('\r'), `segment ${s.sid} kept a carriage return`).toBe(false);
+    }
+  });
+
+  it('stays all-CRLF after an edit', () => {
+    const doc = GalleyDocument.create(CRLF);
+    const index = doc.parsed().blocks.findIndex((b) => b.text === 'First paragraph.');
+    const { source } = doc.applyOps([
+      { kind: 'replace', target: `@${index}`, markdown: 'An edited first paragraph.' },
+    ]);
+    expect(source).toContain('An edited first paragraph.');
+    expect(source.match(/(?<!\r)\n/g), 'the document acquired a bare LF').toBeNull();
+  });
+});

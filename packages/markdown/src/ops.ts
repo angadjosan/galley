@@ -274,7 +274,15 @@ function materializeEdit(doc: ParsedDocument, block: Block, id: string): TextEdi
   }
   const marker = `<!-- ^${id} -->`;
   if (block.markerRange) {
-    return { range: block.markerRange, text: ` ${marker}`, label: `re-materialize ${id}` };
+    if (block.id === id) {
+      // Already carries exactly this id. Nothing to do, and rewriting it would
+      // churn the file for no reason.
+      return { range: block.markerRange, text: ` ${marker}`, label: `re-materialize ${id}` };
+    }
+    throw new InvalidOpError(
+      `block ${block.id} already has an id; materializing ${id} over it would detach every ` +
+        `comment anchored to ${block.id}. Remove the old id explicitly if that is what you mean.`,
+    );
   }
   return {
     range: { start: block.range.end, end: block.range.end },

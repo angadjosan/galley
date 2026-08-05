@@ -342,3 +342,56 @@ Body.
     expect(doc.blocks.some((b) => b.text === 'Body.')).toBe(true);
   });
 });
+
+describe('defects found by adversarial testing', () => {
+  it('refuses to materialize over an existing id, which would detach its comments', () => {
+    const doc = parseDocument('Anchored. <!-- ^first1 -->\n');
+    expect(() =>
+      applyBlockOps(doc, [{ kind: 'materialize', target: 'first1', id: 'second' }]),
+    ).toThrow(/already has an id/);
+    // Re-materializing the *same* id is a no-op, not an error.
+    expect(
+      applyBlockOps(doc, [{ kind: 'materialize', target: 'first1', id: 'first1' }]).source,
+    ).toBe('Anchored. <!-- ^first1 -->\n');
+  });
+
+  it('recognizes a marker that is no longer the last thing in its paragraph', () => {
+    // A person editing the file can put a continuation line after the marker.
+    // Recognising it only in the last position lost the block's identity *and*
+    // stopped `renderClean` stripping it, so raw plumbing reached an agent.
+    const doc = parseDocument('- one <!-- ^abc123 -->\n  a continuation line\n');
+    const block = doc.blocks.find((b) => b.id === 'abc123');
+    expect(block, 'the marker was not recognized').toBeDefined();
+    expect(renderClean(doc), 'a marker leaked into a clean read').not.toContain('<!--');
+  });
+
+  it('does not escape a line-start marker in the middle of a line', () => {
+    // `**1. The first phase.**` became `**\1. The first phase.**`, and a
+    // backslash before a digit is not an escape — the reader just sees it.
+    const doc = parseDocument('A paragraph.\n');
+    const { source } = applyBlockOps(doc, [
+      { kind: 'replace', target: '@0', markdown: 'The phases are **1. discovery** and **2. build**.' },
+    ]);
+    expect(source).not.toContain('\\1.');
+    expect(source).toContain('**1. discovery**');
+  });
+
+  it('keeps a pipe inside a table cell escaped, so the row is not torn', () => {
+    const doc = parseDocument('| Field | Note |\n| --- | --- |\n| a | b |\n');
+    const table = doc.blocks.findIndex((b) => b.type === 'table');
+    const { source } = applyBlockOps(doc, [
+      {
+        kind: 'replace',
+        target: `@${table}`,
+        markdown: '| Field | Note |\n| --- | --- |\n| a | `x \\| y` |\n',
+      },
+    ]);
+    const reparsed = parseDocument(source);
+    const rebuilt = reparsed.blocks.find((b) => b.type === 'table');
+    expect(rebuilt, 'the table stopped being a table').toBeDefined();
+    expect(
+      (rebuilt!.attrs.columns as number),
+      'the unescaped pipe added a column',
+    ).toBe(2);
+  });
+});

@@ -176,8 +176,10 @@ function collectBlocks(
       if (trailing) {
         id = trailing.id;
         markerRange = trailing.range;
-        contentEnd = trailing.range.start;
-        inline = inline.slice(0, -1);
+        if (trailing.atEnd) {
+          contentEnd = trailing.range.start;
+          inline = inline.slice(0, -1);
+        }
       }
     }
 
@@ -216,17 +218,32 @@ function collectBlocks(
  * The whitespace in front of it is absorbed into the marker range, so removing
  * the marker restores the block's original last line exactly.
  */
-function trailingMarker(node: RootContent, source: string): { id: string; range: SourceRange } | null {
+function trailingMarker(
+  node: RootContent,
+  source: string,
+): { id: string; range: SourceRange; atEnd: boolean } | null {
   if (node.type !== 'paragraph' && node.type !== 'heading') return null;
-  const last = node.children[node.children.length - 1];
+  // Normally the marker is the last child. It stops being last when the block
+  // gains a continuation line after it — which a person editing the file can
+  // do, and which Galley itself could produce. Recognising it only in the last
+  // position meant the block silently lost its identity *and* the marker
+  // stopped being stripped, so raw plumbing reached an agent.
+  let index = node.children.length - 1;
+  while (index >= 0 && node.children[index]!.type !== 'html') index--;
+  const last = index >= 0 ? node.children[index] : undefined;
   if (!last || last.type !== 'html' || !last.position) return null;
   const match = MARKER_PATTERN.exec(last.value.trim());
   if (!match) return null;
+  // Only a marker at the very end can be excluded from the block's range. One
+  // in the middle is still recognised — for its id, and so `renderClean` strips
+  // it — but the block's content genuinely spans it, so `atEnd` says so and the
+  // caller leaves the range alone.
+  const atEnd = index === node.children.length - 1;
   const end = last.position.end.offset;
   let start = last.position.start.offset;
   if (start === undefined || end === undefined) return null;
   while (start > 0 && (source[start - 1] === ' ' || source[start - 1] === '\t')) start--;
-  return { id: match[1]!, range: { start, end } };
+  return { id: match[1]!, range: { start, end }, atEnd };
 }
 
 function rangeOf(node: Nodes): SourceRange | null {
