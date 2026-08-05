@@ -220,3 +220,48 @@ cheap next to a document that quietly claims a foreign identity.
 **Better later:** Loro exposes enough to check the incoming ops' container ids
 directly, which would make this O(update) rather than O(document). Worth doing
 when the sync path is next touched; not worth blocking correctness on now.
+
+---
+
+## Freeing an evicted document promptly vs. never freeing it under a live caller
+
+`openDocument` hands an actor back to a caller that then works with it outside
+the workspace lock, so an eviction can land in between. Freeing the CRDT there
+is a hard crash, not a slow path.
+
+The fork not taken was reference counting: increment on open, decrement when the
+caller is done. It is the exact answer, and it puts a release obligation on every
+caller — the HTTP routes, the sync handler, the CLI, and every test that reaches
+into the workspace directly. One missed release pins a document forever, and the
+failure is silent.
+
+What is here instead is a grace period longer than any request's budget. It is
+less precise: memory is held for a bounded interval after eviction rather than
+released immediately. It has no obligation to forget. Given that the population
+of open documents is now genuinely capped, the interval bounds the overshoot to
+something small and measurable, and the memory test asserts it.
+
+## An empty exemption list vs. deleting the mechanism
+
+`DRIFTS` — the set of corpus entries exempted from the re-serialization
+fixed-point check — is empty and still there, typed as `Set<string>`. The
+tempting cleanup is to delete it and the `it.fails` block that consumes it.
+
+Keeping it is deliberate. The list was written as explicit names rather than a
+predicate precisely so that fixing an entry turns the file into a lie loudly, and
+that is what happened three times. An empty named set is the place a future
+exemption has to be written down and justified. A deleted one is an invitation to
+quietly loosen the assertion instead.
+
+## Best-of-three on a tail-ratio assertion vs. a looser bound
+
+`p99/p50 < 25` on the write path is a real property: a disproportionate tail
+means a queue. Under the full stress suite, whose files run in parallel, a single
+unlucky window of CPU contention lands entirely in the p99 and moves the ratio
+further than any regression would.
+
+Raising the bound would have made the assertion pass and stop meaning anything.
+Taking the best of three rounds keeps it strict — a genuine queue shows up in
+every round — at the cost of up to three times the samples on an unlucky run.
+The alternative of pinning the suite to serial execution was rejected: the
+contention is realistic, and the suite's wall time is a feature.
