@@ -109,3 +109,46 @@ deadlock would blow through by orders of magnitude.
 **Rejected:** asserting `p99 < 5ms` in CI. It passes on a quiet laptop and fails
 on a loaded runner, which trains everyone to ignore the suite — the single most
 expensive thing that can happen to a test suite.
+
+---
+
+## Normalization scope: minimal vs. canonical
+
+**Status:** decided (minimal). See `decisions.md`; implemented in
+`packages/markdown/src/normalize.ts`.
+
+**Taken:** first ingest touches only things that are ambiguous *to tools*:
+trailing whitespace that is not a hard break, leading tabs (which silently
+decide list nesting), mixed line endings, a missing final newline, and trailing
+blank lines. Everything else is left exactly as written.
+
+**Rejected:** canonicalizing on ingest — one bullet character, one emphasis
+marker, one heading style, uniform table padding. It is genuinely tempting: a
+canonical corpus makes the serializer's job trivial and every later diff
+smaller.
+
+It was rejected because it converts the one-time, agreed-to cost of ingest into
+a *large* one-time cost. "Connect this folder" would produce a diff touching
+every line of every file, which no team will accept on a repo their code lives
+in — and the first impression of the product would be a reformatting bot. The
+minimal set fits in a review dialog a person can actually read.
+
+**Consequence:** the serializer has to detect and reproduce each document's own
+conventions (`style.ts`), which is more code than a canonical serializer would
+need. That code is cheap and testable; a refused install is not.
+
+---
+
+## Marker placement: above the block vs. trailing inline
+
+**Status:** decided (trailing inline). Recorded because the rejected option is
+what `idea.md` implies and what anyone would reach for first.
+
+**Rejected:** `<!-- ^a1b2c3 -->` on its own line above the block. It splits a
+tight list in two, because an HTML block between two list items ends the list.
+The cost of discovering this late would have been high: every annotated list in
+every customer document silently restructured.
+
+**Taken:** appended inline at the end of the block. Full reasoning in
+`decisions.md` D5, including the capability it gives up — only paragraphs and
+headings can carry a materialized id.
