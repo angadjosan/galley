@@ -195,7 +195,30 @@ export class History {
     return this.revisions.length;
   }
 
+  /**
+   * Tickets already held, so a revision cannot be recorded twice.
+   *
+   * A ticket is the sequencer's identifier for one mutation, so two revisions
+   * sharing one is always a bug — and it was reachable: `adopt` replays every
+   * persisted revision into a History that may already hold some of them, which
+   * is what happens whenever a document is rehydrated more than once. The
+   * symptom is a timeline that lists the same moment twice, two rows claiming
+   * the same `restore` target, and `at(ticket)` answering with either.
+   *
+   * Ignoring the second copy is not papering over that: recording the same
+   * mutation twice has no correct interpretation, so the only question is
+   * whether the duplicate is dropped here or corrupts everything downstream.
+   *
+   * Deliberately not pruned when `evict` drops a revision: an evicted revision
+   * that came back would be a duplicate too. It holds one number per mutation
+   * ever made to an open document — kilobytes against the megabytes of content
+   * the revisions themselves hold, and it is freed with the actor.
+   */
+  private readonly seen = new Set<number>();
+
   record(revision: Revision): void {
+    if (this.seen.has(revision.ticket)) return;
+    this.seen.add(revision.ticket);
     this.revisions.push(revision);
     this.bytes += revision.content.length;
 

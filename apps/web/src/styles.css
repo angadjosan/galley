@@ -3,9 +3,12 @@
  *
  * Four rules hold the whole thing together:
  *
- * 1. **Paper is warm, chrome is cool.** The page is the only pure-white object
- *    on a warm grey desk. That contrast is what makes the document advance
- *    optically without a single decorative element.
+ * 1. **The page is the only object on screen with intent.** It is pure white on
+ *    a near-neutral desk, with a hairline edge and a contact shadow — a sheet
+ *    of paper, not an elevated card. Everything else is chrome and stays out of
+ *    the way. The desk used to be a warm beige, which was a nicer colour and the
+ *    wrong signal: a tinted desk reads as *a designed surface* and competes with
+ *    the paper instead of holding it.
  * 2. **One accent, and it is state — never decoration.** Pine, because blue is
  *    Docs and purple is AI marketing.
  * 3. **A second hue exists for exactly one thing: work a human did not do.**
@@ -19,7 +22,11 @@
   color-scheme: light dark;
 
   /* Surfaces */
-  --desk: #eae7e0;
+  /* Cool, not warm. The desk is chrome, and rule 1 below says chrome is cool
+     -- a beige desk reads as *a designed surface* (Craft, Bear, iA), which
+     makes the page compete with it instead of sitting on it. Near-neutral is
+     what leaves the white page as the only object on screen with intent. */
+  --desk: #f2f3f5;
   --page: #ffffff;
   --surface: #f7f5f1;
   --surface-2: #efece5;
@@ -82,8 +89,10 @@
   --r-lg: 16px;
 
   /* Shadows */
-  --sh-page: 0 0 0 1px rgb(26 28 31 / 4%), 0 1px 2px rgb(26 28 31 / 4%),
-    0 8px 28px -8px rgb(26 28 31 / 8%);
+  /* A hairline edge and a shallow contact shadow -- what a sheet of paper on
+     a desk looks like. The 28px ambient blur it had before is an *elevated
+     card*, which is a different object entirely. */
+  --sh-page: 0 0 0 1px rgb(26 28 31 / 8%), 0 1px 3px 1px rgb(60 64 67 / 15%);
   --sh-card: 0 1px 2px rgb(26 28 31 / 5%), 0 2px 8px -4px rgb(26 28 31 / 7%);
   --sh-float: 0 4px 8px rgb(26 28 31 / 8%), 0 16px 40px -8px rgb(26 28 31 / 20%);
 
@@ -2013,8 +2022,13 @@ kbd {
  * number is the smallest desk that can hold a readable page *and* a card
  * beside it — below it the notes stack under the document instead, which is
  * a different layout rather than a broken one.
+ *
+ * The number is now arithmetic rather than taste, because the page stopped
+ * being fluid: 816px of paper, plus the spread's padding, plus the gap, plus
+ * the narrowest a card can be and still hold a sentence. A threshold below
+ * that lets the desk scroll sideways, which is the failure this guards.
  */
-@container (min-width: 1040px) {
+@container (min-width: 1180px) {
   .spread {
     flex-direction: row;
     align-items: flex-start;

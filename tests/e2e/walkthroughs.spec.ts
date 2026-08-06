@@ -60,10 +60,10 @@ async function caretAtEndOf(page: Page, selector: string, index = 0): Promise<vo
   );
 }
 
-/** History is a destination now, not a permanent tab. */
+/** History is a destination now, not a permanent tab. It lives under File. */
 async function openHistory(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'More' }).click();
-  await page.getByTestId('open-history').click();
+  await page.getByTestId('menu-file').click();
+  await page.getByRole('menuitem', { name: 'Version history' }).click();
   await expect(page.getByTestId('history-rail')).toBeVisible();
 }
 
@@ -96,15 +96,16 @@ test.describe('the writing surface', () => {
     expect(text).not.toContain('|---');
   });
 
-  test('formats from the selection and keeps the change', async ({ page }) => {
+  test('formats from the toolbar and keeps the change', async ({ page }) => {
     await openSpec(page);
     await caretAtEndOf(page, '.prose > p[data-block-id]');
     await page.keyboard.type(' Bolded.');
     await page.keyboard.down('Shift');
     for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowLeft');
     await page.keyboard.up('Shift');
-    // The bubble appears on the selection; there is no permanent toolbar.
-    await expect(page.getByTestId('format-bubble')).toBeVisible();
+    // The toolbar is there before the selection and stays after it — that
+    // permanence is the point, so it is what the test asserts.
+    await expect(page.getByTestId('toolbar')).toBeVisible();
     await page.getByRole('button', { name: 'Bold', exact: true }).click();
 
     await expect(page.locator('.prose strong').filter({ hasText: 'Bolded.' })).toBeVisible();
@@ -393,26 +394,50 @@ test.describe('review surfaces', () => {
 });
 
 test.describe('accessibility and resilience', () => {
-  test('formatting is labelled, and absent until there is a selection', async ({ page }) => {
+  test('every control is labelled, and present before anything is selected', async ({ page }) => {
     await openSpec(page);
-    // At rest the writing surface carries no formatting chrome at all.
-    await expect(page.getByRole('toolbar', { name: 'Formatting' })).toHaveCount(0);
-
-    await caretAtEndOf(page, '.prose > p[data-block-id]');
-    await page.keyboard.down('Shift');
-    for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowLeft');
-    await page.keyboard.up('Shift');
-
     const toolbar = page.getByRole('toolbar', { name: 'Formatting' });
+
+    // The whole bet: the controls are there before the writer has done
+    // anything, so "what can this program do" is answered by looking.
     await expect(toolbar).toBeVisible();
-    for (const label of ['Bold', 'Italic', 'Link', 'Add a note']) {
+    for (const label of ['Bold', 'Italic', 'Underline', 'Insert link', 'Insert diagram', 'Bulleted list']) {
       await expect(toolbar.getByRole('button', { name: label, exact: true })).toBeVisible();
     }
-    // And the block types are reachable by name rather than by glyph.
-    await toolbar.getByRole('button', { name: /Text|Heading|Quote/ }).first().click();
-    for (const label of ['Heading 1', 'Bulleted list', 'Callout']) {
+
+    // Paragraph styles are reachable by name rather than by glyph, and each is
+    // drawn in the style it applies.
+    await page.getByTestId('style-menu').click();
+    for (const label of ['Normal text', 'Title', 'Heading 1']) {
+      await expect(page.getByRole('menuitemradio', { name: new RegExp(label) })).toBeVisible();
+    }
+    await page.keyboard.press('Escape');
+
+    // And everything the toolbar offers is also enumerated in the menus, in
+    // plain English, with its shortcut.
+    await page.getByTestId('menu-format').click();
+    for (const label of ['Bold', 'Underline', 'Checklist', 'Clear formatting']) {
       await expect(page.getByRole('menuitem', { name: new RegExp(label) })).toBeVisible();
     }
+  });
+
+  test('inserts a diagram that leaves as a portable fence', async ({ page }) => {
+    await openSpec(page);
+    await caretAtEndOf(page, '.prose > p[data-block-id]');
+
+    await page.getByRole('button', { name: 'Insert diagram', exact: true }).click();
+    await page.getByTestId('diagram-flowchart').click();
+
+    // It draws in the document — no fence, no monospace, no syntax on the page.
+    await expect(page.locator('.prose figure.diagram svg')).toBeVisible({ timeout: 15_000 });
+    expect(await page.locator('.prose').innerText()).not.toContain('```');
+
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    // And on disk it is the convention every other renderer already draws.
+    const asAgent = await readAsAgent('specs/checkout-v2');
+    expect(asAgent).toContain('```mermaid');
+    expect(asAgent).toContain('flowchart TD');
   });
 
   test('logs no console errors during an ordinary session', async ({ page }) => {
@@ -423,9 +448,7 @@ test.describe('accessibility and resilience', () => {
     page.on('pageerror', (error) => errors.push(error.message));
 
     await openSpec(page);
-    await page.getByRole('button', { name: 'More' }).click();
-    await page.getByTestId('open-history').click();
-    await expect(page.getByTestId('history-rail')).toBeVisible();
+    await openHistory(page);
     await page.keyboard.press('Escape');
     await caretAtEndOf(page, '.prose > p[data-block-id]');
     await page.keyboard.type(' A quiet edit.');

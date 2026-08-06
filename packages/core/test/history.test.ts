@@ -250,3 +250,44 @@ describe('the timeline shows changes, not plumbing', () => {
     expect(actor.attributionFor('x1')!.authorName).toBe('priya');
   });
 });
+
+/**
+ * A ticket identifies one mutation, so a timeline must never show one twice.
+ *
+ * This was reachable, and the path is the ordinary one: `adopt` replays every
+ * persisted revision into a History that may already hold some of them, which
+ * is what a second rehydration of the same document does. The symptom reached
+ * the interface as two rows for one moment, two `restore` targets claiming the
+ * same ticket, and `at(ticket)` free to answer with either.
+ */
+describe('a mutation appears once, however many times it is adopted', () => {
+  it('ignores a revision whose ticket is already held', async () => {
+    const { actor, ids } = await seeded();
+    await actor.applyOps([{ kind: 'replace', target: ids[1]!, markdown: 'Now required.' }], PRIYA);
+    const before = actor.listRevisions();
+    expect(before.length).toBeGreaterThan(0);
+
+    // Exactly what rehydrating a document that is already warm does.
+    actor.adoptHistory(before, []);
+    actor.adoptHistory(before, []);
+
+    const after = actor.listRevisions();
+    expect(after.length).toBe(before.length);
+    const tickets = after.map((revision) => revision.ticket);
+    expect(new Set(tickets).size).toBe(tickets.length);
+  });
+
+  it('still adopts revisions it has never seen', async () => {
+    const { actor, ids } = await seeded();
+    await actor.applyOps([{ kind: 'replace', target: ids[1]!, markdown: 'One.' }], PRIYA);
+    const existing = actor.listRevisions();
+
+    // A revision from a cold store, with a ticket this History has not issued.
+    const older = { ...existing[0]!, ticket: -1, summary: 'from a previous session' };
+    actor.adoptHistory([older], []);
+
+    const after = actor.listRevisions();
+    expect(after.length).toBe(existing.length + 1);
+    expect(after.some((revision) => revision.summary === 'from a previous session')).toBe(true);
+  });
+});
