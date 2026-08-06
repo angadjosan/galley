@@ -461,8 +461,16 @@ function DocumentView({
   const [editorState, setEditorState] = useState<EditorState | null>(null);
   /** Which insert picker is open, if any. */
   const [inserting, setInserting] = useState<'image' | 'diagram' | 'design' | null>(null);
-  /** The markup of every design this document links to, by path. */
-  const [designSources, setDesignSources] = useState<ReadonlyMap<string, string>>(new Map());
+  /**
+   * The markup of every design this document links to, by path.
+   *
+   * `null` means "looked, and it is not a design" — a reference to a document
+   * that was deleted, or that this reader cannot see, or that is ordinary
+   * prose. Recording the *absence* is what stops the effect below refetching
+   * it forever: the guard is "have we checked this path", not "do we have a
+   * design for it".
+   */
+  const [designSources, setDesignSources] = useState<ReadonlyMap<string, string | null>>(new Map());
   const [hoveredThread, setHoveredThread] = useState<string | null>(null);
   const [activeThread, setActiveThread] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState<Draft | null>(null);
@@ -660,7 +668,11 @@ function DocumentView({
       if (!live) return;
       setDesignSources((current) => {
         const next = new Map(current);
-        for (const [path, source] of fetched) if (source !== null) next.set(path, source);
+        // Every path that was looked up is recorded, including the ones that
+        // turned out not to be designs. Storing only the successes left the
+        // failures permanently "missing", so the effect re-ran on every render
+        // and refetched them without end.
+        for (const [path, source] of fetched) next.set(path, source);
         return next;
       });
     });
@@ -692,7 +704,14 @@ function DocumentView({
   );
 
   const designs = useMemo(
-    () => ({ byPath: designSources, onOpen: onOpenPath }),
+    () => ({
+      // Only the paths that really are designs reach the preview plugin. The
+      // nulls exist to stop the fetch loop, not to be drawn.
+      byPath: new Map(
+        [...designSources].filter((entry): entry is [string, string] => entry[1] !== null),
+      ),
+      onOpen: onOpenPath,
+    }),
     [designSources, onOpenPath],
   );
 
