@@ -145,11 +145,30 @@ async function load(): Promise<Mermaid> {
  * Drop the theme decision and force the next render to re-initialize.
  *
  * Mermaid bakes colours into the SVG it emits, so a document open across a
- * system theme change has to be re-rendered rather than restyled.
+ * system theme change has to be re-*rendered* rather than restyled. Clearing
+ * the cache alone is not enough — a diagram already on screen has already been
+ * drawn, so every view has to be told to draw again.
  */
 export function resetDiagramTheme(): void {
   mermaidPromise = null;
   cache.clear();
+  for (const listener of themeListeners) listener();
+}
+
+const themeListeners = new Set<() => void>();
+
+/** Ask to be told when every diagram needs redrawing. */
+export function onDiagramThemeChange(listener: () => void): () => void {
+  themeListeners.add(listener);
+  return () => themeListeners.delete(listener);
+}
+
+// The system theme is the one thing that invalidates every rendered diagram at
+// once. `initialize` is global and runs exactly once, so without this a
+// document open across a theme change keeps light-palette diagrams forever --
+// including ones inserted afterwards.
+if (typeof window !== 'undefined' && window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => resetDiagramTheme());
 }
 
 const cache = new Map<string, DiagramRender>();

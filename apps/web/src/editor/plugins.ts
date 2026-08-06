@@ -119,54 +119,13 @@ export const clearFormatting: Command = (state, dispatch) => {
   return true;
 };
 
-const insertHardBreak: Command = (state, dispatch) => {
-  if (dispatch) {
-    dispatch(
-      state.tr.replaceSelectionWith(schema.nodes.hard_break!.create()).scrollIntoView(),
-    );
-  }
-  return true;
-};
-
-export function galleyKeymap(onComment: () => void, onLink: () => void): Plugin {
-  const listItem = schema.nodes.list_item!;
-  return keymap({
-    'Mod-b': toggleMark(schema.marks.strong!),
-    'Mod-i': toggleMark(schema.marks.em!),
-    'Mod-e': toggleMark(schema.marks.code!),
-    'Mod-Shift-x': toggleMark(schema.marks.strike!),
-    'Mod-k': () => {
-      onLink();
-      return true;
-    },
-    // There is no underline in the Markdown model. Left unbound, the browser
-    // inserts a `<u>` into the contenteditable that the editor then reconciles
-    // away, so the keystroke has to be actively swallowed rather than ignored.
-    'Mod-u': () => true,
-    'Mod-\\': clearFormatting,
-    'Mod-z': undo,
-    'Mod-y': redo,
-    'Mod-Shift-z': redo,
-    'Mod-Alt-0': setBlockType(schema.nodes.paragraph!),
-    'Mod-Alt-1': setBlockType(schema.nodes.heading!, { level: 1 }),
-    'Mod-Alt-2': setBlockType(schema.nodes.heading!, { level: 2 }),
-    'Mod-Alt-3': setBlockType(schema.nodes.heading!, { level: 3 }),
-    'Mod-Shift-7': wrapInList(schema.nodes.ordered_list!),
-    'Mod-Shift-8': wrapInList(schema.nodes.bullet_list!),
-    'Mod-Shift-9': wrapInType('blockquote'),
-    'Mod-Alt-m': () => {
-      onComment();
-      return true;
-    },
-    Enter: chainCommands(splitListItem(listItem), baseKeymap.Enter!),
-    // Without this a writer who lands in a code block cannot get out of it.
-    'Mod-Enter': exitCode,
-    'Shift-Enter': chainCommands(exitCode, insertHardBreak),
-    Backspace: undoInputRule,
-    Tab: sinkListItem(listItem),
-    'Shift-Tab': liftListItem(listItem),
-  });
-}
+/**
+ * The keymap used to live here.
+ *
+ * It is built in `commands.ts` now, from the same `ActionSpec`s the toolbar and
+ * the menus are built from, because a third hand-written copy of the same list
+ * had drifted from the other two in four places. See `galleyKeymap` there.
+ */
 
 // ---------------------------------------------------------------------------
 // Placeholders
@@ -192,6 +151,17 @@ export function galleyKeymap(onComment: () => void, onLink: () => void): Plugin 
  * dispatching one on every focus change would pollute the change stream that
  * autosave watches.
  */
+/**
+ * What the style menu calls a heading of this level.
+ *
+ * Duplicated from `STYLES` rather than imported, because `commands.ts` imports
+ * *this* file and the cycle is not worth breaking for five strings. The test
+ * that keeps them honest lives beside the menu.
+ */
+function headingLabel(level: number): string {
+  return level === 1 ? 'Title' : level <= 4 ? `Heading ${level - 1}` : 'Heading';
+}
+
 export function placeholders(): Plugin {
   return new Plugin({
     props: {
@@ -214,9 +184,13 @@ export function placeholders(): Plugin {
         if (parent.type.spec.code) return null;
         if (parent.type === schema.nodes.table_cell) return null;
 
+        // Named the way the style menu names it, not by its Markdown level.
+        // These disagreed: an empty level-2 heading showed "Heading 2" while
+        // the toolbar simultaneously read "Heading 1", and the number is raw
+        // format vocabulary that this file is otherwise careful never to leak.
         const label =
           parent.type === schema.nodes.heading
-            ? `Heading ${parent.attrs.level as number}`
+            ? headingLabel(parent.attrs.level as number)
             : parent.type === schema.nodes.blockquote
               ? 'Quote'
               : '';
@@ -486,12 +460,14 @@ export interface CorePluginOptions {
   onOpenThread(threadId: string): void;
   onComment(): void;
   onLink(): void;
+  /** Built in `commands.ts`, so it cannot disagree with the menus. */
+  keymap: Plugin;
 }
 
 export function corePlugins(options: CorePluginOptions): Plugin[] {
   return [
     markdownInputRules(),
-    galleyKeymap(options.onComment, options.onLink),
+    options.keymap,
     keymap(baseKeymap),
     history(),
     dropCursor({ class: 'drop-cursor' }),

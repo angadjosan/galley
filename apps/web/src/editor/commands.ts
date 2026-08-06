@@ -4,6 +4,7 @@ import { undoInputRule } from 'prosemirror-inputrules';
 import { keymap } from 'prosemirror-keymap';
 import { liftListItem, sinkListItem, splitListItem, wrapInList } from 'prosemirror-schema-list';
 import { TextSelection, type Command, type EditorState, type Plugin } from 'prosemirror-state';
+import type { Node as PmNode } from 'prosemirror-model';
 import { schema } from './schema.js';
 import { blockActive, clearFormatting, markActive, wrapInType } from './plugins.js';
 
@@ -171,10 +172,18 @@ export const CHECKLIST: ActionSpec = {
     if (!tr) return false;
 
     const { from, to } = tr.selection;
-    const items: { pos: number; checked: boolean | null }[] = [];
+    const found: { pos: number; end: number; checked: boolean | null }[] = [];
     tr.doc.nodesBetween(from, to, (node, pos) => {
-      if (node.type === schema.nodes.list_item) items.push({ pos, checked: node.attrs.checked });
+      if (node.type === schema.nodes.list_item) found.push({ pos, end: pos + node.nodeSize, checked: node.attrs.checked });
     });
+
+    // Only the innermost items. `nodesBetween` visits every node whose range
+    // *intersects* the selection, so a caret inside a nested bullet also
+    // matched its ancestor — and ticking one sub-bullet turned its parent
+    // bullet into a checkbox in the saved Markdown.
+    const items = found.filter(
+      (item) => !found.some((other) => other !== item && other.pos >= item.pos && other.end <= item.end),
+    );
     if (items.length === 0) return false;
     if (!dispatch) return true;
 
@@ -235,12 +244,19 @@ export const OUTDENT: ActionSpec = {
  * paragraph is consumed instead.
  */
 export function insertBlock(type: string, attrs?: Record<string, unknown>): Command {
-  return (state, dispatch) => {
+  return (state, dispatch, view) => {
     const nodeType = schema.nodes[type];
     if (!nodeType) return false;
-    if (!dispatch) return true;
     const node = nodeType.createAndFill(attrs);
     if (!node) return false;
+    return insertNode(node)(state, dispatch, view);
+  };
+}
+
+/** The placement rules, over a node that is already built. */
+function insertNode(node: PmNode): Command {
+  return (state, dispatch) => {
+    if (!dispatch) return true;
 
     const { $from, empty } = state.selection;
     const atEmptyParagraph =
@@ -254,33 +270,40 @@ export function insertBlock(type: string, attrs?: Record<string, unknown>): Comm
       tr.replaceSelectionWith(node);
     }
     // A trailing paragraph, so there is somewhere to keep writing after an atom
-    // at the end of the document. Without it a diagram inserted last leaves the
-    // writer with no cursor position below it.
-    const end = tr.selection.to;
-    if (tr.doc.resolve(Math.min(end, tr.doc.content.size)).parent.type === schema.nodes.doc || node.isAtom) {
-      const after = tr.mapping.map(atEmptyParagraph ? $from.before(1) : state.selection.from) + node.nodeSize;
-      if (after >= tr.doc.content.size) {
-        tr.insert(tr.doc.content.size, schema.nodes.paragraph!.create());
-        tr.setSelection(TextSelection.near(tr.doc.resolve(tr.doc.content.size - 1)));
-      }
+    // at the end of the document. Without it a diagram or a divider inserted
+    // last leaves the writer with no cursor position below it.
+    //
+    // Ask the document what its last child is, rather than doing arithmetic on
+    // mapped positions. The arithmetic version double-counted — `mapping.map`
+    // already carries a position past the inserted node — so the guard was
+    // always false and this never ran in the case it was written for.
+    const last = tr.doc.lastChild;
+    if (!last || last.isAtom || last.isLeaf) {
+      tr.insert(tr.doc.content.size, schema.nodes.paragraph!.create());
+      tr.setSelection(TextSelection.near(tr.doc.resolve(tr.doc.content.size - 1)));
     }
     dispatch(tr.scrollIntoView());
     return true;
   };
 }
 
-export const INSERT_TABLE: Command = (state, dispatch) => {
+/**
+ * A table, placed by the same rules as everything else.
+ *
+ * It used to call `replaceSelectionWith` directly, which meant it kept the
+ * stray empty paragraph above it and left no cursor position below it at the
+ * end of a document — the two problems `insertBlock` exists to solve, still
+ * live on a path that is on both the toolbar and the menu.
+ */
+export const INSERT_TABLE: Command = (state, dispatch, view) => {
   const { table, table_row: row, table_cell: cell } = schema.nodes;
   if (!table || !row || !cell) return false;
-  if (dispatch) {
-    const header = row.create(null, [
-      cell.create({ header: true }, schema.text('Field')),
-      cell.create({ header: true }, schema.text('Value')),
-    ]);
-    const body = (): typeof header => row.create(null, [cell.create(), cell.create()]);
-    dispatch(state.tr.replaceSelectionWith(table.create(null, [header, body(), body()])).scrollIntoView());
-  }
-  return true;
+  const header = row.create(null, [
+    cell.create({ header: true }, schema.text('Field')),
+    cell.create({ header: true }, schema.text('Value')),
+  ]);
+  const body = (): typeof header => row.create(null, [cell.create(), cell.create()]);
+  return insertNode(table.create(null, [header, body(), body()]))(state, dispatch, view);
 };
 
 export const INSERT_DIVIDER: ActionSpec = {
@@ -334,6 +357,13 @@ export function insertDesignLink(path: string, label: string): Command {
   };
 }
 
+/**
+ * An image, inline in the paragraph the caret is in.
+ *
+ * Inline rather than as its own block, because that is what `![](…)` is in
+ * CommonMark and the model must not claim otherwise. A writer who wants it on
+ * its own line puts it on its own line.
+ */
 export function insertImage(src: string, alt: string): Command {
   return (state, dispatch) => {
     const image = schema.nodes.image;
@@ -341,4 +371,97 @@ export function insertImage(src: string, alt: string): Command {
     if (dispatch) dispatch(state.tr.replaceSelectionWith(image.create({ src, alt })).scrollIntoView());
     return true;
   };
+}
+
+// ---------------------------------------------------------------------------
+// The keymap
+// ---------------------------------------------------------------------------
+
+/**
+ * The shortcuts, derived from the specs above rather than written out again.
+ *
+ * This exists because the hand-written version had drifted in four places, and
+ * every one of them was a promise the menus made and the editor broke:
+ *
+ * - `⌘⇧9` was advertised as Checklist and bound to Quote.
+ * - `⌘U` was advertised as Underline and bound to a no-op that swallowed the
+ *   key — a comment saying "there is no underline in the Markdown model",
+ *   written before the underline mark existed and never revisited.
+ * - `⌘⇧H` for Highlight was not bound at all.
+ * - `⌘⌥4` for Heading 3 was not bound at all.
+ *
+ * A menu is where most people ever learn a shortcut, so a menu that lies about
+ * one is worse than a menu that shows none. Deriving the binding from the same
+ * string the menu prints makes the two incapable of disagreeing.
+ */
+function bindingFor(shortcut: string): string | null {
+  const parts: string[] = [];
+  let rest = shortcut;
+  const take = (glyph: string, name: string): void => {
+    if (rest.includes(glyph)) {
+      parts.push(name);
+      rest = rest.replace(glyph, '');
+    }
+  };
+  take('⌘', 'Mod');
+  take('⌃', 'Ctrl');
+  take('⌥', 'Alt');
+  take('⇧', 'Shift');
+  if (rest === '⇥') return [...parts, 'Tab'].join('-');
+  // A single key only. Anything else is a shortcut this cannot express, and
+  // returning null is how it says so rather than binding something wrong.
+  if (rest.length !== 1) return null;
+  return [...parts, rest.toLowerCase()].join('-');
+}
+
+const SHORTCUT_ACTIONS: readonly ActionSpec[] = [
+  UNDO,
+  REDO,
+  BOLD,
+  ITALIC,
+  UNDERLINE,
+  STRIKETHROUGH,
+  HIGHLIGHT,
+  INLINE_CODE,
+  CLEAR_FORMATTING,
+  CHECKLIST,
+  BULLETED_LIST,
+  NUMBERED_LIST,
+  INDENT,
+  OUTDENT,
+];
+
+const insertHardBreak: Command = (state, dispatch) => {
+  if (dispatch) dispatch(state.tr.replaceSelectionWith(schema.nodes.hard_break!.create()).scrollIntoView());
+  return true;
+};
+
+export function galleyKeymap(onComment: () => void, onLink: () => void): Plugin {
+  const bindings: Record<string, Command> = {};
+
+  for (const action of [...SHORTCUT_ACTIONS, ...STYLES]) {
+    const key = action.shortcut ? bindingFor(action.shortcut) : null;
+    if (key) bindings[key] = action.command;
+  }
+
+  // Redo's second binding, which no menu shows because nobody looks for it.
+  bindings['Mod-y'] = REDO.command;
+  bindings['Mod-k'] = () => {
+    onLink();
+    return true;
+  };
+  bindings['Mod-Alt-m'] = () => {
+    onComment();
+    return true;
+  };
+
+  // Structural keys, which are not commands anyone invokes from a menu.
+  const listItem = schema.nodes.list_item!;
+  bindings.Enter = chainCommands(splitListItem(listItem), baseKeymap.Enter!);
+  // Without this a writer who lands in a code block cannot get out of it.
+  bindings['Mod-Enter'] = exitCode;
+  bindings['Shift-Enter'] = chainCommands(exitCode, insertHardBreak);
+  bindings.Backspace = undoInputRule;
+
+  return keymap(bindings);
 }

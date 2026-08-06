@@ -60,6 +60,31 @@ async function caretAtEndOf(page: Page, selector: string, index = 0): Promise<vo
   );
 }
 
+/**
+ * Select a block's whole contents.
+ *
+ * A Range rather than counted arrow presses: a count races the typing that
+ * preceded it, and a test about a shortcut should not also be a test about
+ * selection arithmetic.
+ */
+async function selectContentsOf(page: Page, selector: string, index = 0): Promise<void> {
+  await page.locator(selector).nth(index).click();
+  await page.waitForTimeout(150);
+  await page.evaluate(
+    ({ sel, i }) => {
+      const el = document.querySelectorAll(sel)[i];
+      const selection = window.getSelection();
+      if (!el || !selection) return;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    },
+    { sel: selector, i: index },
+  );
+  await page.waitForTimeout(100);
+}
+
 /** History is a destination now, not a permanent tab. It lives under File. */
 async function openHistory(page: Page): Promise<void> {
   await page.getByTestId('menu-file').click();
@@ -419,6 +444,74 @@ test.describe('accessibility and resilience', () => {
     for (const label of ['Bold', 'Underline', 'Checklist', 'Clear formatting']) {
       await expect(page.getByRole('menuitem', { name: new RegExp(label) })).toBeVisible();
     }
+  });
+
+  /**
+   * A menu bar that claims `role="menubar"` owes the keyboard a contract.
+   *
+   * The role tells a screen-reader user to press the arrow keys. Asserting it
+   * without implementing them is worse than having no role — and four commands
+   * (Quote, Callout, Horizontal line, Code block) live in these menus and
+   * nowhere else, so they were unreachable without a mouse.
+   */
+  test('the menus can be driven entirely from the keyboard', async ({ page }) => {
+    await openSpec(page);
+
+    await page.getByTestId('menu-file').focus();
+
+    // Enter opens the menu *and* puts the caret on its first item — a menu that
+    // opens without moving focus strands a keyboard user looking at something
+    // they cannot reach.
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('menu', { name: 'File' })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: /New document/ })).toBeFocused();
+
+    // Down walks the list.
+    await page.keyboard.press('ArrowDown');
+    await expect(page.getByRole('menuitem', { name: /Open a document/ })).toBeFocused();
+
+    // Right moves to the next menu, keeping it open.
+    await page.keyboard.press('ArrowRight');
+    await expect(page.getByRole('menu', { name: 'Edit' })).toBeVisible();
+
+    // Escape closes it and gives focus back to the trigger, never to nowhere.
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu', { name: 'Edit' })).toHaveCount(0);
+    await expect(page.getByTestId('menu-edit')).toBeFocused();
+
+    // And the whole bar is one tab stop, not four.
+    const stops = await page.locator('.menubar-trigger').evaluateAll((nodes) =>
+      nodes.filter((node) => (node as HTMLElement).tabIndex === 0).length,
+    );
+    expect(stops, 'the menu bar should be a single stop in the tab order').toBe(1);
+  });
+
+  /**
+   * A menu is where most people ever learn a shortcut, so one that lies about
+   * a shortcut is worse than one that shows none. Four had drifted from the
+   * keymap; the keymap is derived from these labels now, so this checks the
+   * derivation rather than a hand-written table.
+   */
+  test('a shortcut the menu advertises is the shortcut that works', async ({ page }) => {
+    await openSpec(page);
+    // The first paragraph, whose position does not depend on what earlier
+    // tests left behind.
+    const first = page.locator('.prose > p[data-block-id]').first();
+    const words = (await first.innerText()).trim();
+    await selectContentsOf(page, '.prose > p[data-block-id]', 0);
+
+    // Advertised as ⌘U by both the toolbar tooltip and the Format menu. It was
+    // bound to a no-op that swallowed the key.
+    await page.keyboard.press('ControlOrMeta+u');
+    // `.first()`, because a paragraph that already contains bold comes back as
+    // more than one underlined run — which is correct, and is the nesting the
+    // serializer is separately tested on.
+    await expect(page.locator('.prose u').first()).toBeVisible();
+
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    const asAgent = await readAsAgent('specs/checkout-v2');
+    expect(asAgent, 'underline did not reach the stored document').toContain('<u>');
+    expect(asAgent, 'underline did not wrap the words it was applied to').toContain(words.slice(0, 20));
   });
 
   test('inserts a diagram that leaves as a portable fence', async ({ page }) => {

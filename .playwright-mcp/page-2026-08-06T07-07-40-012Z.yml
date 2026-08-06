@@ -1,0 +1,27 @@
+- generic [ref=f66e3]:
+  - complementary [ref=f66e4]:
+    - generic [ref=f66e5]: Galley
+    - textbox "Search" [ref=f66e13]:
+      - /placeholder: Search everything
+    - navigation [ref=f66e14]:
+      - generic [ref=f66e15]:
+        - generic [ref=f66e16]: Design
+        - button "Galley" [ref=f66e17] [cursor=pointer]
+        - button "Cards" [ref=f66e19] [cursor=pointer]
+        - button "Form" [ref=f66e21] [cursor=pointer]
+      - generic [ref=f66e23]:
+        - generic [ref=f66e24]: Policies
+        - button "Refund policy" [ref=f66e25] [cursor=pointer]
+      - generic [ref=f66e27]:
+        - generic [ref=f66e28]: Runbooks
+        - button "Deploy runbook" [ref=f66e29] [cursor=pointer]
+      - generic [ref=f66e31]:
+        - generic [ref=f66e32]: Scratch
+        - button "Diag Test" [ref=f66e33] [cursor=pointer]
+      - generic [ref=f66e35]:
+        - generic [ref=f66e36]: Specs
+        - button "Checkout v2" [ref=f66e37] [cursor=pointer]
+    - generic [ref=f66e39]:
+      - button "New document" [ref=f66e40] [cursor=pointer]: + New document
+      - button "Sign out" [ref=f66e41] [cursor=pointer]
+  - main [ref=f66e43]

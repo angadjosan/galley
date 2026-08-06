@@ -21,6 +21,7 @@ import {
   type CommentHighlightState,
   type SurfaceState,
 } from './plugins.js';
+import { galleyKeymap } from './commands.js';
 import { DiagramView } from './DiagramView.js';
 import { renderDiagram } from './diagram.js';
 import { designPreview, designPreviewKey, noDesigns, type DesignSources } from '../design/preview.js';
@@ -196,6 +197,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
           onOpenThread: (id) => callbacks.current.onOpenThread?.(id),
           onComment: requestComment,
           onLink: () => setLinking(true),
+          keymap: galleyKeymap(requestComment, () => setLinking(true)),
         }),
         suggestionReview(callbacks.current.suggestions, suggestionRef),
         designPreview(callbacks.current.designs ?? noDesigns),
@@ -579,6 +581,22 @@ function MarginCommentButton({
   host: HTMLElement | null;
   onComment(): void;
 }): JSX.Element | null {
+  // Re-measured on scroll and resize. Its coordinates are viewport-relative and
+  // nothing else re-renders it, so without this it stayed where it was while
+  // the text scrolled away underneath — ending up beside unrelated words, or
+  // over the chrome, while still claiming to comment on the original
+  // selection.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const bump = (): void => tick((n) => n + 1);
+    window.addEventListener('scroll', bump, true);
+    window.addEventListener('resize', bump);
+    return () => {
+      window.removeEventListener('scroll', bump, true);
+      window.removeEventListener('resize', bump);
+    };
+  }, []);
+
   const page = host?.closest('.page');
   if (!page) return null;
   const box = page.getBoundingClientRect();

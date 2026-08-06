@@ -141,12 +141,13 @@ export function Toolbar(props: ToolbarProps): JSX.Element {
         data-testid="toolbar"
         ref={bar}
         aria-disabled={readOnly || undefined}
-        // Clicking a toolbar button must not take the selection out of the
-        // document — every command it runs is defined in terms of that
-        // selection, and a blur would collapse it first.
-        onMouseDown={(event) => {
-          if (!(event.target as HTMLElement).closest('[data-keeps-focus]')) event.preventDefault();
-        }}
+        // Every mousedown, unconditionally: every command here is defined in
+        // terms of the document's selection, and a blur would collapse it
+        // first. There used to be an escape hatch keyed on an attribute that
+        // appeared nowhere in the codebase — a lie about the code's
+        // flexibility. If a text input ever lands on this bar, it needs a real
+        // exemption, written then.
+        onMouseDown={(event) => event.preventDefault()}
       >
         {shown.map((group, index) => (
           <div className="tb-group" key={group.id}>
@@ -176,7 +177,13 @@ export function Toolbar(props: ToolbarProps): JSX.Element {
             {overflowOpen && (
               <div
                 className="tb-overflow"
-                role="menu"
+                // A group, not a menu: ARIA requires a `menu` to contain
+                // `menuitem`s, and these are the same toggle buttons that were
+                // on the bar a moment ago. Renaming them for the popup would
+                // make them announce differently depending on the width of the
+                // window.
+                role="group"
+                aria-label="More formatting options"
                 onPointerDown={(event) => event.stopPropagation()}
                 onMouseDown={(event) => event.preventDefault()}
               >
@@ -268,7 +275,6 @@ function buildGroups(props: ToolbarProps): Group[] {
             label="Insert link"
             shortcut="⌘K"
             icon={<LinkIcon />}
-            active={false}
             enabled={!disabled && !!current}
             onClick={props.onLink}
           />
@@ -276,35 +282,30 @@ function buildGroups(props: ToolbarProps): Group[] {
             label="Add comment"
             shortcut="⌘⌥M"
             icon={<CommentIcon />}
-            active={false}
             enabled={!!current}
             onClick={props.onComment}
           />
           <ToolButton
             label="Insert image"
             icon={<ImageIcon />}
-            active={false}
             enabled={!disabled && !!current}
             onClick={props.onImage}
           />
           <ToolButton
             label="Insert diagram"
             icon={<DiagramIcon />}
-            active={false}
             enabled={!disabled && !!current}
             onClick={props.onDiagram}
           />
           <ToolButton
             label="Insert design"
             icon={<DesignIcon />}
-            active={false}
             enabled={!disabled && !!current}
             onClick={props.onDesign}
           />
           <ToolButton
             label="Insert table"
             icon={<TableIcon />}
-            active={false}
             enabled={!disabled && !!current}
             onClick={props.onTable}
           />
@@ -343,7 +344,8 @@ function ToolButton({
   label: string;
   shortcut?: string;
   icon: ReactNode;
-  active: boolean;
+  /** Absent for a control that is not a toggle — see `aria-pressed` below. */
+  active?: boolean;
   enabled: boolean;
   onClick(): void;
 }): JSX.Element {
@@ -352,7 +354,10 @@ function ToolButton({
       type="button"
       className={`tb-button ${active ? 'is-active' : ''}`}
       aria-label={label}
-      aria-pressed={active}
+      // Only on things that are actually toggles. Emitting it unconditionally
+      // made "Insert image" and five others announce as un-pressed switches to
+      // a screen reader, which is a promise about behaviour they do not keep.
+      aria-pressed={active === undefined ? undefined : active}
       // Both, because they answer different questions: the name is what the
       // control does, the shortcut is how to do it without the mouse. Google
       // Docs' tooltips are the main way anyone learns its shortcuts.

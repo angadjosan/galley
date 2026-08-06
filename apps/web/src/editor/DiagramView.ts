@@ -1,6 +1,6 @@
 import type { Node as PmNode } from 'prosemirror-model';
 import type { EditorView, NodeView } from 'prosemirror-view';
-import { renderDiagram } from './diagram.js';
+import { onDiagramThemeChange, renderDiagram } from './diagram.js';
 
 /**
  * A diagram, on the page.
@@ -34,6 +34,7 @@ export class DiagramView implements NodeView {
   /** Bumped per render so a slow one that lost the race cannot paint. */
   private generation = 0;
   private destroyed = false;
+  private unsubscribeTheme: (() => void) | null = null;
 
   constructor(
     node: PmNode,
@@ -61,13 +62,21 @@ export class DiagramView implements NodeView {
     edit.type = 'button';
     edit.className = 'diagram-edit';
     edit.textContent = 'Edit diagram';
-    edit.addEventListener('mousedown', (event) => {
+    const open = (event: Event): void => {
       // The surface would otherwise take the selection back before the click
       // lands, and the panel would open against a stale position.
       event.preventDefault();
       event.stopPropagation();
       const pos = this.getPos();
       if (pos !== undefined) this.onEdit(pos);
+    };
+    edit.addEventListener('mousedown', open);
+    // And `click`, because Enter and Space on a focused button fire `click` and
+    // never `mousedown` -- so the control was focusable, visibly focus-styled,
+    // and impossible to activate without a mouse. Guarded, because a real mouse
+    // click produces both.
+    edit.addEventListener('click', (event) => {
+      if (event.detail === 0) open(event);
     });
     this.dom.append(edit);
 
@@ -77,6 +86,12 @@ export class DiagramView implements NodeView {
       event.preventDefault();
       const pos = this.getPos();
       if (pos !== undefined) this.onEdit(pos);
+    });
+
+    this.unsubscribeTheme = onDiagramThemeChange(() => {
+      // The cache is already cleared; this is the repaint.
+      this.drawn = null;
+      this.draw();
     });
 
     this.draw();
@@ -118,6 +133,7 @@ export class DiagramView implements NodeView {
   destroy(): void {
     this.destroyed = true;
     this.generation++;
+    this.unsubscribeTheme?.();
   }
 
   private draw(): void {
@@ -131,7 +147,14 @@ export class DiagramView implements NodeView {
       // Three ways this render can have become irrelevant while it was in
       // flight: the view was torn down, a newer render superseded it, or the
       // node was removed from the document without `destroy` having run yet.
-      if (this.destroyed || generation !== this.generation || !this.dom.isConnected) return;
+      if (this.destroyed || generation !== this.generation) return;
+      if (!this.dom.isConnected) {
+        // Momentarily detached. Forget what was drawn, or `update` will never
+        // trigger again and the diagram stays blank for the rest of the
+        // session.
+        this.drawn = null;
+        return;
+      }
       this.dom.classList.remove('is-drawing');
       if (result.ok) {
         this.dom.classList.remove('is-broken');
