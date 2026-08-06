@@ -140,8 +140,6 @@ const nodes: Record<string, NodeSpec> = {
       /** The fence's info-string tail, carried across untouched. */
       meta: { default: null as string | null },
       code: { default: '' },
-      /** Rendered width as a fraction of the text column, 0.25–1. */
-      width: { default: 1 },
       ...blockAttrs,
     },
     parseDOM: [

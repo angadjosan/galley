@@ -6,6 +6,11 @@
  * utility class names, every value drawn from a named scale, and no way to
  * write a literal.**
  *
+ * The one exception, stated up front because the rule above is otherwise a
+ * small lie: `w-` and `h-` take a number of pixels. A control's height is
+ * genuinely a dimension rather than rhythm — see the note where they are
+ * resolved, and `tradeoffs.md`. Everything else is closed.
+ *
  * The closure is the point, and it is worth defending because the pressure to
  * open it will be constant. Three things depend on it:
  *
@@ -130,11 +135,24 @@ const SIDES: Record<string, readonly string[]> = {
   l: ['padding-left'],
 };
 
-/** A named alternative to a value that was not in the set. */
+/**
+ * The closest thing in the set to what was written.
+ *
+ * Numeric where the scale is numeric, which is the case that matters: `gap-7`
+ * used to be answered with "try `gap-0`" — the first key in the object, and the
+ * single worst suggestion available — because the fallback was "give up and
+ * return options[0]". A suggestion that is arbitrary is worse than none, since
+ * the next attempt is another guess.
+ */
 function nearest(value: string, options: readonly string[]): string {
-  // Prefix match first — someone reaching for `bg-accent-hover` meant `accent`.
-  const prefix = options.find((option) => value.startsWith(option) || option.startsWith(value));
-  return prefix ?? options[0]!;
+  const asNumber = Number(value);
+  if (Number.isFinite(asNumber) && options.every((option) => Number.isFinite(Number(option)))) {
+    return options.reduce((best, option) =>
+      Math.abs(Number(option) - asNumber) < Math.abs(Number(best) - asNumber) ? option : best,
+    );
+  }
+  // Prefix match — someone reaching for `bg-accent-hover` meant `accent`.
+  return options.find((option) => value.startsWith(option) || option.startsWith(value)) ?? '';
 }
 
 function fail(message: string): Resolution {
@@ -201,14 +219,24 @@ export function resolveClass(name: string): Resolution {
       // A raw pixel size is allowed here and nowhere else. A control's height
       // and an avatar's width are genuinely dimensions rather than rhythm, and
       // forcing them onto the spacing scale produces `h-11` meaning 44px by a
-      // coincidence nobody can read.
-      return ok({ [property]: `${Number(raw)}px` });
+      // coincidence nobody can read. Bounded, because an unbounded number is
+      // how this exception would quietly become the rule.
+      const pixels = Number(raw);
+      if (pixels > 2000) return fail(`\`${name}\` is larger than any frame. Sizes are in pixels, up to 2000.`);
+      return ok({ [property]: `${pixels}px` });
     }
     return fail(`\`${name}\` needs a number of pixels, \`full\`, \`auto\` or \`fit\`.`);
   }
 
   const border = /^border(-(\d+))?$/.exec(name);
-  if (border) return ok({ 'border-style': 'solid', 'border-width': `${border[2] ?? 1}px` });
+  if (border) {
+    const width = Number(border[2] ?? 1);
+    // Bounded. `border-999` resolved to a 999px border with no comment and no
+    // scale — one of two numeric escapes that had slipped past the "no
+    // literals" rule without anybody arguing for them.
+    if (width > 8) return fail(`\`${name}\` is thicker than a border gets. The range is 0 to 8.`);
+    return ok({ 'border-style': 'solid', 'border-width': `${width}px` });
+  }
 
   const rounded = /^rounded(-(.+))?$/.exec(name);
   if (rounded) {
@@ -242,11 +270,26 @@ export function resolveClass(name: string): Resolution {
         ...(scale.weight ? { 'font-weight': scale.weight } : {}),
       });
     }
-    if (role === 'text' && /^(left|center|right)$/.test(key)) return ok({ 'text-align': key });
+    if (role === 'text' && /^(left|center|right|justify|start|end)$/.test(key)) {
+      // `justify` and the logical keywords are named here only so the *error*
+      // is about alignment. They fell through to the palette branch and were
+      // answered with "not in the palette. Colours are named by role", which
+      // tells someone reaching for alignment nothing at all.
+      if (key === 'justify' || key === 'start' || key === 'end') {
+        return fail(`\`${name}\` is not an alignment this format has. Try \`text-left\`, \`text-center\` or \`text-right\`.`);
+      }
+      return ok({ 'text-align': key });
+    }
     const color = COLOR[key];
     if (!color) {
+      // Naming a *neighbour* is only honest when there is one. For a hue there
+      // never is, so the message shows the palette instead of inventing a
+      // plausible-looking wrong answer.
+      const near = nearest(key, Object.keys(COLOR));
       return fail(
-        `\`${name}\` is not in the palette. Colours are named by role, not by hue — try \`${role}-${nearest(key, Object.keys(COLOR))}\`.`,
+        near
+          ? `\`${name}\` is not in the palette. Colours are named by role, not by hue — try \`${role}-${near}\`.`
+          : `\`${name}\` is not in the palette. Colours are named by role, not by hue: ${list(Object.keys(COLOR), `${role}-`)}, and the rest are in \`galley design classes\`.`,
       );
     }
     if (role === 'bg') return ok({ 'background-color': color });
@@ -262,7 +305,11 @@ export function resolveClass(name: string): Resolution {
   }
 
   const opacity = /^opacity-(\d{1,3})$/.exec(name);
-  if (opacity) return ok({ opacity: String(Number(opacity[1]) / 100) });
+  if (opacity) {
+    const percent = Number(opacity[1]);
+    if (percent > 100) return fail(`\`${name}\` is more than opaque. The range is 0 to 100.`);
+    return ok({ opacity: String(percent / 100) });
+  }
 
   if (name === 'truncate') {
     return ok({ overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' });

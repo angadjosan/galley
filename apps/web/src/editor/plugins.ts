@@ -490,6 +490,15 @@ export function corePlugins(options: CorePluginOptions): Plugin[] {
  */
 export function activeBlock(state: EditorState): { id: string; depth: number } | null {
   const { $from } = state.selection;
+
+  // A node selection on an atom — a diagram, a divider — resolves *before* the
+  // node, so walking up from the caret never reaches it. Without this a
+  // selected diagram had no active block: the margin comment button appeared,
+  // because the selection is not empty, and clicking it did nothing.
+  const selected = (state.selection as { node?: { attrs?: Record<string, unknown> } }).node;
+  const selectedId = selected?.attrs?.blockId as string | undefined;
+  if (selectedId) return { id: selectedId, depth: $from.depth };
+
   for (let depth = $from.depth; depth >= 0; depth--) {
     const node = $from.node(depth);
     const id = node.attrs?.blockId as string | undefined;

@@ -396,3 +396,53 @@ describe('provisional ids', () => {
     expect([...idsOf(parsed(edited))]).toContain(target);
   });
 });
+
+/**
+ * An error message is only useful if it carries a fix that is actually the fix.
+ *
+ * The suggestion machinery used to fall back to "the first key in the object",
+ * which produced `gap-7 → try gap-0` — the single worst answer available — and
+ * answered `text-justify` with a sentence about the colour palette. A wrong
+ * suggestion is worse than none, because the next attempt is another guess.
+ */
+describe('what an error says to do next', () => {
+  function messageFor(name: string): string {
+    const resolved = resolveClass(name);
+    if (resolved.ok) throw new Error(`expected \`${name}\` to be refused`);
+    return resolved.message;
+  }
+
+  it('suggests the nearest spacing step, not the first one', () => {
+    expect(messageFor('gap-7')).toContain('gap-6');
+    expect(messageFor('gap-9')).toContain('gap-8');
+    expect(messageFor('p-100')).toContain('p-24');
+  });
+
+  it('answers an alignment mistake with alignments', () => {
+    const message = messageFor('text-justify');
+    expect(message).toContain('text-left');
+    expect(message).not.toContain('palette');
+  });
+
+  it('shows the palette when there is no near colour to name', () => {
+    const message = messageFor('bg-chartreuse');
+    expect(message).toContain('role');
+    expect(message).toContain('galley design classes');
+  });
+
+  it.each([
+    ['a border thicker than a border gets', 'border-999'],
+    ['an opacity above opaque', 'opacity-999'],
+    ['a size larger than any frame', 'w-99999'],
+  ])('bounds %s', (_name, className) => {
+    // Each of these resolved silently before — numeric escapes that had slipped
+    // past the "no literals" rule with nobody arguing for them.
+    expect(resolveClass(className).ok).toBe(false);
+  });
+
+  it('still accepts the values inside those bounds', () => {
+    for (const className of ['border-2', 'opacity-60', 'w-320', 'h-44']) {
+      expect(resolveClass(className).ok, className).toBe(true);
+    }
+  });
+});

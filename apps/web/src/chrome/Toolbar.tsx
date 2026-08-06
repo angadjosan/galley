@@ -84,6 +84,8 @@ export interface ToolbarProps {
 export function Toolbar(props: ToolbarProps): JSX.Element {
   const { state, readOnly } = props;
   const bar = useRef<HTMLDivElement>(null);
+  /** Measured group widths, by id, filled in the first time all of them fit. */
+  const widths = useRef<Record<string, number>>({});
   const [collapsed, setCollapsed] = useState(0);
   const [overflowOpen, setOverflowOpen] = useState(false);
 
@@ -98,25 +100,48 @@ export function Toolbar(props: ToolbarProps): JSX.Element {
     const node = bar.current;
     if (!node) return;
     const measure = (): void => {
+      // Real widths, taken from the DOM the first time every group is on the
+      // bar. Hard-coded estimates ran about 8% high and reserved room for the
+      // overflow button even when nothing overflowed, so a whole group
+      // collapsed roughly 100px before it needed to.
+      const rendered = Array.from(node.querySelectorAll<HTMLElement>(':scope > .tb-group'));
+      if (collapsed === 0 && rendered.length === groups.length) {
+        rendered.forEach((element, index) => {
+          widths.current[groups[index]!.id] = element.getBoundingClientRect().width;
+        });
+      }
+      const widthOf = (group: Group): number => widths.current[group.id] ?? group.width;
+
+      // Reserve room for the ⋯ button only once something has actually
+      // overflowed, which is what makes the threshold the width that is really
+      // needed rather than that width plus a button nobody can see.
+      const total = groups.reduce((sum, group) => sum + widthOf(group), 0);
+      if (total <= node.clientWidth) {
+        setCollapsed(0);
+        return;
+      }
       const available = node.clientWidth - OVERFLOW_BUTTON_WIDTH;
       let used = 0;
       let fits = groups.length;
       for (let i = 0; i < groups.length; i++) {
-        used += groups[i]!.width;
+        used += widthOf(groups[i]!);
         if (used > available) {
           fits = i;
           break;
         }
       }
-      // Never collapse the first group: undo and the style menu are the two
-      // controls that must be reachable at any width.
+      // Never collapse the first two: undo and the style menu are the controls
+      // that must be reachable at any width.
       setCollapsed(Math.max(0, groups.length - Math.max(2, fits)));
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [groups.length]);
+    // `collapsed` is read inside `measure` to decide whether the bar is
+    // currently showing every group, which is the only moment the measurement
+    // is valid.
+  }, [groups.length, collapsed]);
 
   useEffect(() => {
     if (!overflowOpen) return;
@@ -206,7 +231,7 @@ const OVERFLOW_BUTTON_WIDTH = 46;
 
 interface Group {
   readonly id: string;
-  /** Approximate rendered width, for the overflow calculation. */
+  /** A first guess, used only until the group has been measured once. */
   readonly width: number;
   render(state: EditorState | null, readOnly: boolean): ReactNode;
 }

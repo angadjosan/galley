@@ -315,9 +315,12 @@ function buildMenus(props: MenuBarProps): Menu[] {
         app('share', 'Share', props.onShare),
         app('history', 'Version history', props.onHistory),
         separator('f2'),
-        // Named for what it produces, not for the format's reputation. Someone
-        // who does not know what Markdown is still knows what "for an agent"
-        // means in this product, because it is the reason they are here.
+        // The two places the format is allowed to be named, and the only two.
+        // Someone reaching for these has decided to take the document
+        // somewhere else, and at that moment the format is the thing they need
+        // to know — everywhere else in the app it is an implementation detail
+        // and naming it would be a leak. A comment used to sit here arguing for
+        // a label the code did not use; the labels are the decision.
         app('copy', 'Copy as Markdown', props.onCopyMarkdown),
         app('download', 'Download (.md)', props.onDownload),
         separator('f3'),

@@ -102,7 +102,6 @@ export class DiagramView implements NodeView {
     const wasSelected = this.dom.classList.contains('is-selected');
     this.node = node;
     if (node.attrs.blockId) this.dom.setAttribute('data-block-id', String(node.attrs.blockId));
-    this.dom.style.setProperty('--diagram-width', `${Math.round(Number(node.attrs.width ?? 1) * 100)}%`);
     if (wasSelected) this.dom.classList.add('is-selected');
     if (String(node.attrs.code ?? '') !== this.drawn) this.draw();
     return true;

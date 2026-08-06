@@ -53,8 +53,6 @@ export interface EditorHandle {
   openLink(): void;
   /** Start a comment on the current selection. */
   openComment(): void;
-  /** The diagram the caret is in, for "Edit diagram" in a menu. */
-  editDiagramAtSelection(): void;
   focus(): void;
 }
 
@@ -162,6 +160,11 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
     const { from, to, empty } = editor.state.selection;
     const block = activeBlock(editor.state);
     if (!block) return;
+    // `activeBlock` walks *up* from the caret, and a node selection on an atom
+    // resolves before the node — so a selected diagram was never in the
+    // ancestor chain, the selection was non-empty enough for the margin button
+    // to appear, and clicking it did nothing at all. `activeBlock` handles the
+    // node-selection case now; this is the note explaining why it has to.
     const quoted = empty ? '' : editor.state.doc.textBetween(from, to, ' ');
     // Character offsets within the block, so the note highlights the sentence
     // that was selected rather than the paragraph containing it. Measured from
@@ -186,6 +189,10 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
     if (!host.current) return;
     const initial = markdownToDoc(callbacks.current.markdown);
     loaded.current = initial;
+    // The panel holds a raw position, and a rebuild is exactly the event that
+    // invalidates one. Leaving it open would let an edit land on whichever
+    // diagram now occupies that offset.
+    setDiagramEdit(null);
 
     const state = EditorState.create({
       doc: initial.doc,
@@ -383,29 +390,6 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
       openComment: () => {
         view.current?.focus();
         requestComment();
-      },
-      editDiagramAtSelection: () => {
-        const editor = view.current;
-        if (!editor) return;
-        const diagramType = schema.nodes.diagram;
-        if (!diagramType) return;
-        const { $from } = editor.state.selection;
-        // A diagram is an atom, so the selection is either *on* it — a node
-        // selection, where it is the node just after the anchor — or nowhere
-        // near it. There is no "inside".
-        const candidates: { node: ReturnType<typeof editor.state.doc.nodeAt>; pos: number }[] = [
-          { node: $from.nodeAfter, pos: $from.pos },
-          { node: $from.depth > 0 ? $from.node($from.depth) : null, pos: $from.depth > 0 ? $from.before($from.depth) : 0 },
-        ];
-        for (const candidate of candidates) {
-          if (!candidate.node || candidate.node.type !== diagramType) continue;
-          setDiagramEdit({
-            pos: candidate.pos,
-            code: String(candidate.node.attrs.code ?? ''),
-            lang: String(candidate.node.attrs.lang ?? 'mermaid'),
-          });
-          return;
-        }
       },
       focus: () => view.current?.focus(),
     }),
