@@ -524,3 +524,104 @@ describe('pull mirrors images', () => {
     expect(content).not.toContain('../assets/');
   });
 });
+
+describe('design apply', () => {
+  const CARD = `# Card
+
+\`\`\`design
+<design name="Card">
+  <frame name="Card" width="320" class="flex flex-col gap-3 p-4 bg-canvas">
+    <text name="Title" class="text-h3 text-fg">Checkout v2</text>
+    <box name="Button" class="flex items-center justify-center h-40 bg-accent rounded-md">
+      <text name="Label" class="text-body text-on-accent">Open</text>
+    </box>
+  </frame>
+</design>
+\`\`\`
+`;
+
+  async function withDesign(): Promise<void> {
+    await ctx.server.workspace.create('designs/card', CARD, { id: 'u-priya', kind: 'human', name: 'priya' });
+  }
+
+  async function listed(path: string): Promise<{ ops: { kind: string }[]; rationale: string }[]> {
+    const result = await galley('suggestions', path, '--json');
+    return JSON.parse(result.out) as { ops: { kind: string }[]; rationale: string }[];
+  }
+
+  function opsFile(name: string, ops: unknown): string {
+    const file = join(ctx.root, name);
+    writeFileSync(file, JSON.stringify(ops));
+    return file;
+  }
+
+  it('turns ops into an ordinary block-scoped suggestion', async () => {
+    // The whole shape of the feature: an agent sends the same ops the canvas
+    // produces, and what comes out the other end is the suggestion prose
+    // already had — so review, attribution and history are one implementation.
+    await withDesign();
+    const file = opsFile(
+      'edit.json',
+      [{ intent: 'say what it opens', op: { op: 'set-text', id: 'l_0_1_0', content: 'Open the order' } }],
+    );
+
+    const result = await galley('design', 'apply', 'designs/card', '--ops', file);
+    expect(result.code).toBe(0);
+
+    const pending = await listed('designs/card');
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.ops[0]!.kind).toBe('replace');
+    // The intent becomes the rationale, because a reviewer reading a diff of
+    // class names has no other way to learn what it was for.
+    expect(pending[0]!.rationale).toBe('say what it opens');
+    // And nothing was written: a proposal is a proposal.
+    expect(await (await ctx.server.workspace.openByPath('designs/card')).read()).toContain('>Open<');
+  });
+
+  it('refuses a change that would make something unreadable', async () => {
+    // The check that has no equivalent in a text patch. The op is well-formed,
+    // the class is real, and the result is a label nobody can see.
+    await withDesign();
+    const file = opsFile('bad.json', [
+      { op: 'set-classes', id: 'l_0_1_0', classes: ['text-body', 'text-accent'] },
+    ]);
+
+    const result = await galley('design', 'apply', 'designs/card', '--ops', file);
+    expect(result.code).toBe(1);
+    expect(result.err).toMatch(/would break something/);
+    expect(result.err, 'the refusal has to carry the number and the fix').toMatch(/needs 4.5:1/);
+    expect(await listed('designs/card')).toHaveLength(0);
+  });
+
+  it('names the op that was malformed before it reads the document', async () => {
+    const file = opsFile('junk.json', [{ op: 'set-colour', id: 'l_0' }]);
+    const result = await galley('design', 'apply', 'designs/nothing-here', '--ops', file);
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/`set-colour` is not an op/);
+  });
+
+  it('prints the result and writes nothing on a dry run', async () => {
+    await withDesign();
+    const file = opsFile('dry.json', [{ op: 'set-name', id: 'l_0_1', name: 'Primary button' }]);
+
+    const result = await galley('design', 'apply', 'designs/card', '--ops', file, '--dry-run');
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('Primary button');
+    expect(await listed('designs/card')).toHaveLength(0);
+  });
+
+  it('refuses to touch a design it could not read', async () => {
+    // Applying ops to a half-understood tree writes the misunderstanding to
+    // disk, and the parser's own message is better than anything invented here.
+    await ctx.server.workspace.create(
+      'designs/broken',
+      '# Broken\n\n```design\n<design name="x"><frame width="320"><box class="flex"></frame></design>\n```\n',
+      { id: 'u-priya', kind: 'human', name: 'priya' },
+    );
+    const file = opsFile('any.json', [{ op: 'set-name', id: 'l_0', name: 'Anything' }]);
+
+    const result = await galley('design', 'apply', 'designs/broken', '--ops', file);
+    expect(result.code).toBe(1);
+    expect(result.err).toMatch(/line \d+:/);
+  });
+});
