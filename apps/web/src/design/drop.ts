@@ -38,6 +38,12 @@ export interface DropInput {
   readonly draggedId: LayerId;
   /** The slot resolved on the previous frame, for hysteresis. */
   readonly previous: DropTarget | null;
+  /**
+   * The edge band, in canvas units. The caller divides `EDGE_INSET` by the zoom
+   * so the band stays the same size under the hand at every magnification —
+   * six canvas units is three pixels at 50%, which is a band nobody can hit.
+   */
+  readonly inset?: number;
 }
 
 /**
@@ -50,7 +56,7 @@ export interface DropInput {
  * cases. Lifted from Puck, which uses 6 screen pixels; Craft.js does the mirror
  * image with a 10px outset, but the inset composes and the outset does not.
  *
- * In canvas units, so the caller divides by zoom before calling.
+ * Screen pixels. Divide by the zoom to get the `inset` a call wants.
  */
 export const EDGE_INSET = 6;
 
@@ -132,15 +138,16 @@ export function resolveDrop(input: DropInput, direction: 1 | -1 = 1): DropTarget
 
   // Into this box, or beside it? The outer band belongs to the parent.
   const rect = input.rects.get(hit.id);
+  const band = input.inset ?? EDGE_INSET;
   const inside =
     canHold(hit) &&
     rect !== undefined &&
     containsPoint(
       {
-        x: rect.x + EDGE_INSET,
-        y: rect.y + EDGE_INSET,
-        width: Math.max(0, rect.width - EDGE_INSET * 2),
-        height: Math.max(0, rect.height - EDGE_INSET * 2),
+        x: rect.x + band,
+        y: rect.y + band,
+        width: Math.max(0, rect.width - band * 2),
+        height: Math.max(0, rect.height - band * 2),
       },
       input.pointer,
     );
@@ -204,4 +211,76 @@ export function sameTarget(a: DropTarget | null, b: DropTarget | null): boolean 
 export function moveIndex(from: { parentId: LayerId; index: number }, to: DropTarget): number {
   if (from.parentId !== to.parentId) return to.index;
   return to.index > from.index ? to.index - 1 : to.index;
+}
+
+/**
+ * The line to draw for a slot, in canvas space.
+ *
+ * The drop indicator is the *only* feedback during a drag that says where the
+ * thing will land, and every research stream said the same thing about it: it
+ * must sit between two children rather than around one, because "inside this
+ * box" and "after this box" look identical when both are drawn as a highlight.
+ *
+ * A line rather than a rect, so the overlay can stroke it at a constant screen
+ * width — a 2px indicator scaled to 0.5px at 50% zoom is an indicator nobody
+ * can see, which is the failure mode of drawing chrome inside the transform.
+ */
+export interface DropLine {
+  readonly x1: number;
+  readonly y1: number;
+  readonly x2: number;
+  readonly y2: number;
+}
+
+export function dropLine(
+  design: DesignDocument,
+  rects: ReadonlyMap<LayerId, Rect>,
+  target: DropTarget,
+): DropLine | null {
+  const parent = findHolder(design, target.parentId);
+  const parentRect = rects.get(target.parentId);
+  if (!parent || !parentRect) return null;
+
+  const axis = axisOf(parent);
+  const children = childrenOf(parent);
+  const measured = children.map((child) => rects.get(child.id)).filter((rect): rect is Rect => rect !== undefined);
+
+  // An empty container has no gap to point at, so the line goes across its
+  // middle: the honest picture of "it will be the only thing in here".
+  if (measured.length === 0) {
+    const inset = Math.min(8, parentRect.width / 4, parentRect.height / 4);
+    return axis === 'x'
+      ? { x1: parentRect.x + parentRect.width / 2, y1: parentRect.y + inset, x2: parentRect.x + parentRect.width / 2, y2: parentRect.y + parentRect.height - inset }
+      : { x1: parentRect.x + inset, y1: parentRect.y + parentRect.height / 2, x2: parentRect.x + parentRect.width - inset, y2: parentRect.y + parentRect.height / 2 };
+  }
+
+  // Before child N, or after the last one. Clamped rather than trusted: the
+  // index is expressed against the live child list, which may contain layers
+  // whose rects have not been measured yet.
+  const at = Math.max(0, Math.min(target.index, measured.length));
+  const before = at < measured.length ? measured[at]! : null;
+  const after = measured[Math.max(0, at - 1)]!;
+  const along = before ? (axis === 'x' ? before.x : before.y) : axis === 'x' ? after.x + after.width : after.y + after.height;
+
+  // Spanning the parent's cross extent rather than the child's, so the line
+  // reads as a slot in a list instead of an edge on one box.
+  return axis === 'x'
+    ? { x1: along, y1: parentRect.y, x2: along, y2: parentRect.y + parentRect.height }
+    : { x1: parentRect.x, y1: along, x2: parentRect.x + parentRect.width, y2: along };
+}
+
+function findHolder(design: DesignDocument, id: LayerId): Holder | null {
+  const search = (node: Holder): Holder | null => {
+    if (node.id === id) return node;
+    for (const child of childrenOf(node)) {
+      const found = search(child);
+      if (found) return found;
+    }
+    return null;
+  };
+  for (const frame of design.frames) {
+    const found = search(frame);
+    if (found) return found;
+  }
+  return null;
 }

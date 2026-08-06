@@ -816,4 +816,68 @@ test.describe('designs', () => {
     // Still a fence, so it degrades to legible source anywhere else.
     expect(source).toContain('```design');
   });
+
+  test('the canvas selects the way a design tool does, and a drag is a move', async ({ page }) => {
+    await openWorkspace(page);
+    await page.getByTestId('doc-specs/checkout-v2').click();
+    await caretAtEndOf(page, '.prose > p[data-block-id]');
+    await page.getByRole('button', { name: 'Insert design', exact: true }).click();
+    await page.getByTestId('design-form').click();
+    const chip = page.locator('.prose a[title="design"]');
+    await expect(chip).toBeVisible();
+    const designPath = (await chip.first().getAttribute('href')) ?? '';
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    await page.reload();
+    // By path, not by name: this suite creates more than one design and they
+    // are all called the same thing.
+    await page.getByTestId(`doc-${designPath}`).click();
+    const stage = page.getByTestId('design-stage');
+    await expect(stage).toBeVisible();
+
+    // A click on the label inside the button selects the *button* — the whole
+    // question a click has to answer, since three ancestors are under the
+    // pointer. The frame is transparent: it is an artboard, not a group.
+    await page.locator('.design-layer', { hasText: 'Pay $42.00' }).last().click();
+    await expect(stage).toHaveAttribute('data-focus', '');
+    const buttonId = (await stage.getAttribute('data-selected')) ?? '';
+    expect(buttonId, 'the click selected nothing').not.toBe('');
+    await expect(page.locator('.inspector-field input').first()).toHaveValue('Pay button');
+
+    // Double-click goes one level in, and now the label is what a click gets.
+    await page.locator('.design-layer', { hasText: 'Pay $42.00' }).last().dblclick();
+    await expect(stage).toHaveAttribute('data-focus', buttonId);
+    expect(await stage.getAttribute('data-selected')).not.toBe(buttonId);
+
+    // Escape comes back out — the exact inverse, so the pair is learnable.
+    await page.keyboard.press('Escape');
+    await expect(stage).toHaveAttribute('data-focus', '');
+    await expect(stage).toHaveAttribute('data-selected', buttonId);
+
+    // Drag the pay button up to the top of the form. Grabbed by its edge band,
+    // which is the part of a box that belongs to its parent.
+    const button = await page.locator('.design-layer', { hasText: 'Pay $42.00' }).first().boundingBox();
+    const heading = await page.locator('.design-layer', { hasText: 'Payment' }).last().boundingBox();
+    if (!button || !heading) throw new Error('the design did not render');
+    await page.mouse.move(button.x + button.width / 2, button.y + 2);
+    await page.mouse.down();
+    for (let step = 1; step <= 14; step++) {
+      const y = button.y + 2 + (heading.y - 4 - (button.y + 2)) * (step / 14);
+      await page.mouse.move(button.x + button.width / 2, y);
+      await page.waitForTimeout(16);
+    }
+    // The indicator is a line *between* two children, not a box around one:
+    // "inside this" and "after this" look identical when both are a highlight.
+    await expect(page.locator('.design-overlay-drop')).toBeAttached();
+    await page.mouse.up();
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    // A drag produced a move, in the same op vocabulary an agent would send —
+    // and the file says so.
+    const source = await readAsAgent(designPath);
+    const payAt = source.indexOf('Pay $42.00');
+    const cardAt = source.indexOf('Card number');
+    expect(payAt, 'the pay button is gone from the design').toBeGreaterThan(-1);
+    expect(payAt, 'the drag did not reorder the layers').toBeLessThan(cardAt);
+  });
 });

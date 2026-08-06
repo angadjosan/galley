@@ -2619,12 +2619,147 @@ kbd {
 }
 
 .design-canvas {
-  overflow: auto;
-  padding: 40px;
   min-height: 0;
   display: flex;
-  justify-content: center;
-  align-items: flex-start;
+  overflow: hidden;
+}
+
+/* The stage owns its own scrolling, through the camera rather than through the
+   scrollbars: a transform and a scroll position that both move the content are
+   two sources of truth, and every overlay would have to subtract both. */
+.design-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  touch-action: none;
+  background: var(--desk);
+  cursor: default;
+  /* A drag across a design must not select its words. The canvas is a picture
+     of the design; the words are edited in the inspector, and a blue smear of
+     selected text across three cards is the unmistakable sign of a builder
+     that forgot it was one. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.design-stage.is-panning {
+  cursor: grab;
+}
+
+.design-stage.is-dragging {
+  cursor: grabbing;
+}
+
+.design-stage-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 40px;
+  will-change: transform;
+}
+
+/* The dragged layer stays where it is, faded. Removing it reflows everything,
+   so every measurement taken after would describe a layout that will not exist
+   if the drag is cancelled. */
+.design-layer.is-ghost {
+  opacity: 0.4;
+}
+
+/* Chrome, drawn over the design in viewport space so it never scales with the
+   zoom and never changes the layout it is describing. */
+.design-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.design-overlay rect,
+.design-overlay line,
+.design-overlay path {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.design-overlay-hover {
+  stroke: var(--accent-line);
+  stroke-width: 1;
+}
+
+.design-overlay-selected {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.design-overlay-ticks path {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+/* "You are in here" — outside the container's edge, so it does not read as a
+   second selection on the container itself. */
+.design-overlay-focus {
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.5;
+}
+
+.design-overlay-anchor {
+  stroke: var(--warn);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+
+/* Between two children, never around one: "inside this box" and "after this
+   box" look identical when both are drawn as a highlight. */
+.design-overlay-drop {
+  stroke: var(--accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.design-overlay-marquee {
+  stroke: var(--accent);
+  stroke-width: 1;
+  fill: var(--accent);
+  fill-opacity: 0.08;
+}
+
+.design-zoom {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--page);
+  box-shadow: var(--sh-card);
+  overflow: hidden;
+}
+
+.design-zoom button {
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  padding: 4px 9px;
+  cursor: pointer;
+  min-width: 30px;
+}
+
+.design-zoom button:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.design-zoom button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .design-frames {
@@ -2644,24 +2779,12 @@ kbd {
   box-shadow: var(--sh-page);
 }
 
-/* Selection is an outline drawn *outside* the layer, never a border: a border
-   changes the box the design describes, so selecting something would move
-   everything around it. */
-.design-layer.is-hovered,
-.design-surface.is-hovered {
-  outline: 1px solid var(--accent-line);
-  outline-offset: 0;
-}
-
-.design-layer.is-selected,
-.design-surface.is-selected {
-  outline: 2px solid var(--accent);
-  outline-offset: 0;
-}
-
-/* Something is anchored here -- a note, a citation -- so this layer's id is in
-   the file and has to survive an edit. */
-.design-layer.is-anchored {
+/* In an embedded preview there is no overlay, so an anchor is still an
+   outline. Drawn outside the layer rather than as a border: a border changes
+   the box the design describes, so marking something would move everything
+   around it. */
+.design-preview-frames .design-layer.is-anchored,
+.design-preview-frames .design-surface.is-anchored {
   outline: 1px dashed var(--warn);
 }
 

@@ -26,14 +26,16 @@ export interface RenderOptions {
    * property and not the viewer's.
    */
   readonly mode?: string;
-  readonly selectedId?: string | null;
-  readonly hoveredId?: string | null;
   /** Layers something is anchored to, drawn with a persistent marker. */
   readonly anchored?: ReadonlySet<string>;
-  readonly onSelect?: (id: string) => void;
-  readonly onHover?: (id: string | null) => void;
-  /** Read-only embeds skip every interaction handler and every outline. */
-  readonly interactive?: boolean;
+  /**
+   * The layer being dragged, drawn faded in place.
+   *
+   * Ghosted rather than removed: taking it out of the tree reflows everything,
+   * so every measurement taken afterwards would describe a layout that will not
+   * exist if the drag is cancelled.
+   */
+  readonly ghostId?: string | null;
 }
 
 /**
@@ -79,7 +81,7 @@ function FrameView({ frame, options }: { frame: Frame; options: RenderOptions })
     <figure className="design-frame">
       <figcaption className="design-frame-name">{frame.name}</figcaption>
       <div
-        className={outlineClass('design-surface', frame.id, options)}
+        className={layerClass('design-surface', frame.id, options)}
         data-layer-id={frame.id}
         data-mode={options.mode}
         style={{
@@ -88,8 +90,6 @@ function FrameView({ frame, options }: { frame: Frame; options: RenderOptions })
           minHeight: frame.height === 'auto' ? 48 : undefined,
           ...styleOf(frame.classes),
         }}
-        onClick={interaction(frame.id, options)}
-        onMouseOver={hover(frame.id, options)}
       >
         {frame.children.map((child) => (
           <LayerView key={child.id} layer={child} options={options} />
@@ -102,10 +102,8 @@ function FrameView({ frame, options }: { frame: Frame; options: RenderOptions })
 function LayerView({ layer, options }: { layer: Layer; options: RenderOptions }): JSX.Element {
   const shared = {
     'data-layer-id': layer.id,
-    className: outlineClass('design-layer', layer.id, options),
+    className: layerClass('design-layer', layer.id, options),
     style: styleOf(layer.classes),
-    onClick: interaction(layer.id, options),
-    onMouseOver: hover(layer.id, options),
   };
 
   if (layer.kind === 'text') {
@@ -126,32 +124,9 @@ function LayerView({ layer, options }: { layer: Layer; options: RenderOptions })
   );
 }
 
-function outlineClass(base: string, id: string, options: RenderOptions): string {
-  if (!options.interactive) {
-    return options.anchored?.has(id) ? `${base} is-anchored` : base;
-  }
+function layerClass(base: string, id: string, options: RenderOptions): string {
   const parts = [base];
-  if (options.selectedId === id) parts.push('is-selected');
-  if (options.hoveredId === id) parts.push('is-hovered');
   if (options.anchored?.has(id)) parts.push('is-anchored');
+  if (options.ghostId === id) parts.push('is-ghost');
   return parts.join(' ');
-}
-
-function interaction(id: string, options: RenderOptions): ((event: React.MouseEvent) => void) | undefined {
-  if (!options.interactive || !options.onSelect) return undefined;
-  return (event) => {
-    // The innermost layer under the pointer wins. Without this a click lands on
-    // every ancestor on the way up and the outermost frame ends up selected,
-    // which makes nesting impossible to work with.
-    event.stopPropagation();
-    options.onSelect?.(id);
-  };
-}
-
-function hover(id: string, options: RenderOptions): ((event: React.MouseEvent) => void) | undefined {
-  if (!options.interactive || !options.onHover) return undefined;
-  return (event) => {
-    event.stopPropagation();
-    options.onHover?.(id);
-  };
 }

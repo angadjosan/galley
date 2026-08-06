@@ -55,11 +55,13 @@ const NESTED = design(
 );
 
 describe('which ancestor a click meant', () => {
-  it('lands on the frame at the top level', () => {
-    // Nothing inside a frame is reachable until you go in. This is the rule
-    // that makes the first click on a design predictable rather than depending
-    // on exactly which pixel was under the pointer.
-    expect(resolveClick(NESTED, 'l_0_0_0_0', null)).toBe('l_0');
+  it('sees through the frame at the top level', () => {
+    // A frame is an artboard, not a group. Making it opaque would mean a
+    // double-click before every first edit, every time, to reach a level
+    // nobody thinks of as nested — so its children are selectable from the
+    // start, and its own background is what selects the frame.
+    expect(resolveClick(NESTED, 'l_0_0_0_0', null)).toBe('l_0_0');
+    expect(resolveClick(NESTED, 'l_0', null)).toBe('l_0');
   });
 
   it.each([
@@ -110,8 +112,8 @@ describe('modifiers', () => {
 
 describe('going in and coming out', () => {
   it('enters the selected container, landing on what the pointer was over', () => {
-    const selected: Selection = { focus: null, ids: ['l_0'] };
-    expect(enterSelection(NESTED, selected, 'l_0_0_0_0')).toEqual({ focus: 'l_0', ids: ['l_0_0'] });
+    const selected: Selection = { focus: null, ids: ['l_0_0'] };
+    expect(enterSelection(NESTED, selected, 'l_0_0_0_0')).toEqual({ focus: 'l_0_0', ids: ['l_0_0_0'] });
   });
 
   it('enters onto the first child when there is no pointer', () => {
@@ -121,18 +123,22 @@ describe('going in and coming out', () => {
     });
   });
 
-  it('refuses to enter a leaf', () => {
+  it('refuses to enter a leaf, an empty box, or a frame', () => {
     // Double-clicking text means *edit the words*; there is nothing to be
-    // inside, and entering an empty container would strand the selection.
+    // inside, entering an empty container would strand the selection, and a
+    // frame is transparent already — "inside it" is where we are.
     const onText: Selection = { focus: 'l_0_0_0', ids: ['l_0_0_0_0'] };
     expect(enterSelection(NESTED, onText)).toBe(onText);
     const onEmpty: Selection = { focus: 'l_0', ids: ['l_0_1'] };
     expect(enterSelection(NESTED, onEmpty)).toBe(onEmpty);
+    const onFrame: Selection = { focus: null, ids: ['l_0'] };
+    expect(enterSelection(NESTED, onFrame)).toBe(onFrame);
   });
 
   it('is its own inverse — entering then leaving is where you started', () => {
-    const start: Selection = { focus: null, ids: ['l_0'] };
-    const inside = enterSelection(NESTED, start, 'l_0_0');
+    const start: Selection = { focus: null, ids: ['l_0_0'] };
+    const inside = enterSelection(NESTED, start, 'l_0_0_0');
+    expect(inside.focus).toBe('l_0_0');
     expect(exitSelection(NESTED, inside)).toEqual(start);
   });
 
@@ -143,10 +149,10 @@ describe('going in and coming out', () => {
       selection = exitSelection(NESTED, selection);
       seen.push(selection === null ? 'closed' : selection.focus);
     }
-    // Inside the button → inside the card → the frame selected → nothing
-    // selected → close. One press per level, no press that does nothing, and
-    // the caller only has to handle the last one.
-    expect(seen).toEqual(['l_0_0', 'l_0', null, null, 'closed']);
+    // Inside the button → inside the card → the top level with the card
+    // selected → nothing selected → close. One press per level, no press that
+    // does nothing, and the caller only has to handle the last one.
+    expect(seen).toEqual(['l_0_0', null, null, 'closed']);
   });
 });
 
@@ -172,8 +178,13 @@ describe('the marquee', () => {
     expect(caught.ids).not.toContain('l_0_0_0');
   });
 
-  it('catches frames at the top level', () => {
-    expect(marqueeSelect(NESTED, null, rects, { x: 0, y: 0, width: 10, height: 10 }).ids).toEqual(['l_0']);
+  it('catches through the frame at the top level', () => {
+    // Same transparency as a click: brushing a design catches its cards, not
+    // the one artboard they all sit on.
+    expect(marqueeSelect(NESTED, null, rects, { x: 0, y: 0, width: 400, height: 200 }).ids).toEqual([
+      'l_0_0',
+      'l_0_1',
+    ]);
   });
 });
 
@@ -198,6 +209,9 @@ describe('what the canvas may highlight', () => {
   it('is exactly what a click could select', () => {
     expect(isSelectable(NESTED, 'l_0_0', 'l_0')).toBe(true);
     expect(isSelectable(NESTED, 'l_0_0_0', 'l_0')).toBe(false);
+    // Both the frame and its children, at the top level.
     expect(isSelectable(NESTED, 'l_0', null)).toBe(true);
+    expect(isSelectable(NESTED, 'l_0_0', null)).toBe(true);
+    expect(isSelectable(NESTED, 'l_0_0_0', null)).toBe(false);
   });
 });

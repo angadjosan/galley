@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react';
+import { useCallback, useMemo, useRef, useState, type JSX } from 'react';
 import {
   VOCABULARY,
   applyOps,
@@ -14,7 +14,9 @@ import {
   type LintFinding,
   type NewLayer,
 } from '@galley/design';
-import { DesignView } from './render.js';
+import { Stage } from './Stage.js';
+import { NOTHING, reconcile, type Selection } from './selection.js';
+import { parentOf } from './tree.js';
 
 /**
  * The design editor.
@@ -52,8 +54,14 @@ export interface DesignEditorProps {
 }
 
 export function DesignEditor(props: DesignEditorProps): JSX.Element {
-  const [selected, setSelected] = useState<string | null>(null);
-  const [hovered, setHovered] = useState<string | null>(null);
+  /**
+   * What is selected, and what container we are inside.
+   *
+   * One value rather than two pieces of state, because the pair has to change
+   * together — a selection that survives a change of focus is a selection the
+   * canvas will not let you click on.
+   */
+  const [rawSelection, setSelection] = useState<Selection>(NOTHING);
   const [showSource, setShowSource] = useState(false);
   /**
    * Which mode the canvas is drawing in.
@@ -70,7 +78,22 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
   const findings = useMemo(() => (design ? lintDesign(design) : []), [design]);
 
   const layers = useMemo(() => (design ? [...walk(design)] : []), [design]);
+  // Ids are position-derived, so a delete or a move renames layers nobody
+  // touched. Anything that no longer exists is dropped rather than left
+  // dangling, which is how an inspector ends up editing the wrong layer.
+  const selection = useMemo(() => (design ? reconcile(design, rawSelection) : rawSelection), [design, rawSelection]);
+  const selected = selection.ids.length === 1 ? selection.ids[0]! : null;
   const current = layers.find((entry) => entry.layer.id === selected)?.layer ?? null;
+
+  /** Select one layer from outside the canvas — the tree, a lint finding. */
+  const reveal = useCallback(
+    (id: string): void => {
+      // The focus follows, so the canvas will let the next click land on the
+      // same layer instead of resolving up to its container.
+      setSelection({ focus: design ? (parentOf(design, id)?.id ?? null) : null, ids: [id] });
+    },
+    [design],
+  );
 
   /**
    * Every change this editor makes, expressed as ops.
@@ -141,10 +164,13 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
           : { kind: 'box', name: 'Box', classes: ['flex', 'flex-col', 'gap-2', 'p-4', 'bg-surface', 'rounded-md'] };
 
       const where = placeFor(design, selected);
-      if (run([{ op: 'insert', parent: where.parent, index: where.index, layer: made }])) {
-        // Select what was just made, so the next thing typed lands on it. The
-        // id is positional, so it is knowable before the next read.
-        setSelected(idAfter(design, where.parent, where.index));
+      const grown = run([{ op: 'insert', parent: where.parent, index: where.index, layer: made }]);
+      if (grown) {
+        // Select what was just made, so the next thing typed lands on it. Read
+        // from the design that came back: appending puts the new layer past the
+        // end of the list the old one had, where there is no id to ask for.
+        const id = idAfter(grown, where.parent, where.index);
+        if (id) setSelection({ focus: where.parent, ids: [id] });
       }
     },
     [design, run, selected],
@@ -152,19 +178,27 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
 
   const remove = useCallback(() => {
     if (!selected) return;
-    if (run([{ op: 'delete', id: selected }])) setSelected(null);
+    if (run([{ op: 'delete', id: selected }])) setSelection((current) => ({ focus: current.focus, ids: [] }));
   }, [run, selected]);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        if (selected) setSelected(null);
-        else props.onClose();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [props, selected]);
+  /**
+   * A drag that landed, as the same `move` op an agent would send.
+   *
+   * The canvas and the agent speak one vocabulary, which is the whole point of
+   * having built the ops first: a drag is reviewable, undoable and attributable
+   * for free, and there is no second code path that can drift.
+   */
+  const moveLayer = useCallback(
+    (id: string, parent: string, index: number): void => {
+      const moved = run([{ op: 'move', id, parent, index }]);
+      // Positional ids: the layer that just moved is now called something else.
+      // Read the name from the design that came *back* — asking the old one
+      // gives the id of whatever used to be in that slot, or nothing at all,
+      // and either way the selection quietly disappears.
+      if (moved) setSelection({ focus: parent, ids: [idAfter(moved, parent, index) ?? id] });
+    },
+    [run],
+  );
 
   return (
     <div className="design-editor" data-testid="design-editor">
@@ -243,9 +277,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
                 findings.some((f) => f.layerId === layer.id) ? 'has-problem' : ''
               }`}
               style={{ paddingLeft: 10 + depth * 14 }}
-              onClick={() => setSelected(layer.id)}
-              onMouseEnter={() => setHovered(layer.id)}
-              onMouseLeave={() => setHovered(null)}
+              onClick={() => reveal(layer.id)}
             >
               <span className="design-tree-kind" aria-hidden="true">
                 {'kind' in layer ? KIND_GLYPH[layer.kind] : '▦'}
@@ -260,23 +292,17 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
           ))}
         </aside>
 
-        <div
-          className="design-canvas"
-          onClick={() => setSelected(null)}
-          onMouseLeave={() => setHovered(null)}
-        >
+        <div className="design-canvas">
           {design && (
-            <DesignView
+            <Stage
               design={design}
-              options={{
-                mode,
-                interactive: true,
-                selectedId: selected,
-                hoveredId: hovered,
-                anchored: props.anchored,
-                onSelect: setSelected,
-                onHover: setHovered,
-              }}
+              mode={mode}
+              readOnly={props.readOnly ?? false}
+              anchored={props.anchored}
+              selection={selection}
+              onSelection={setSelection}
+              onEscape={props.onClose}
+              onMove={moveLayer}
             />
           )}
         </div>
@@ -316,7 +342,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
           <ul>
             {findings.slice(0, 6).map((finding, index) => (
               <li key={index} className={`design-finding is-${finding.severity}`}>
-                <button type="button" onClick={() => finding.layerId && setSelected(finding.layerId)}>
+                <button type="button" onClick={() => finding.layerId && reveal(finding.layerId)}>
                   {finding.message}
                 </button>
               </li>

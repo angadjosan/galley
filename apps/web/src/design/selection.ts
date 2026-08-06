@@ -1,6 +1,6 @@
 import { find, type DesignDocument, type LayerId } from '@galley/design';
 import { intersects, type Rect } from './camera.js';
-import { ancestorsOf, canHold, childrenOf, isWithin, parentOf } from './tree.js';
+import { ancestorsOf, canHold, childrenOf, isFrame, isWithin, parentOf } from './tree.js';
 
 /**
  * What is selected, and what a click does about it.
@@ -17,7 +17,8 @@ import { ancestorsOf, canHold, childrenOf, isWithin, parentOf } from './tree.js'
  * are currently inside — and a plain click selects the child of *that* which
  * contains what you hit. So a first click lands on the card; entering the card
  * makes its children clickable; and until you enter, nothing inside can be
- * selected by accident.
+ * selected by accident. The one exception is the frame, which is an artboard
+ * rather than a group and so is transparent — see `atLevel`.
  *
  * The alternatives are both worse and both common. Selecting the innermost
  * element makes it impossible to grab a container without going to the layer
@@ -32,8 +33,8 @@ import { ancestorsOf, canHold, childrenOf, isWithin, parentOf } from './tree.js'
 
 export interface Selection {
   /**
-   * The container we are inside. Null is the top level, where frames are what
-   * you select.
+   * The container we are inside. Null is the top level, where the frames and
+   * their direct children are what you select.
    */
   readonly focus: LayerId | null;
   /** What is selected. Always siblings — see `addToSelection`. */
@@ -66,7 +67,26 @@ export function resolveClick(design: DesignDocument, hitId: LayerId, focus: Laye
   }
 
   const chain: LayerId[] = [hitId, ...ancestorsOf(design, hitId).map((node) => node.id)];
-  return chain.find((id) => (parentOf(design, id)?.id ?? null) === focus) ?? null;
+  return chain.find((id) => atLevel(design, id, focus)) ?? null;
+}
+
+/**
+ * Whether a layer sits at the level we are working at.
+ *
+ * The top level is the one place this is not simply "its parent is the focus":
+ * a **frame is transparent**. It is an artboard, not a group — it is where a
+ * design *is*, not something you go inside — so its children are selectable
+ * from the start, and only its own background selects the frame itself.
+ *
+ * Figma draws the same distinction and it is worth copying exactly: groups and
+ * components are entered, frames on the canvas are not. Making the artboard
+ * opaque would mean a double-click before every single first edit, every time,
+ * to reach a level nobody thinks of as nested.
+ */
+function atLevel(design: DesignDocument, id: LayerId, focus: LayerId | null): boolean {
+  const parentId = parentOf(design, id)?.id ?? null;
+  if (focus !== null) return parentId === focus;
+  return parentId === null || design.frames.some((frame) => frame.id === parentId);
 }
 
 /** What a click produces, all four modifier combinations in one place. */
@@ -127,7 +147,9 @@ export function enterSelection(design: DesignDocument, selection: Selection, hit
   const id = selection.ids.length === 1 ? selection.ids[0]! : null;
   if (!id) return selection;
   const node = find(design, id);
-  if (!canHold(node)) return selection;
+  // Nothing to enter on a leaf, and nothing to enter on a frame either: it is
+  // transparent already, so "inside it" is the level we are on.
+  if (!node || !canHold(node) || isFrame(node)) return selection;
 
   const children = childrenOf(node);
   if (children.length === 0) return selection;
@@ -146,7 +168,11 @@ export function enterSelection(design: DesignDocument, selection: Selection, hit
  */
 export function exitSelection(design: DesignDocument, selection: Selection): Selection | null {
   if (selection.focus === null) return selection.ids.length > 0 ? NOTHING : null;
-  return { focus: parentOf(design, selection.focus)?.id ?? null, ids: [selection.focus] };
+  const parent = parentOf(design, selection.focus);
+  // A frame is not a level, so leaving the outermost box lands at the top
+  // rather than in a state that behaves identically but compares differently.
+  const focus = parent && !isFrame(parent) ? parent.id : null;
+  return { focus, ids: [selection.focus] };
 }
 
 /**
@@ -168,8 +194,12 @@ export function marqueeSelect(
   rects: ReadonlyMap<LayerId, Rect>,
   box: Rect,
 ): Selection {
+  // At the top level the frames are transparent, so a brush catches their
+  // children — and an empty frame, which has nothing to catch instead.
   const candidates: readonly { id: LayerId }[] =
-    focus === null ? design.frames : childrenOf(find(design, focus));
+    focus === null
+      ? design.frames.flatMap((frame) => (frame.children.length > 0 ? [...frame.children] : [frame]))
+      : childrenOf(find(design, focus));
   const ids = candidates.filter((node) => {
     const rect = rects.get(node.id);
     return rect !== undefined && intersects(rect, box);
@@ -194,5 +224,5 @@ export function reconcile(design: DesignDocument, selection: Selection): Selecti
 
 /** Whether a layer is directly selectable right now — the click test, as data. */
 export function isSelectable(design: DesignDocument, id: LayerId, focus: LayerId | null): boolean {
-  return (parentOf(design, id)?.id ?? null) === focus;
+  return atLevel(design, id, focus);
 }
