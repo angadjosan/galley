@@ -1502,3 +1502,53 @@ Arrow keys **reorder**. Nudging is a coordinate gesture and there are no
 coordinates, so an arrow that moved a layer by a pixel would have nowhere to
 write the pixel down. Across the flow they do nothing rather than something
 arbitrary: in a row, up and down have no order to express.
+
+## D50 — An agent changes a design by sending ops, and the answer is "no worse"
+
+The write path is `galley design apply <path> --ops <file|->`, and its shape is
+the point: the ops are the same eight the canvas produces when someone drags a
+box, and what comes out is an **ordinary block-scoped suggestion**. Review,
+attribution and history are the ones prose already has. There is no second code
+path to drift.
+
+Three gates, and the middle one is the entire argument for having an op
+vocabulary rather than a text patch:
+
+1. **Is this an op at all** — shape, types, ranges, decided before the document
+   is read. Every message names the op's position and what was expected, because
+   the reader is a model that will try again, and "invalid input" guarantees the
+   second attempt is another guess.
+2. **Would applying it break something?** Not "is the design clean". A design
+   that already has four contrast failures must still be editable, and blaming
+   an agent for the other three is how a safety check becomes the thing everyone
+   turns off. The bar is *did this change make it worse* — which is a question
+   you cannot ask a text patch at all.
+3. **Is it small enough to read as a change** rather than as a replacement. A
+   delete costs its whole subtree, so a rewrite cannot hide behind a small op
+   count. Half the layers is the line.
+
+It also reports what the change **fixed**, which is the half a diff never shows:
+nobody reading eleven class swaps can see that one of them took a label from
+2.9:1 to 7:1.
+
+One thing the border refuses that the linter only warns about: an **inserted**
+image with no description. A warning is right for something already in the file;
+an image being added right now with no alt is a hole nobody will come back and
+fill, and the description is the only part of it the next agent can read.
+
+## D51 — The typecheck did not check the application
+
+Found while fixing the canvas: the root TypeScript project referenced every
+package and **not `apps/web`**. The entire user interface compiled only through
+Vite, which does not typecheck. Two undefined identifiers reached a running
+browser in a single session; both were caught by a person looking at a blank
+page, which is the most expensive way to find a `ReferenceError`.
+
+The reference is added and the three errors it surfaced are fixed. The rest of
+the application was already clean, which is the only reassuring part — but the
+lesson is that a green `typecheck` is a claim about *what it was pointed at*,
+and nobody had checked what that was.
+
+Cost of the omission, in one line: build output under `apps/web/dist-types` is
+tracked in git and now regenerates on every build. Worth untracking, and out of
+scope for the change that found it.
