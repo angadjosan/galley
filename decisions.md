@@ -1346,3 +1346,56 @@ the binding.
 2. **Anything with a popup, a keyboard contract or a controlled input has to be
    driven in a browser before it is believed.** Six of the worst findings were
    invisible to `tsc`, to 600 unit tests, and to a screenshot.
+
+---
+
+## D45 — The second review, and the shape a fix takes when it is wrong
+
+The three round-one reviewers found ~40 defects. A fourth was then pointed at
+the *fixes*, told to prove each one and to find what round one missed. It
+verified six of nine as correct — the toolbar's measured-width overflow was
+exercised across 102 container widths, a 2px sweep across the collapse boundary
+in both directions, and 120 rapid alternations, with zero residual DOM mutations
+at every sample — and found fourteen more defects.
+
+**The pattern in almost all of them: the guard was right and its assumption was
+not.**
+
+- `pathOf` skipped the first entry on the stack *assuming* it was the `<design>`
+  wrapper. A fragment without one gave a frame and its first child the same id.
+- The nesting refusal checked for a `<design>` *inside* a `<design>` and not for
+  one *beside* it, so two siblings merged into one named after the second.
+- "Words belong in a `<text>`" only fired when there was something to be inside
+  of, so words outside the design entirely were dropped in silence.
+- The menu bar's focus effect keyed on `openId`, *assuming* that a request to
+  enter a menu meant the menu was changing. Arrowing into one that was already
+  open set the same value, React bailed, and the effect never ran — an open,
+  visible, completely keyboard-dead menu.
+
+The lesson is narrower than "test more". Each of these was a **guard written
+against the case that prompted it**, generalised by hope rather than by
+argument. The three that took three attempts each are the same story told
+loudest:
+
+**A mark against a delimiter took three commits.** First `**a **` from a
+*partial* overlap; then the same shape from *crossing* marks; then again from a
+**hard break**, which serializes as two spaces and a newline and is therefore
+whitespace that does not look like whitespace. The first two fixes trimmed
+spaces. Only the third asked the right question — *what cannot sit against a
+delimiter?* — and the answer is a class, not a character.
+
+**Two things worth carrying forward:**
+
+1. **When a fix names a case, ask what class the case belongs to.** "Trim
+   trailing spaces" is a case. "Nothing that CommonMark's flanking rules
+   disqualify may touch a delimiter" is the class, and it was reachable on the
+   first attempt by reading the spec rather than the failing example.
+2. **Review the fixes, not just the code.** Six of nine held; three did not, and
+   two of those three were *worse* than what they replaced in some path. A fix
+   is a change like any other and deserves the same suspicion.
+
+A methodological note, because it cost real time: `apps/web/src/editor/diagram.ts`
+contained a literal NUL byte in a cache-key separator, which makes `grep -r`
+treat the file as binary and skip it entirely. A reviewer concluded a listener
+was never wired because the grep came back empty. It was wired. Never put a raw
+NUL in a source file.
