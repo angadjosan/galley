@@ -165,7 +165,11 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
             <button
               type="button"
               onClick={remove}
-              disabled={props.readOnly || !selected}
+              // A frame cannot be deleted — a design needs one — so the button
+              // is disabled rather than enabled and inert. An affordance that
+              // appears and does nothing is the failure this codebase keeps
+              // finding in its own work.
+              disabled={props.readOnly || !selected || design?.frames.some((frame) => frame.id === selected) === true}
               title="Delete the selected layer"
               className="design-tree-delete"
             >

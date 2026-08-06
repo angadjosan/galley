@@ -492,6 +492,57 @@ test.describe('accessibility and resilience', () => {
    * keymap; the keymap is derived from these labels now, so this checks the
    * derivation rather than a hand-written table.
    */
+  /**
+   * The keyboard failures a second review found, one test each.
+   *
+   * All five shared a shape: the guard was right and its assumption was not.
+   * Arrowing into a menu that was already open set the same state, React bailed
+   * out of the render, and the effect that moves focus never re-ran — leaving a
+   * menu that was open, visible, and completely keyboard-dead.
+   */
+  test('a menu stays usable after arrowing into it', async ({ page }) => {
+    await openSpec(page);
+    await page.getByTestId('menu-file').focus();
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('ArrowRight');
+
+    // Edit's entries are all disabled on a fresh document, so there is nothing
+    // to go inside — focus has to land on the trigger rather than on nothing.
+    await expect(page.getByTestId('menu-edit')).toBeFocused();
+
+    await page.keyboard.press('ArrowRight');
+    await expect(page.getByRole('menu', { name: 'Insert' })).toBeVisible();
+    // And this is the key one: the menu it arrived at still takes arrow keys.
+    await page.keyboard.press('ArrowDown');
+    await expect(page.getByRole('menuitem', { name: /Diagram/ })).toBeFocused();
+  });
+
+  test('a menu opened with the mouse still takes the keyboard', async ({ page }) => {
+    await openSpec(page);
+    // The trigger prevents default to keep the document's selection, which
+    // suppresses focus with it — so a mouse-opened menu was inert and Escape
+    // could not close it, because no element-level handler ever saw the key.
+    await page.getByTestId('menu-insert').click();
+    await expect(page.getByTestId('menu-insert')).toBeFocused();
+
+    await page.keyboard.press('ArrowDown');
+    await expect(page.getByRole('menuitem', { name: 'Image' })).toBeFocused();
+
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu', { name: 'Insert' })).toHaveCount(0);
+  });
+
+  test('a menu entry is never a tab stop', async ({ page }) => {
+    await openSpec(page);
+    await page.getByTestId('menu-format').click();
+    // Seventeen entries, and Tab used to walk every one of them and then land
+    // on the toolbar with the menu still open behind it.
+    const stops = await page
+      .locator('.menubar-entry')
+      .evaluateAll((nodes) => nodes.filter((node) => (node as HTMLElement).tabIndex === 0).length);
+    expect(stops).toBe(0);
+  });
+
   test('a shortcut the menu advertises is the shortcut that works', async ({ page }) => {
     await openSpec(page);
     // The first paragraph, whose position does not depend on what earlier

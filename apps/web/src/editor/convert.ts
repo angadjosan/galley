@@ -683,13 +683,12 @@ function wrapMark(mark: Mark, children: PhrasingContent[]): PhrasingContent[] {
   // This arrangement is not exotic: it is what any two marks that *cross* look
   // like, and crossing is unrepresentable in Markdown, so one of them has to be
   // split at a boundary that may well fall on a space.
-  const outer = liftEdgeSpace(children);
-  if (outer.lead || outer.trail) {
-    return [
-      ...(outer.lead ? [{ type: 'text' as const, value: outer.lead }] : []),
-      ...wrapMark(mark, outer.inner),
-      ...(outer.trail ? [{ type: 'text' as const, value: outer.trail }] : []),
-    ];
+  const outer = liftEdges(children);
+  if (outer.lead.length > 0 || outer.trail.length > 0) {
+    // Nothing but whitespace inside: there is no content to emphasise, so the
+    // mark is dropped rather than emitted as an empty pair.
+    if (outer.inner.length === 0) return [...outer.lead, ...outer.trail];
+    return [...outer.lead, ...wrapMark(mark, outer.inner), ...outer.trail];
   }
   switch (mark.type.name) {
     case 'strong':
@@ -719,42 +718,49 @@ function wrapMark(mark: Mark, children: PhrasingContent[]): PhrasingContent[] {
 }
 
 /**
- * Peel leading and trailing whitespace out of a run, to sit outside its
- * delimiters. Returns empty strings when there is none, so the caller's fast
- * path is a pair of falsy checks.
+ * Peel whitespace off both ends of a run, to sit outside its delimiters.
+ *
+ * "Whitespace" includes a **hard break**, which is the case this missed twice.
+ * A hard break serializes as two spaces and a newline, so a mark run beginning
+ * with one produces `**  \n`, and an opening `**` followed by whitespace cannot
+ * open — the same flanking rule that makes `**a **` four literal asterisks.
+ * Shift+Enter and then ⌘B is an ordinary thing to do, and it destroyed the
+ * emphasis on the *second* save.
  */
-function liftEdgeSpace(children: PhrasingContent[]): {
-  lead: string;
-  trail: string;
+function liftEdges(children: PhrasingContent[]): {
+  lead: PhrasingContent[];
+  trail: PhrasingContent[];
   inner: PhrasingContent[];
 } {
   const inner = [...children];
-  let lead = '';
-  let trail = '';
+  const lead: PhrasingContent[] = [];
+  const trail: PhrasingContent[] = [];
 
+  /** Whether this node cannot sit against a delimiter. */
+  const isEdgeSpace = (node: PhrasingContent | undefined): boolean =>
+    node?.type === 'break' || (node?.type === 'text' && /^\s*$/.test(node.value));
+
+  // Whole nodes first, from both ends.
+  while (inner.length > 0 && isEdgeSpace(inner[0])) lead.push(inner.shift()!);
+  while (inner.length > 0 && isEdgeSpace(inner[inner.length - 1])) trail.unshift(inner.pop()!);
+
+  // Then the whitespace *inside* the text nodes that now sit at each edge.
   const first = inner[0];
   if (first?.type === 'text') {
     const match = /^\s+/.exec(first.value);
     if (match) {
-      lead = match[0];
-      const rest = first.value.slice(lead.length);
-      if (rest) inner[0] = { ...first, value: rest };
-      else inner.shift();
+      lead.push({ type: 'text', value: match[0] });
+      inner[0] = { ...first, value: first.value.slice(match[0].length) };
     }
   }
   const last = inner[inner.length - 1];
   if (last?.type === 'text') {
     const match = /\s+$/.exec(last.value);
     if (match) {
-      trail = match[0];
-      const rest = last.value.slice(0, last.value.length - trail.length);
-      if (rest) inner[inner.length - 1] = { ...last, value: rest };
-      else inner.pop();
+      trail.unshift({ type: 'text', value: match[0] });
+      inner[inner.length - 1] = { ...last, value: last.value.slice(0, last.value.length - match[0].length) };
     }
   }
-  // A run that is *nothing but* whitespace has no content to emphasise, so the
-  // whole thing becomes text and the mark is dropped rather than emitted empty.
-  if (inner.length === 0) return { lead: lead + trail, trail: '', inner: [] };
   return { lead, trail, inner };
 }
 

@@ -221,6 +221,11 @@ function sweep(id: string): void {
 }
 
 export async function renderDiagram(lang: string, code: string): Promise<DiagramRender> {
+  // Separated by an escaped NUL, never a literal one. A literal NUL byte in a
+  // source file makes `grep -r` treat the whole file as binary and skip it,
+  // which cost a reviewer a false negative that nearly became a filed bug.
+  // Without *some* separator the parts run together and two different
+  // (lang, code) pairs can share a key.
   const key = `${prefersDark() ? 'dark' : 'light'} ${lang} ${code}`;
   const hit = cache.get(key);
   if (hit) return hit;

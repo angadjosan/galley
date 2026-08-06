@@ -33,17 +33,19 @@ export const designPreviewKey = new PluginKey<DesignSources>('galley-design-prev
 
 export const noDesigns: DesignSources = { byPath: new Map(), onOpen: () => undefined };
 
-/** Every path this document links to as a design. */
-export function designLinksIn(doc: { descendants(f: (node: never) => void): void }): string[] {
-  const paths = new Set<string>();
-  (doc as unknown as { descendants(f: (node: { marks: readonly { type: { name: string }; attrs: Record<string, unknown> }[] }) => void): void }).descendants(
-    (node) => {
-      for (const mark of node.marks) {
-        if (mark.type.name === 'link' && mark.attrs.title === 'design') paths.add(String(mark.attrs.href));
-      }
-    },
-  );
-  return [...paths];
+/**
+ * A cheap content fingerprint, for the widget key.
+ *
+ * Not a cryptographic hash — this only has to change whenever the source does,
+ * and it is computed per decoration pass. FNV-1a over the string.
+ */
+function fingerprint(source: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < source.length; i++) {
+    hash ^= source.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 /** Cheap memo, so a design is parsed once per source rather than per redraw. */
@@ -94,7 +96,12 @@ export function designPreview(initial: DesignSources): Plugin<DesignSources> {
                 // a backspace can delete, and there is nothing here to delete.
                 side: 1,
                 ignoreSelection: true,
-                key: `design:${path}:${source.length}`,
+                // Keyed on the *content*, not its length. ProseMirror's
+                // `WidgetType.eq` short-circuits on `key` alone, so a
+                // same-length edit — `bg-surface` to `bg-canvas`, `gap-2` to
+                // `gap-4`, swapping two sibling lines — left the old picture on
+                // screen while the file underneath had changed.
+                key: `design:${path}:${fingerprint(source)}`,
               }),
             );
           }

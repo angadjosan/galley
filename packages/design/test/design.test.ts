@@ -174,9 +174,25 @@ describe('the linter catches what a model gets wrong', () => {
   });
 
   it('flags two layers claiming one id', () => {
-    const design = parsed(
-      '<design name="x"><frame width="100"><box id="l_a"></box><box id="l_a"></box></frame></design>',
-    );
+    // The parser refuses this outright now, so the design is built by hand —
+    // the linter rule still has to hold for a tree that reached it another way,
+    // and it is the layer that catches a collision the parser cannot see.
+    const design: DesignDocument = {
+      name: 'x',
+      frames: [
+        {
+          id: 'f',
+          name: 'Frame 1',
+          width: 100,
+          height: 'auto',
+          classes: [],
+          children: [
+            { id: 'l_a', kind: 'box', name: 'Box', classes: [], children: [] },
+            { id: 'l_a', kind: 'box', name: 'Box', classes: [], children: [] },
+          ],
+        },
+      ],
+    };
     expect(lintDesign(design).some((f) => f.message.includes('names 2 layers'))).toBe(true);
   });
 
@@ -444,5 +460,65 @@ describe('what an error says to do next', () => {
     for (const className of ['border-2', 'opacity-60', 'w-320', 'h-44']) {
       expect(resolveClass(className).ok, className).toBe(true);
     }
+  });
+});
+
+/**
+ * A second round found these, after the first round's fixes were in.
+ *
+ * The pattern is worth naming: every one is a case where the *guard* was right
+ * and its *assumption* was not. `pathOf` skipped index 0 assuming it was the
+ * `<design>` wrapper; the nesting refusal checked for a design inside a design
+ * but not one beside it; the "words belong in a `<text>`" error only fired when
+ * there was something to be inside of.
+ */
+describe('what the second round found', () => {
+  function errorsOf(source: string): string[] {
+    const result = parseDesign(source);
+    return result.ok ? [] : result.errors.map((error) => error.message);
+  }
+
+  it('gives every layer a different id even with no design wrapper', () => {
+    // `pathOf` skipped the first stack entry assuming it was `<design>`. With
+    // no wrapper the frame and its first child both came out as `l_0` — a
+    // collision in an identifier, and the canvas keys React on it and matches
+    // edits by it, so selecting or deleting one hit both.
+    const design = parsed('<frame width="10"><box></box><box></box></frame>');
+    const ids = [...walk(design)].map(({ layer }) => layer.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('refuses two layers that claim the same id', () => {
+    expect(
+      errorsOf('<design name="x"><frame width="10"><box id="l_a"></box><box id="l_a"></box></frame></design>').join(' '),
+    ).toContain('more than one layer');
+  });
+
+  it('refuses a second design beside the first rather than merging them', () => {
+    // Accepted, they became one design named after the *second*, carrying both
+    // sets of frames — and the next save rewrote the file that way.
+    expect(errorsOf('<design name="A"><frame width="10"></frame></design><design name="B"><frame width="20"></frame></design>').join(' ')).toContain(
+      'one `<design>`',
+    );
+  });
+
+  it('refuses words outside the design rather than dropping them', () => {
+    expect(errorsOf('hello<design name="x"><frame width="10"></frame></design>').join(' ')).toContain('outside');
+  });
+
+  it.each([
+    ['a hex width', '<design name="x"><frame width="0x10"></frame></design>'],
+    ['an exponent width', '<design name="x"><frame width="1e3"></frame></design>'],
+    ['a padded width', '<design name="x"><frame width=" 10 "></frame></design>'],
+  ])('refuses %s rather than coercing it', (_name, source) => {
+    // `Number()` swallowed all three, and the file was then rewritten with the
+    // coerced value — a save that silently changed a number nobody touched.
+    expect(errorsOf(source).length).toBeGreaterThan(0);
+  });
+
+  it('treats an attribute named after an Object member as an ordinary name', () => {
+    // `key in attrs` on a bare literal found `constructor` on the prototype and
+    // reported it as given twice when it appeared once.
+    expect(errorsOf('<design name="x"><frame width="10"><box constructor="y"></box></frame></design>')).toEqual([]);
   });
 });

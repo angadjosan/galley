@@ -302,6 +302,25 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
     editor.dispatch(editor.state.tr.setMeta(designPreviewKey, props.designs));
   }, [props.designs]);
 
+  /**
+   * Scrolling moves the selection on screen without producing a transaction.
+   *
+   * The effect below recomputes the selection's rectangle after *every* render,
+   * but nothing re-renders on scroll — so the margin comment button detached
+   * from its text and ended up beside unrelated words while still claiming to
+   * comment on the original selection. A listener inside the button could not
+   * fix it: the rectangle is a prop this component computes.
+   */
+  useEffect(() => {
+    const bump = (): void => forceRender((n) => n + 1);
+    window.addEventListener('scroll', bump, true);
+    window.addEventListener('resize', bump);
+    return () => {
+      window.removeEventListener('scroll', bump, true);
+      window.removeEventListener('resize', bump);
+    };
+  }, []);
+
   // The bubble follows the selection, but never while the pointer is down: a
   // bubble that chases a growing selection is the single loudest tell that a
   // writing surface was not finished.
@@ -580,22 +599,6 @@ function MarginCommentButton({
   host: HTMLElement | null;
   onComment(): void;
 }): JSX.Element | null {
-  // Re-measured on scroll and resize. Its coordinates are viewport-relative and
-  // nothing else re-renders it, so without this it stayed where it was while
-  // the text scrolled away underneath — ending up beside unrelated words, or
-  // over the chrome, while still claiming to comment on the original
-  // selection.
-  const [, tick] = useState(0);
-  useEffect(() => {
-    const bump = (): void => tick((n) => n + 1);
-    window.addEventListener('scroll', bump, true);
-    window.addEventListener('resize', bump);
-    return () => {
-      window.removeEventListener('scroll', bump, true);
-      window.removeEventListener('resize', bump);
-    };
-  }, []);
-
   const page = host?.closest('.page');
   if (!page) return null;
   const box = page.getBoundingClientRect();

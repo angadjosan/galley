@@ -277,8 +277,12 @@ function insertNode(node: PmNode): Command {
     // mapped positions. The arithmetic version double-counted — `mapping.map`
     // already carries a position past the inserted node — so the guard was
     // always false and this never ran in the case it was written for.
+    // A table is neither an atom nor a leaf, but there is still no position
+    // *after* it to put a cursor — it is `isolating`, so the furthest you can
+    // get is the last cell. The guard names it rather than relying on a
+    // property it does not have.
     const last = tr.doc.lastChild;
-    if (!last || last.isAtom || last.isLeaf) {
+    if (!last || last.isAtom || last.isLeaf || last.type === schema.nodes.table) {
       const landedAtEnd = tr.selection.to >= tr.doc.content.size - 1;
       tr.insert(tr.doc.content.size, schema.nodes.paragraph!.create());
       // Only follow the caret down to it when the insertion *was* at the end.

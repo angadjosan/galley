@@ -203,6 +203,40 @@ describe('underline and highlight', () => {
     expect(out).not.toContain('\\*');
   });
 
+  /**
+   * A mark that touches a hard break.
+   *
+   * The third appearance of one signature, and the reason the fix moved from
+   * "trim spaces" to "lift whatever cannot sit against a delimiter". A hard
+   * break serializes as two spaces and a newline, so a bold run that *starts*
+   * on one emits `**  \n` — and an opening `**` followed by whitespace cannot
+   * open, by the same flanking rule that makes `**a **` four literal asterisks.
+   *
+   * Built from ProseMirror rather than parsed from a string, because that is
+   * the only way to reach the state: pressing Shift+Enter and then ⌘B.
+   */
+  it.each([
+    ['the text before a break', [0]],
+    ['the break alone', [1]],
+    ['the break and the text after it', [1, 2]],
+    ['all of it', [0, 1, 2]],
+  ])('keeps bold over %s byte-stable', (_name, bolded: number[]) => {
+    const strong = schema.marks.strong!.create();
+    const on = (index: number): typeof strong[] => (bolded.includes(index) ? [strong] : []);
+    const paragraph = schema.nodes.paragraph!.create({ source: null }, [
+      schema.text('aaa', on(0)),
+      schema.nodes.hard_break!.create(null, null, on(1)),
+      schema.text('bbb', on(2)),
+    ]);
+
+    const loaded = markdownToDoc('placeholder\n');
+    const first = docToMarkdown(schema.nodes.doc!.create(null, [paragraph]), loaded);
+    // The second save is where this failed: the first one emitted something
+    // that did not re-parse as emphasis, and the second escaped it.
+    expect(roundTrip(first, ({ doc }) => touch(doc, 0))).toBe(first);
+    expect(first).not.toContain('\\*');
+  });
+
   it('leaves an unbalanced tag alone rather than guessing', () => {
     const source = 'An orphan <u> tag.\n';
     const { doc } = markdownToDoc(source);

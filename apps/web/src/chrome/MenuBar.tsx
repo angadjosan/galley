@@ -90,14 +90,17 @@ export function MenuBar(props: MenuBarProps): JSX.Element {
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const bar = useRef<HTMLDivElement>(null);
   /**
-   * Which end of a just-opened menu the keyboard should land on.
+   * A request to put the keyboard inside a menu, carrying a nonce.
    *
-   * Set when a key opens a menu, consumed by the effect below. Focusing from
-   * `requestAnimationFrame` right after `setOpenId` races React's commit — the
-   * menu does not exist yet to be focused into, and the failure is
-   * intermittent, which is the worst kind.
+   * The nonce is what makes it work. Keying the effect on `openId` alone meant
+   * that asking to enter a menu that was *already* open — which is what
+   * ArrowDown does after ArrowRight has moved along the bar — set the same
+   * value, React bailed out of the render, and the effect never re-ran. The
+   * menu was open, visible, and completely keyboard-dead.
    */
-  const focusOnOpen = useRef<'first' | 'last' | null>(null);
+  const [focusRequest, setFocusRequest] = useState<{ at: 'first' | 'last'; nonce: number } | null>(null);
+  const nonce = useRef(0);
+  const enter = (at: 'first' | 'last'): void => setFocusRequest({ at, nonce: ++nonce.current });
   const menus = buildMenus(props);
 
   const focusTrigger = (id: string): void => {
@@ -112,22 +115,56 @@ export function MenuBar(props: MenuBarProps): JSX.Element {
   };
 
   useEffect(() => {
-    if (!openId || !focusOnOpen.current) return;
+    if (!openId || !focusRequest) return;
     const items = Array.from(
       bar.current?.querySelectorAll<HTMLElement>('.menubar-menu .menubar-entry:not(:disabled)') ?? [],
     );
-    (focusOnOpen.current === 'last' ? items.at(-1) : items[0])?.focus();
-    focusOnOpen.current = null;
-  }, [openId]);
+    // A menu whose every entry is disabled — Edit, on a document nobody has
+    // typed in yet — has nothing to go inside. Focus falls back to its trigger,
+    // which is somewhere the arrow keys still mean something. Clearing the
+    // request either way is the point: leaving it set made the *next* keystroke
+    // behave differently depending on history.
+    const target = focusRequest.at === 'last' ? items.at(-1) : items[0];
+    if (target) target.focus();
+    else bar.current?.querySelector<HTMLElement>(`[data-testid="menu-${openId}"]`)?.focus();
+    setFocusRequest(null);
+  }, [openId, focusRequest]);
 
   useEffect(() => {
     if (!openId) return;
     const onPointer = (event: PointerEvent): void => {
       if (!bar.current?.contains(event.target as Node)) setOpenId(null);
     };
+    // Escape has to work even when focus is nowhere — a menu opened with the
+    // mouse leaves `activeElement` on the body, because the trigger prevents
+    // default to keep the document's selection, so no element-level handler
+    // ever sees the key.
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      setOpenId(null);
+      if (!bar.current?.contains(document.activeElement)) return;
+      focusTrigger(openId);
+    };
     window.addEventListener('pointerdown', onPointer);
-    return () => window.removeEventListener('pointerdown', onPointer);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', onPointer);
+      window.removeEventListener('keydown', onKey);
+    };
   }, [openId]);
+
+  /**
+   * Close when the keyboard leaves the bar entirely.
+   *
+   * Without it, Tab out of an open menu walked every entry one at a time and
+   * then landed on the toolbar with the menu still open behind it.
+   */
+  const onBarBlur = (event: React.FocusEvent): void => {
+    if (!openId) return;
+    const next = event.relatedTarget as Node | null;
+    if (next && bar.current?.contains(next)) return;
+    setOpenId(null);
+  };
 
   /**
    * The keyboard contract a menu bar owes anyone who reads its ARIA roles.
@@ -144,22 +181,39 @@ export function MenuBar(props: MenuBarProps): JSX.Element {
       case 'ArrowLeft': {
         event.preventDefault();
         const next = step(id, event.key === 'ArrowRight' ? 1 : -1);
-        if (openId) setOpenId(next);
         focusTrigger(next);
+        // Walking the bar with a menu open moves *into* the next menu, which is
+        // what every desktop menu bar does and what leaves the keyboard
+        // somewhere it can act.
+        if (openId) {
+          setOpenId(next);
+          enter('first');
+        }
         return;
       }
       case 'ArrowDown':
       case 'Enter':
       case ' ': {
         event.preventDefault();
-        focusOnOpen.current = 'first';
         setOpenId(id);
+        enter('first');
         return;
       }
       case 'ArrowUp': {
         event.preventDefault();
-        focusOnOpen.current = 'last';
         setOpenId(id);
+        enter('last');
+        return;
+      }
+      case 'Home':
+      case 'End': {
+        event.preventDefault();
+        const target = (event.key === 'Home' ? menus[0] : menus.at(-1))!.id;
+        focusTrigger(target);
+        if (openId) {
+          setOpenId(target);
+          enter('first');
+        }
         return;
       }
       case 'Escape': {
@@ -199,8 +253,13 @@ export function MenuBar(props: MenuBarProps): JSX.Element {
       case 'ArrowLeft': {
         event.preventDefault();
         const next = step(id, event.key === 'ArrowRight' ? 1 : -1);
-        setOpenId(next);
+        // The trigger first, then the request to go inside. The trigger is
+        // where focus has to land if the next menu turns out to have nothing
+        // focusable in it — dropping this step lost focus to the body entirely,
+        // and a keyboard user with focus on the body has lost the page.
         focusTrigger(next);
+        setOpenId(next);
+        enter('first');
         return;
       }
       case 'Escape':
@@ -215,7 +274,14 @@ export function MenuBar(props: MenuBarProps): JSX.Element {
   };
 
   return (
-    <div className="menubar" role="menubar" aria-label="Main" ref={bar} data-testid="menubar">
+    <div
+      className="menubar"
+      role="menubar"
+      aria-label="Main"
+      ref={bar}
+      data-testid="menubar"
+      onBlur={onBarBlur}
+    >
       {menus.map((menu) => (
         <div className="menubar-item" key={menu.id}>
           <button
@@ -233,9 +299,15 @@ export function MenuBar(props: MenuBarProps): JSX.Element {
             // years, and getting either wrong makes the bar feel wrong in a way
             // people notice without being able to name.
             onPointerDown={(event) => {
+              // `preventDefault` keeps the document's selection alive, and
+              // suppresses focus with it — so the trigger is focused by hand.
+              // Without that, a menu opened with the mouse was completely
+              // keyboard-inert and the roving tabindex never moved.
               event.preventDefault();
               event.stopPropagation();
-              setOpenId((current) => (current === menu.id ? null : menu.id));
+              const opening = openId !== menu.id;
+              setOpenId(opening ? menu.id : null);
+              focusTrigger(menu.id);
             }}
             onPointerEnter={() => setOpenId((current) => (current === null ? null : menu.id))}
           >
@@ -258,6 +330,9 @@ export function MenuBar(props: MenuBarProps): JSX.Element {
                     type="button"
                     role="menuitem"
                     className="menubar-entry"
+                    // Reached by arrow key, never by Tab: a menu is one stop in
+                    // the tab order, not seventeen.
+                    tabIndex={-1}
                     disabled={!entry.enabled}
                     onClick={() => {
                       setOpenId(null);

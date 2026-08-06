@@ -158,7 +158,9 @@ function tokenize(source: string, errors: ParseError[]): Token[] {
       continue;
     }
     const name = nameMatch[1]!.toLowerCase();
-    const attrs: Record<string, string> = {};
+    // A null-prototype object, so an attribute called `constructor` or
+    // `toString` is an ordinary key rather than something already "present".
+    const attrs: Record<string, string> = Object.create(null) as Record<string, string>;
     const rest = body.trim().slice(nameMatch[1]!.length);
     // Consume the attribute list token by token rather than scanning for the
     // ones that look right. Skipping what does not match is how `class=flex`
@@ -222,18 +224,23 @@ export function parseDesign(source: string): ParseResult {
   const tokens = tokenize(source, errors);
 
   let name = 'Untitled design';
+  let seenDesign = false;
   const frames: Frame[] = [];
 
   // An explicit stack rather than recursion: the error messages need to name
   // the element that was left open, and a recursive descent loses that.
   const stack: { name: string; line: number; attrs: Record<string, string>; children: Layer[] }[] = [];
 
-  /** Where the element being closed sits, as a path of child indexes. */
-  const pathOf = (): number[] => {
-    const path: number[] = [];
-    for (let depth = 1; depth < stack.length; depth++) path.push(stack[depth]!.children.length);
-    return path;
-  };
+  /**
+   * Where the element being closed sits, as a path of child indexes.
+   *
+   * Skips the `<design>` entry by *name* rather than by assuming it is at
+   * index 0. It is not always there — a fragment with no wrapper is accepted
+   * for the frames it contains — and assuming it was made a frame and its
+   * first child both come out as `l_0`, which is a collision in an identifier.
+   */
+  const pathOf = (): number[] =>
+    stack.filter((entry) => entry.name !== 'design').map((entry) => entry.children.length);
 
   const finishLayer = (
     frame: { name: string; attrs: Record<string, string>; children: Layer[]; line: number },
@@ -262,7 +269,10 @@ export function parseDesign(source: string): ParseResult {
   for (const token of tokens) {
     if (token.kind === 'text') {
       const top = stack[stack.length - 1];
-      if (!top) continue;
+      if (!top) {
+        errors.push({ line: token.line, message: 'Words outside the design. Put them in a `<text>` inside a `<frame>`.' });
+        continue;
+      }
       if (top.name !== 'text') {
         errors.push({
           line: token.line,
@@ -303,7 +313,12 @@ export function parseDesign(source: string): ParseResult {
         continue;
       }
 
+      if (token.name === 'design' && seenDesign) {
+        errors.push({ line: token.line, message: 'A file holds one `<design>`.' });
+        continue;
+      }
       if (token.name === 'design') {
+        seenDesign = true;
         name = token.attrs.name || name;
         stack.push({ name: 'design', line: token.line, attrs: token.attrs, children: [] });
         continue;
@@ -342,13 +357,17 @@ export function parseDesign(source: string): ParseResult {
     }
     if (top.name === 'design') continue;
     if (top.name === 'frame') {
-      const width = Number(top.attrs.width ?? 0);
+      // Digits only. `Number()` swallows `0x10`, `1e3` and ` 10 ` and the file
+      // was then rewritten with the coerced value — a save that silently
+      // changed a number nobody touched.
+      const rawWidth = top.attrs.width ?? '';
+      const width = /^\d+$/.test(rawWidth) ? Number(rawWidth) : Number.NaN;
       if (!Number.isFinite(width) || width <= 0) {
         errors.push({ line: top.line, message: 'A frame needs a `width` in pixels.' });
         continue;
       }
       const rawHeight = top.attrs.height ?? 'auto';
-      const height = rawHeight === 'auto' ? 'auto' : Number(rawHeight);
+      const height = rawHeight === 'auto' ? 'auto' : /^\d+$/.test(rawHeight) ? Number(rawHeight) : Number.NaN;
       // Checked the same way `width` is. It was not, so `height="tall"` became
       // `NaN`, was written back to the file as `height="NaN"`, and reached the
       // renderer as a style nobody could see was wrong.
@@ -378,6 +397,24 @@ export function parseDesign(source: string): ParseResult {
 
   for (const unclosed of stack) {
     errors.push({ line: unclosed.line, message: `\`<${unclosed.name}>\` was never closed.` });
+  }
+
+  // An id names one layer. Two layers sharing one is caught by the linter as
+  // well, but by then the tree has already been handed to a canvas that keys
+  // React on it and matches edits by it — so selecting, editing or deleting
+  // one of a colliding pair hit all of them.
+  const claimed = new Set<string>();
+  const collide = (id: string, line: number): void => {
+    if (claimed.has(id)) errors.push({ line, message: `\`${id}\` names more than one layer.` });
+    claimed.add(id);
+  };
+  const visit = (layer: Layer): void => {
+    collide(layer.id, 0);
+    if (layer.kind === 'box') layer.children.forEach(visit);
+  };
+  for (const frame of frames) {
+    collide(frame.id, 0);
+    frame.children.forEach(visit);
   }
 
   if (errors.length > 0) return { ok: false, errors };
