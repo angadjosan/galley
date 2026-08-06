@@ -133,9 +133,10 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
           >
             Source
           </button>
-          <button type="button" className="chrome-button" onClick={props.onClose}>
-            Done
-          </button>
+          {/* No "Done". A design *is* a document — it saves as you work and
+              there is nowhere to go back to, so a button claiming otherwise
+              was a lie about what it did. The document list is how you put one
+              down and pick up another, and it is where it has always been. */}
         </div>
       </header>
 
@@ -286,6 +287,8 @@ function Inspector({
 }): JSX.Element {
   const classes = layer.classes;
   const has = (name: string): boolean => classes.includes(name);
+  /** Where each class family sat before it was cleared, so it can go back. */
+  const removed = useRef<Record<string, number>>({});
 
   /**
    * Swap whichever class from a family is present for another, or drop it.
@@ -300,9 +303,23 @@ function Inspector({
     onEdit((current) => {
       const at = current.classes.findIndex((name) => family.includes(name));
       const without = current.classes.filter((name) => !family.includes(name));
-      if (!next) return { ...current, classes: without };
-      const insertAt = at === -1 ? without.length : at;
-      return { ...current, classes: [...without.slice(0, insertAt), next, ...without.slice(insertAt)] };
+      if (!next) {
+        // Remember where it was, so putting it back puts it *back*. Without
+        // this, value → None → value moved the class to the end of the list and
+        // left a diff — the operation was its own inverse only in one
+        // direction, which is not what "inverse" means.
+        if (at !== -1) removed.current[family[0] ?? ''] = at;
+        return { ...current, classes: without };
+      }
+      const insertAt = at !== -1 ? at : (removed.current[family[0] ?? ''] ?? without.length);
+      return {
+        ...current,
+        classes: [
+          ...without.slice(0, Math.min(insertAt, without.length)),
+          next,
+          ...without.slice(Math.min(insertAt, without.length)),
+        ],
+      };
     });
   };
 
