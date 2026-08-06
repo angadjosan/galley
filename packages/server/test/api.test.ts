@@ -552,3 +552,88 @@ describe('the staleness nudge', () => {
     expect(status.documents.find((d) => d.docId === docId)!.agentReaders).toBe(0);
   });
 });
+
+/**
+ * Images.
+ *
+ * The claim is not "uploads work" — it is that an image is *content-addressed*
+ * and *sniffed*, because both of those are load-bearing elsewhere:
+ *
+ * - Addressing by the hash of the bytes is what makes a re-save of a paragraph
+ *   containing a pasted image produce identical Markdown. A random name would
+ *   turn every save into a new diff, which is the failure the whole splicing
+ *   engine exists to prevent.
+ * - Deciding the type from the magic bytes rather than the client's header is
+ *   what stops this route becoming a way to serve arbitrary content from the
+ *   app's own origin. SVG is refused for exactly that reason: it is a document
+ *   that can carry script.
+ */
+describe('images', () => {
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+  const base64 = (bytes: Buffer): string => bytes.toString('base64');
+
+  it('stores an image once however many times it is sent', async () => {
+    const h = await open();
+    await seedDocument(h);
+
+    const first = await h.json<{ url: string; mediaType: string }>(
+      '/v1/docs/specs%2Fcheckout-v2/assets',
+      { method: 'POST', body: JSON.stringify({ data: base64(PNG) }) },
+    );
+    const again = await h.json<{ url: string }>('/v1/docs/specs%2Fcheckout-v2/assets', {
+      method: 'POST',
+      body: JSON.stringify({ data: base64(PNG) }),
+    });
+
+    expect(first.mediaType).toBe('image/png');
+    // The same bytes give the same URL, so the Markdown that references them is
+    // byte-identical both times.
+    expect(again.url).toBe(first.url);
+
+    const fetched = await h.request(first.url);
+    expect(fetched.status).toBe(200);
+    expect(fetched.headers.get('content-type')).toBe('image/png');
+    expect(Buffer.from(await fetched.arrayBuffer())).toEqual(PNG);
+  });
+
+  it('believes the bytes, not the client', async () => {
+    const h = await open();
+    await seedDocument(h);
+    // Claims to be a PNG in every way a client can claim it. It is not one.
+    const response = await h.request('/v1/docs/specs%2Fcheckout-v2/assets', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ data: base64(Buffer.from('<svg onload="alert(1)"/>')) }),
+    });
+    expect(response.status).toBe(415);
+  });
+
+  it('refuses an image larger than the limit', async () => {
+    const h = await open();
+    await seedDocument(h);
+    const huge = Buffer.concat([PNG, Buffer.alloc(5 * 1024 * 1024)]);
+    const response = await h.request('/v1/docs/specs%2Fcheckout-v2/assets', {
+      method: 'POST',
+      body: JSON.stringify({ data: base64(huge) }),
+    });
+    expect(response.status).toBe(413);
+  });
+
+  it('requires write access on the document to attach to it', async () => {
+    const h = await open();
+    await seedDocument(h);
+    // An asset is part of a document, so it does not get an access rule of its
+    // own to fall out of step with the document's.
+    const response = await h.request('/v1/docs/specs%2Fcheckout-v2/assets', {
+      method: 'POST',
+      token: h.tokens.reader,
+      body: JSON.stringify({ data: base64(PNG) }),
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it('answers with 404 for an image that was never stored', async () => {
+    const h = await open();
+    expect((await h.request('/v1/assets/deadbeef')).status).toBe(404);
+  });
+});
