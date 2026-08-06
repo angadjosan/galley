@@ -1399,3 +1399,106 @@ contained a literal NUL byte in a cache-key separator, which makes `grep -r`
 treat the file as binary and skip it entirely. A reviewer concluded a listener
 was never wired because the grep came back empty. It was wired. Never put a raw
 NUL in a source file.
+
+---
+
+## D46 — The canvas: what a click means, and what a drag can produce
+
+Two decisions carry the design canvas, and both are about refusing to let the
+mouse say things the file cannot store.
+
+**A drag produces a `(parent, index)` pair, never a position.** Every visual
+builder that targets CSS converged on this independently — Webstudio, GrapesJS,
+Plasmic, Onlook, Craft.js, Puck. Galley resolves it more cheaply than any of
+them for one reason: *the layout axis is in the document*. `flex-col` and
+`flex-row` are classes, so "which way do these children run" is a lookup.
+Webstudio spends about 380 lines inferring the same fact from rect geometry,
+with a `"mixed"` fallback, a diagonal test, and a DOM probe that inserts an
+empty div to see which dimension collapses.
+
+The rest of the drag is three borrowed constants and one rule:
+
+- **The outer band of every box belongs to its parent** (6 screen px, Puck's
+  inset). This single rule answers "into this box, or next to it" at every
+  depth without a special case. Craft.js does the mirror image with a 10px
+  *outset*; the inset composes and the outset does not.
+- **The midpoint is biased in the direction of travel** (5%), or a hand resting
+  on a boundary flips the answer on sign noise every frame.
+- **Direction is measured over a window** (10px, Puck's `INTERVAL_SENSITIVITY`),
+  because a frame-to-frame delta *is* the noise.
+- **A changed slot is what causes a redraw**, not a moved pointer. Recomputing
+  is cheap; committing is a parse and a serialize.
+
+**A click selects the child of the container you are inside.** The focus model:
+Figma's *focus*, Sketch's *group entering*, Illustrator's *isolation mode*,
+Webflow's breadcrumb. The two alternatives are both common and both worse —
+innermost makes a container ungrabbable without the layer tree, outermost makes
+nesting unusable. Double-click enters, Escape leaves, and every transition has
+an obvious inverse.
+
+**With one exception that the canvas argued for: a frame is transparent.** It is
+an artboard, not a group. Making it opaque meant a double-click before every
+first edit, every time, to reach a level nobody thinks of as nested. Figma draws
+exactly this line between frames and groups, and it is worth copying exactly.
+
+Multi-select is **siblings-only by construction** rather than by disabling the
+toolbar afterwards. Reorder, align, distribute and wrap are all operations on a
+child list, so a selection spanning parents is one most gestures would have to
+refuse; cheaper to make it unrepresentable.
+
+## D47 — Chrome goes on an overlay, before the handles rather than after
+
+Selection outlines, the hover hint, the focus ring, the drop indicator and the
+marquee are one SVG on top of the design, in viewport space. Drawing them as CSS
+on the layers themselves — which is what shipped first — is wrong in three ways
+that only appear once there is a zoom:
+
+1. Chrome inside the transform **scales with it**. A 2px ring is half a pixel at
+   50% and eight at 400%.
+2. An outline on a layer **changes what the ResizeObserver reports**, so a
+   measurement moves because something got selected. That is a feedback loop.
+3. A drop indicator **has nowhere to live**: it belongs between two children,
+   and that is not a place any element is.
+
+Build the overlay before the handles. Everything drawn on it is constant screen
+size for free; retrofitting means rewriting all of them.
+
+The stage is **bounded, and there is no dot grid**. An infinite canvas is the
+right shape when contents have arbitrary positions; here they cannot. A grid is
+a coordinate affordance and there are no coordinates — drawing one would be a
+lie about what a drag does.
+
+## D48 — Three things the browser found that no unit test would have
+
+All three are the same shape: a thing that was *visible and completely inert*.
+
+- **Pointer capture retargets clicks.** A drag must capture the pointer or the
+  gesture dies the moment it leaves the element — and capture then makes the
+  browser retarget every later `click` and `dblclick` at the capturing element.
+  Reading `event.target` turned every double-click into a silent no-op. Hit
+  testing is from the point now.
+- **The zoom controls float inside the stage**, so the stage captured their
+  pointer and the buttons were visible, hoverable and dead.
+- **A move op asked the old design what is at the slot**, so a drag that
+  succeeded left nothing selected. Positional ids have to be read from the
+  design that comes *back*.
+
+The lesson is the one D44 already recorded, in a new place: an affordance that
+appears and does nothing is the failure this codebase keeps finding in its own
+work. Two of these three were only reachable through a real browser, because a
+jsdom test has no pointer capture and no compositor.
+
+## D49 — Fixed, Hug, Fill; and arrows reorder rather than nudge
+
+The inspector's size control uses Figma's three words, borrowed exactly: every
+designer already knows them, and all three are expressible here — *hug* is the
+flexbox default, *fill* is `grow` along the flow and `self-stretch` across it,
+*fixed* is the one place this format admits a raw pixel. "Fill" resolving to two
+different classes depending on the parent is not a leak; it is why the control
+has to know which way the parent runs. A lone `grow` on the cross axis does
+nothing at all, silently.
+
+Arrow keys **reorder**. Nudging is a coordinate gesture and there are no
+coordinates, so an arrow that moved a layer by a pixel would have nowhere to
+write the pixel down. Across the flow they do nothing rather than something
+arbitrary: in a row, up and down have no order to express.

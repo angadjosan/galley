@@ -429,3 +429,53 @@ upload.
 one transport that the app, the CLI and every test already speak. Revisit if
 uploads ever become large enough for the overhead to be the constraint, which
 at a 4 MB cap they are not.
+
+---
+
+## The canvas cannot resize a box by dragging its corner
+
+The overlay draws corner ticks on a single selection, and they are **ticks, not
+handles** — they read the bounds and promise nothing. Dragging a corner does
+nothing.
+
+That is deliberate for now and it is the honest position: a size in this format
+is `w-120`, `grow`, or absent, and only the first of those is a rectangle you
+could drag to. A handle that worked would have to silently convert Hug into
+Fixed the moment you touched it, writing a pixel literal into a file whose whole
+argument is that it does not contain pixel literals. The inspector's Size
+control says the same thing in the vocabulary the file actually has.
+
+What is given up: the single most reflexive gesture in every design tool. Someone
+who has used Figma for ten years will grab a corner within the first minute and
+nothing will happen. The mitigation is that the ticks do not look like handles;
+the risk is that this is not enough, and the resolution — if it comes — is a
+handle that snaps to the *type scale and the spacing scale* rather than to
+pixels, so a drag still produces a token.
+
+## Marquee selection can produce a selection the inspector will not fully honour
+
+A brush selects every child of the focus container it touches. The inspector
+edits **one** layer. So a marquee over three cards selects three and the panel
+shows nothing.
+
+The alternative — a multi-layer inspector that edits the intersection of three
+class lists — is the right end state and is a real amount of work: every control
+needs a mixed state, and every write needs to mean "set this on all of them"
+without clobbering the classes they do not share. Until then the marquee's value
+is what it enables next (bulk delete, bulk reorder, wrap-in-a-box), not what it
+enables now.
+
+## The drop resolver measures a snapshot, not the live DOM
+
+`resolveDrop` is pure: it takes a map of rects captured before the gesture. That
+is what makes the interesting part testable without a browser, and it is also
+what makes it *wrong* if the tree reflows mid-drag — which it will the moment a
+drag can change the design before it is committed (a live preview of the drop,
+say, rather than a line).
+
+The current design never reflows during a drag: the dragged layer is ghosted in
+place, not removed, precisely so the measurements stay true. The cost is that
+the drop indicator sits where the layers *are*, not where they *would be* — so a
+drop into a tall gap looks slightly less obviously right than a live-preview
+implementation would. The benefit is that a cancelled drag is genuinely free and
+the resolver has no way to disagree with itself.
