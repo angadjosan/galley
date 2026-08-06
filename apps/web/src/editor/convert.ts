@@ -608,10 +608,28 @@ function buildInline(
 
   while (index < pieces.length) {
     const piece = pieces[index]!;
-    const candidates = piece.marks
+    // The **widest** run wins, and `MARK_ORDER` is only the tie-break.
+    //
+    // Ranking by the table alone loses content. Take `**<mark>b</mark> plain**`
+    // — bold over the whole phrase, highlight over one word of it, which is
+    // what a writer gets by bolding a sentence and then highlighting a word.
+    // Hoisting the highlight outward splits the bold in two, and the second
+    // half opens on a space: `** plain**` is not left-flanking, so CommonMark
+    // does not read it as emphasis, and the next save escapes the asterisks.
+    // Two saves and the emphasis is gone, replaced by visible `\*\*`.
+    //
+    // Choosing the widest run means a mark can only be nested inside one that
+    // covers at least as much, which is the condition under which a delimiter
+    // pair cannot straddle a boundary in the first place.
+    const runFrom = (mark: Mark): number => {
+      let end = index;
+      while (end < pieces.length && pieces[end]!.marks.some((m) => m.eq(mark))) end++;
+      return end - index;
+    };
+    const next = piece.marks
       .filter((mark) => !isAnnotation(mark.type.name) && !isApplied(mark))
-      .sort((a, b) => MARK_ORDER.indexOf(a.type.name) - MARK_ORDER.indexOf(b.type.name));
-    const next = candidates[0];
+      .map((mark) => ({ mark, run: runFrom(mark), rank: MARK_ORDER.indexOf(mark.type.name) }))
+      .sort((a, b) => b.run - a.run || a.rank - b.rank)[0]?.mark;
 
     if (!next) {
       if (piece.node) out.push(nodeToPhrasing(piece.node));

@@ -532,6 +532,19 @@ kbd {
   padding: 0 12px 6px;
 }
 
+/**
+ * No `overflow: hidden` here, ever.
+ *
+ * It was here to keep a stray group from breaching the pill's radius, and it
+ * clipped away the two popups that hang off this row — the style dropdown and
+ * the overflow menu — leaving both rendered, invisible, and unclickable. The
+ * style dropdown is the single most important control on the bar.
+ *
+ * It is not needed: the overflow calculation runs in a layout effect, before
+ * paint, so a group never spills in a frame anyone sees. If something does
+ * spill, a visible overflowing button is a far smaller bug than a silently
+ * unreachable menu.
+ */
 .toolbar {
   display: flex;
   align-items: center;
@@ -539,7 +552,7 @@ kbd {
   padding: 0 8px;
   background: var(--surface-2);
   border-radius: 999px;
-  overflow: hidden;
+  min-width: 0;
 }
 
 .tb-group {

@@ -140,6 +140,33 @@ describe('underline and highlight', () => {
     expect(roundTrip(source, ({ doc }) => touch(doc, 0))).toBe(source);
   });
 
+  /**
+   * The case that lost content: a mark covering *part* of a wider one.
+   *
+   * A writer bolds a phrase and then highlights one word of it. Ranking the
+   * marks by a fixed table hoists the highlight outward, which splits the bold
+   * in two and opens the second half on a space -- and `** plain**` is not
+   * left-flanking, so CommonMark does not read it as emphasis and the next save
+   * escapes the asterisks. Two saves and the emphasis is gone, replaced by
+   * visible backslashes.
+   *
+   * Three generations, because the first save looked fine.
+   */
+  it.each([
+    ['bold interrupted by a highlight', '**<mark>b</mark> plain** and more.\n'],
+    ['italic interrupted by an underline', '*<u>i</u> plain* and more.\n'],
+    ['strikethrough interrupted by a highlight', '~~<mark>s</mark> plain~~ and more.\n'],
+    ['a highlight over a link and the words after it', '<mark>[hi](http://x) there</mark>\n'],
+    ['a highlight containing two emphases', '<mark>**b** and *i*</mark>\n'],
+    ['an underline containing bold', '<u>under **bold** here</u>\n'],
+  ])('keeps %s byte-stable across repeated saves', (_name, source) => {
+    let current = source;
+    for (let generation = 0; generation < 3; generation++) {
+      current = roundTrip(current, ({ doc }) => touch(doc, 0));
+      expect(current, `generation ${generation}`).toBe(source);
+    }
+  });
+
   it('leaves an unbalanced tag alone rather than guessing', () => {
     const source = 'An orphan <u> tag.\n';
     const { doc } = markdownToDoc(source);
