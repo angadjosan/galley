@@ -64,5 +64,15 @@ export {
   type DesignOp,
   type NewLayer,
 } from './ops.js';
+export {
+  DEFAULT_LIMITS,
+  parseOps,
+  vet,
+  type OpsParseResult,
+  type ProposalLimits,
+  type VetOptions,
+  type VetResult,
+  type Vetted,
+} from './proposal.js';
 export { STARTERS, type DesignStarter } from './starters.js';
 export { DESIGN_FENCE, extractDesign, embedDesign, isDesignDocument } from './embed.js';

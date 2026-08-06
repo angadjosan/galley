@@ -19,13 +19,16 @@ import {
   DEFAULT_THEME,
   VOCABULARY,
   checkContrast,
+  embedDesign,
   extractDesign,
   extractTheme,
   lintDesign,
   outline as designOutline,
+  parseOps,
   serializeDesign,
   subtree,
   toDtcg,
+  vet,
 } from '@galley/design';
 import { SKILL_MARKDOWN } from './skill.js';
 
@@ -51,6 +54,7 @@ usage: galley <command> [options]
   read <ref>                                  clean Markdown on stdout (ref: path or path#block)
   search <query> [--limit n]                  matching blocks, as doc#block refs
   design <sub> <ref> [--under id]             outline | source | lint | classes | tokens
+  design apply <ref> --ops <file|->           propose a change as design ops
   comment <ref> <body> [--run <id>]           anchored comment
   suggest <ref> --from <file>                 propose an edit as block-scoped ops
   suggestions <path> [--state pending]        list proposals
@@ -249,7 +253,9 @@ async function workspaceTheme(): Promise<typeof DEFAULT_THEME> {
 
 async function designCommand(args: ParsedArgs, io: Io): Promise<number> {
   const sub = args.positional[0];
-  if (!sub) throw new Error('usage: galley design <outline|source|lint|classes> [ref]');
+  if (!sub) throw new Error('usage: galley design <outline|source|lint|classes|apply> [ref]');
+
+  if (sub === 'apply') return designApply(args, io);
 
   if (sub === 'classes') {
     io.out(`${JSON.stringify(VOCABULARY, null, 2)}\n`);
@@ -351,6 +357,99 @@ async function searchCommand(args: ParsedArgs, io: Io): Promise<number> {
 // pull / push / status
 // ---------------------------------------------------------------------------
 
+
+/**
+ * An agent changing a design.
+ *
+ * The write half of the design tools, and its shape is chosen so there is no
+ * second code path anywhere: the ops are the same ops the canvas builds, and
+ * the result goes back as an ordinary block-scoped **suggestion**, so review,
+ * attribution and history are the ones prose already has.
+ *
+ * Three gates before it gets there, and the middle one is the whole argument
+ * for having an op vocabulary rather than a text patch:
+ *
+ * 1. Is this JSON an op at all — shape, types, ranges.
+ * 2. Would applying it break something? Not "is the design clean" — one that
+ *    already fails must still be editable — but *did this change make it
+ *    worse*. There is no way to ask a text patch that question.
+ * 3. Is it small enough to read as a change rather than as a replacement.
+ *
+ * `--dry-run` runs all three and prints the result without writing anything,
+ * which is the mode to try first and the one that makes a refusal cheap to
+ * learn from.
+ */
+async function designApply(args: ParsedArgs, io: Io): Promise<number> {
+  const ref = args.positional[1];
+  if (!ref) throw new Error('usage: galley design apply <path> --ops <file|-> [--dry-run]');
+  const { path } = parseRef(ref);
+
+  const from = flagString(args, 'ops');
+  // `-` reads stdin, because the producer is usually the model that just wrote
+  // the ops, and making it choose a filename first is friction for nothing.
+  const raw = from === '-' ? readFileSync(0, 'utf8') : readFileSync(resolve(from), 'utf8');
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch (error) {
+    io.err(`galley: the ops are not JSON — ${(error as Error).message}\n`);
+    return 2;
+  }
+
+  const parsed = parseOps(json);
+  if (!parsed.ok) {
+    for (const message of parsed.errors) io.err(`${message}\n`);
+    return 2;
+  }
+
+  const api = client();
+  const doc = await api.read(path);
+  const found = extractDesign(doc.content);
+  if (!found) {
+    io.err(`galley: ${path} is not a design\n`);
+    return 1;
+  }
+  if (found.errors.length > 0) {
+    // Refusing to edit a file the parser could not read. Applying ops to a
+    // half-understood tree writes the misunderstanding to disk.
+    for (const error of found.errors) io.err(`line ${error.line}: ${error.message}\n`);
+    return 1;
+  }
+
+  const checked = vet(found.design, parsed.ops, { theme: await workspaceTheme() });
+  if (!checked.ok) {
+    for (const message of checked.errors) io.err(`galley: ${message}\n`);
+    return 1;
+  }
+
+  // What it fixed, which is the half a diff never shows.
+  for (const finding of checked.result.resolved) io.err(`fixed: ${finding.message}\n`);
+  for (const finding of checked.result.introduced) io.err(`warning: ${finding.message}\n`);
+
+  const next = embedDesign(doc.content, serializeDesign(checked.result.design, { durable: new Set() }));
+  if (flagBool(args, 'dry-run')) {
+    io.out(next);
+    return 0;
+  }
+
+  const ops = diffToBlockOps(doc.content, next);
+  if (ops.length === 0) {
+    io.err('no difference to propose\n');
+    return 1;
+  }
+  const rationale =
+    flagString(args, 'why', '') ||
+    // The intents the ops carried, which is what they are for: a reviewer
+    // reading eleven class changes needs to know what they were trying to do.
+    parsed.ops
+      .map((entry) => entry.intent)
+      .filter((intent): intent is string => !!intent)
+      .join('; ') ||
+    'proposed by an agent';
+  const suggestion = await api.suggest(path, { ops, rationale });
+  io.out(`${suggestion.id}\n`);
+  return 0;
+}
 
 // ---------------------------------------------------------------------------
 // Assets

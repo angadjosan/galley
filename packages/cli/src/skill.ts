@@ -134,6 +134,43 @@ vocabulary. Two rules follow, and both matter more than they look:
 Run \`galley design lint\` before you propose a design. It exits non-zero on an
 error and its messages carry the fix.
 
+### Changing one
+
+Do not rewrite the fence. Send **ops** -- the same eight operations the canvas
+itself produces when someone drags a box with a mouse:
+
+\`\`\`
+galley design apply designs/checkout --ops changes.json --dry-run   # try it
+galley design apply designs/checkout --ops changes.json             # propose it
+\`\`\`
+
+\`\`\`json
+[
+  { "intent": "make the primary action read as primary",
+    "op": { "op": "set-classes", "id": "l_0_3",
+            "classes": ["flex", "items-center", "justify-center", "h-48", "bg-accent", "rounded-md"] } },
+  { "intent": "say what it does", "op": { "op": "set-text", "id": "l_0_3_0", "content": "Pay $42.00" } }
+]
+\`\`\`
+
+The ops are \`set-classes\`, \`set-text\`, \`set-name\`, \`set-image\`,
+\`set-frame\`, \`insert\`, \`delete\` and \`move\`. Ids come from
+\`galley design outline\`. Every op takes an \`intent\`, and you should write
+one: a reviewer reading eleven class changes cannot tell from the diff what you
+were trying to do.
+
+Three things will be refused, and the messages say which:
+
+- **A malformed op.** Shape, types and ranges, before the document is even read.
+- **A change that breaks something.** Not "the design has problems" -- the ones
+  already there are not yours -- but a problem your change *introduced*, such as
+  text that no longer contrasts with what it sits on.
+- **A rewrite in batch form.** Restructuring most of a design is not an edit to
+  it. Propose the pieces separately so each can be reviewed.
+
+Start with \`--dry-run\`. It runs all three checks and prints the result without
+writing anything.
+
 ## Checking your work
 
 \`\`\`
