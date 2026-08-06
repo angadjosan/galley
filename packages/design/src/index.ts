@@ -41,7 +41,7 @@ export {
   type ThemeMode,
   type ThemeParseResult,
 } from './theme.js';
-export { lintDesign, outline } from './lint.js';
+export { lintDesign, outline, subtree, type LintOptions, type OutlineOptions } from './lint.js';
 export {
   find,
   isContainer,

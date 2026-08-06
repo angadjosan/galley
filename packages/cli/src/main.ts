@@ -15,7 +15,18 @@ import {
   type Manifest,
   type ManifestEntry,
 } from './config.js';
-import { lintDesign, outline as designOutline, extractDesign, VOCABULARY } from '@galley/design';
+import {
+  DEFAULT_THEME,
+  VOCABULARY,
+  checkContrast,
+  extractDesign,
+  extractTheme,
+  lintDesign,
+  outline as designOutline,
+  serializeDesign,
+  subtree,
+  toDtcg,
+} from '@galley/design';
 import { SKILL_MARKDOWN } from './skill.js';
 
 export interface Io {
@@ -39,7 +50,7 @@ usage: galley <command> [options]
   status [dir]                                what changed, what is stale, what is pending
   read <ref>                                  clean Markdown on stdout (ref: path or path#block)
   search <query> [--limit n]                  matching blocks, as doc#block refs
-  design <sub> <ref>                          outline | lint | classes | source
+  design <sub> <ref> [--under id]             outline | source | lint | classes | tokens
   comment <ref> <body> [--run <id>]           anchored comment
   suggest <ref> --from <file>                 propose an edit as block-scoped ops
   suggestions <path> [--state pending]        list proposals
@@ -212,6 +223,30 @@ async function readCommand(args: ParsedArgs, io: Io): Promise<number> {
  * names exist will invent plausible ones, which is the failure the closed
  * vocabulary is built to prevent — so the tool serves its own grammar.
  */
+/**
+ * The workspace's palette, or the built-in one.
+ *
+ * A design's colours are roles, and a role means nothing without a palette — so
+ * every path that resolves one has to be able to find it. Falling back to the
+ * default rather than failing is deliberate: a workspace that has not defined a
+ * theme still has designs, and they still have to lint.
+ */
+async function workspaceTheme(): Promise<typeof DEFAULT_THEME> {
+  try {
+    const api = client();
+    for (const doc of await api.list('')) {
+      const content = (await api.read(doc.docId)).content;
+      const found = extractTheme(content);
+      if (found) return found.theme;
+    }
+  } catch {
+    // No server, no credentials, no theme: the built-in palette is still a
+    // palette, and a lint that refuses to run is worth less than one that runs
+    // against the default.
+  }
+  return DEFAULT_THEME;
+}
+
 async function designCommand(args: ParsedArgs, io: Io): Promise<number> {
   const sub = args.positional[0];
   if (!sub) throw new Error('usage: galley design <outline|source|lint|classes> [ref]');
@@ -219,6 +254,25 @@ async function designCommand(args: ParsedArgs, io: Io): Promise<number> {
   if (sub === 'classes') {
     io.out(`${JSON.stringify(VOCABULARY, null, 2)}\n`);
     return 0;
+  }
+
+  if (sub === 'tokens') {
+    // A theme document if the workspace has one, and the built-in palette
+    // otherwise — an agent asking what the accent colour is should never have
+    // to know whether anyone got round to defining it.
+    const theme = await workspaceTheme();
+    if (flagBool(args, 'dtcg')) {
+      io.out(`${JSON.stringify(toDtcg(theme), null, 2)}\n`);
+      return 0;
+    }
+    io.out(`${theme.name}\n`);
+    for (const mode of theme.modes) {
+      io.out(`  ${mode.name}\n`);
+      for (const [role, value] of Object.entries(mode.colors)) io.out(`    ${role.padEnd(14)} ${value}\n`);
+    }
+    const problems = checkContrast(theme);
+    for (const problem of problems) io.err(`${problem.mode}: ${problem.message}\n`);
+    return problems.length > 0 ? 1 : 0;
   }
 
   const ref = args.positional[1];
@@ -238,16 +292,31 @@ async function designCommand(args: ParsedArgs, io: Io): Promise<number> {
     return 1;
   }
 
+  // `--under` is the difference between an agent reading a 400-line design and
+  // reading the twelve lines it needs.
+  const under = flagString(args, 'under', '');
+  const scoped = under ? subtree(found.design, under) : found.design;
+  if (!scoped) {
+    io.err(`galley: there is no layer \`${under}\` in ${path}\n`);
+    return 1;
+  }
+
   if (sub === 'source') {
-    io.out(found.source.endsWith('\n') ? found.source : `${found.source}\n`);
+    if (!under) {
+      io.out(found.source.endsWith('\n') ? found.source : `${found.source}\n`);
+      return 0;
+    }
+    // A subtree has no original bytes to copy, so this one is serialized. It is
+    // the only read path that is not the file verbatim, and it says so.
+    io.out(serializeDesign(scoped, { durable: new Set([under]) }));
     return 0;
   }
   if (sub === 'outline') {
-    io.out(designOutline(found.design));
+    io.out(designOutline(scoped, { depth: flagNumber(args, 'depth', 0) || null }));
     return 0;
   }
   if (sub === 'lint') {
-    const findings = lintDesign(found.design);
+    const findings = lintDesign(scoped, { theme: await workspaceTheme() });
     if (flagBool(args, 'json')) {
       io.out(`${JSON.stringify(findings, null, 2)}\n`);
     } else {

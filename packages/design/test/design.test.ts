@@ -621,3 +621,80 @@ describe('design ops', () => {
     expect(idAfter(design, 'l_missing', 0)).toBeNull();
   });
 });
+
+/**
+ * Text nobody can read.
+ *
+ * The rule nothing else in the field runs *in the loop*: accessibility tooling
+ * overwhelmingly checks a rendered page long after the model that chose the
+ * colours has stopped. Here it is a fact about the markup, because the palette
+ * and the type scale are both closed — so the ratio is computable without
+ * rendering anything, in every mode at once.
+ *
+ * It earned itself immediately: on its first run it found placeholder text in
+ * the Form starter at 2.92:1, which is exactly the accessibility defect
+ * placeholders are famous for.
+ */
+describe('contrast', () => {
+  const frame = (inner: string, frameClasses = 'bg-canvas'): string =>
+    `<design name="x">\n<frame width="200" class="${frameClasses}">\n${inner}\n</frame>\n</design>`;
+
+  function messages(source: string): string[] {
+    return lintDesign(parsed(source)).map((finding) => finding.message);
+  }
+
+  it('finds the background by walking up, not by looking at the text', () => {
+    // A label almost never names its own background. Without the walk this rule
+    // would be silent on every real design.
+    const found = messages(
+      frame('<box class="flex flex-col bg-accent">\n<text class="text-body text-fg-subtle">Hard to read</text>\n</box>'),
+    );
+    expect(found.join(' ')).toContain('`bg-accent`');
+  });
+
+  it('sees through a container that paints nothing', () => {
+    const found = messages(
+      frame('<box class="flex flex-col">\n<text class="text-body text-on-accent">Invisible</text>\n</box>', 'bg-canvas'),
+    );
+    // White ink on the canvas, through a transparent box.
+    expect(found.length).toBeGreaterThan(0);
+    expect(found[0]).toContain('`bg-canvas`');
+  });
+
+  it('holds large text to the lower bar the standard sets', () => {
+    // WCAG 2.2 §1.4.3: 3:1 at ≥24px. `text-display` is 40px, `text-body` 15px,
+    // and the same ink has to pass one and fail the other for the rule to be
+    // doing anything.
+    const ink = 'text-fg-subtle';
+    const big = messages(frame(`<text class="text-display ${ink}">Big</text>`, 'bg-accent-soft'));
+    const small = messages(frame(`<text class="text-body ${ink}">Small</text>`, 'bg-accent-soft'));
+    expect(small.length).toBeGreaterThan(big.length);
+  });
+
+  it('names the ratio, the pair, the size and the target', () => {
+    // A finding that does not carry all four is not actionable: the reader
+    // cannot tell how far off it is or what to change.
+    const [message] = messages(frame('<text class="text-body text-fg-subtle">Faint</text>', 'bg-accent-soft'));
+    expect(message).toMatch(/\d+\.\d+:1/);
+    expect(message).toContain('text-fg-subtle');
+    expect(message).toContain('bg-accent-soft');
+    expect(message).toMatch(/\d+px/);
+    expect(message).toContain('4.5:1');
+  });
+
+  it('checks every mode, so a design cannot be legible in one and not the other', () => {
+    const found = messages(frame('<text class="text-body text-fg-subtle">Faint</text>', 'bg-accent-soft'));
+    const modes = new Set(found.map((message) => (message.includes('in light') ? 'light' : 'dark')));
+    expect(modes.size).toBeGreaterThan(0);
+  });
+
+  it('says nothing about empty text', () => {
+    expect(messages(frame('<text class="text-body text-fg-subtle"></text>')).filter((m) => m.includes(':1'))).toEqual([]);
+  });
+
+  it('leaves an unknown role to the rule that owns it', () => {
+    // Reporting the same mistake twice, in two voices, helps nobody.
+    const found = messages(frame('<text class="text-body text-nonsense">Hi</text>'));
+    expect(found.filter((message) => message.includes(':1'))).toEqual([]);
+  });
+});

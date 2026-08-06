@@ -85,7 +85,12 @@ export const DEFAULT_THEME: ThemeDocument = {
         sunken: '#eceef2',
         fg: '#14161a',
         'fg-muted': '#5b6270',
-        'fg-subtle': '#8b929e',
+        // Legible, not decorative. This was #8b929e, which is 2.92:1 on a
+        // surface — and the contrast rule caught the starters using it for
+        // placeholder text, which is exactly the accessibility defect
+        // placeholders are famous for. A role a design cannot use for text
+        // without erroring is a role that does not earn its place.
+        'fg-subtle': '#666e7c',
         'on-accent': '#ffffff',
         border: '#dfe2e8',
         'border-strong': '#7d8593',
@@ -111,7 +116,7 @@ export const DEFAULT_THEME: ThemeDocument = {
         sunken: '#0f1114',
         fg: '#eef0f4',
         'fg-muted': '#a3aab8',
-        'fg-subtle': '#727b8a',
+        'fg-subtle': '#828a99',
         // Dark, not white. In dark mode the accent is *lighter* than the
         // surface, so white ink on it is the classic contrast failure — 3.2:1,
         // which the checker refuses. This is the reason `on-accent` is a role

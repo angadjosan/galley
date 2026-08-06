@@ -112,7 +112,7 @@ export const STARTERS: readonly DesignStarter[] = [
       '    </box>',
       '    <text class="text-label text-fg-muted">Disabled</text>',
       '    <box class="flex items-center justify-center h-40 px-5 bg-sunken rounded-md opacity-60">',
-      '      <text class="text-body font-medium text-fg-subtle">Continue</text>',
+      '      <text class="text-body font-medium text-fg-muted">Continue</text>',
       '    </box>',
       '    <text class="text-label text-fg-muted">Destructive</text>',
       '    <box class="flex items-center justify-center h-40 px-5 bg-danger rounded-md">',
