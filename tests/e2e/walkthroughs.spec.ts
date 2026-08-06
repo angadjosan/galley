@@ -569,3 +569,59 @@ test.describe('history', () => {
     }
   });
 });
+
+/**
+ * Designs, end to end.
+ *
+ * The claim under test is the one that makes a design worth having in this
+ * product rather than in Figma: **what the canvas produces is what an agent
+ * reads.** Not an export of it, not a description of it — the same bytes.
+ *
+ * So the shape of the test is deliberately the same as walkthrough A. A person
+ * does something visual with a mouse, and an agent then reads the file with the
+ * agent's own credentials and finds exactly the change.
+ */
+test.describe('designs', () => {
+  test('a design made with the mouse is what an agent reads', async ({ page }) => {
+    await openWorkspace(page);
+    await page.getByTestId('doc-specs/checkout-v2').click();
+    await expect(page.getByTestId('doc-title')).toHaveText('Checkout v2');
+    await caretAtEndOf(page, '.prose > p[data-block-id]');
+
+    await page.getByRole('button', { name: 'Insert design', exact: true }).click();
+    await page.getByTestId('design-form').click();
+
+    // The prose gets a reference, not a copy: a design is its own document.
+    const chip = page.locator('.prose a[title="design"]');
+    await expect(chip).toBeVisible();
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    // Read where it points *now*, while the prose is still on screen — opening
+    // the design replaces this surface with the canvas.
+    const designPath = (await chip.first().getAttribute('href')) ?? '';
+    expect(designPath, 'the design reference has no target').not.toBe('');
+
+    // Open the design. It gets the canvas, decided by looking at the content.
+    await page.reload();
+    await page.getByTestId('doc-list').getByText('Form', { exact: true }).click();
+    await expect(page.getByTestId('design-editor')).toBeVisible();
+    // It renders as a picture — real boxes with real text, no markup on screen.
+    await expect(page.locator('.design-surface')).toBeVisible();
+    await expect(page.locator('.design-layer', { hasText: 'Pay $42.00' }).first()).toBeVisible();
+    expect(await page.locator('.design-canvas').innerText()).not.toContain('<box');
+    // And it starts clean, which is what makes the findings bar meaningful.
+    await expect(page.getByTestId('design-findings')).toHaveText('Nothing to fix.');
+
+    // Change a property with the mouse, the way anyone would.
+    await page.locator('.design-tree-row', { hasText: 'Pay button' }).click();
+    await page.locator('.inspector-choice', { hasText: 'Background' }).locator('select').selectOption('bg-danger');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    // The agent's view. This is the whole point.
+    const source = await readAsAgent(designPath);
+    expect(source, 'the design is not stored as markup an agent can read').toContain('<design');
+    expect(source).toContain('bg-danger');
+    expect(source).not.toContain('bg-accent"');
+    // Still a fence, so it degrades to legible source anywhere else.
+    expect(source).toContain('```design');
+  });
+});

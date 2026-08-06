@@ -1,0 +1,98 @@
+- generic [ref=f59e3]:
+  - complementary [ref=f59e4]:
+    - generic [ref=f59e5]: Galley
+    - textbox "Search" [ref=f59e13]:
+      - /placeholder: Search everything
+    - navigation [ref=f59e14]:
+      - generic [ref=f59e15]:
+        - generic [ref=f59e16]: Design
+        - button "Galley" [ref=f59e17] [cursor=pointer]
+        - button "Form" [ref=f59e19] [cursor=pointer]
+      - generic [ref=f59e21]:
+        - generic [ref=f59e22]: Policies
+        - button "Refund policy" [ref=f59e23] [cursor=pointer]
+      - generic [ref=f59e25]:
+        - generic [ref=f59e26]: Runbooks
+        - button "Deploy runbook" [ref=f59e27] [cursor=pointer]
+      - generic [ref=f59e29]:
+        - generic [ref=f59e30]: Scratch
+        - button "Diag Test" [active] [ref=f59e31] [cursor=pointer]
+      - generic [ref=f59e33]:
+        - generic [ref=f59e34]: Specs
+        - button "Checkout v2" [ref=f59e35] [cursor=pointer]
+    - generic [ref=f59e37]:
+      - button "New document" [ref=f59e38] [cursor=pointer]: + New document
+      - button "Sign out" [ref=f59e39] [cursor=pointer]
+  - generic [ref=f59e40]:
+    - banner [ref=f59e1046]:
+      - generic [ref=f59e1047]:
+        - button "Documents" [ref=f59e1048] [cursor=pointer]:
+          - generic [ref=f59e1049]: ☰
+        - navigation "Location" [ref=f59e1050]:
+          - generic [ref=f59e1051]: Scratch
+          - generic [ref=f59e1052]: ›
+          - generic [ref=f59e1053]: Diagtest.md
+        - generic [ref=f59e1054]:
+          - generic "Saved" [ref=f59e1055]
+          - generic "priya" [ref=f59e1057]: P
+          - button "Share" [ref=f59e1058] [cursor=pointer]
+      - menubar "Main" [ref=f59e1059]:
+        - menuitem "File" [ref=f59e1061] [cursor=pointer]
+        - menuitem "Edit" [ref=f59e1063] [cursor=pointer]
+        - menuitem "Insert" [ref=f59e1065] [cursor=pointer]
+        - menuitem "Format" [ref=f59e1067] [cursor=pointer]
+      - toolbar "Formatting" [ref=f59e1069]:
+        - generic [ref=f59e1070]:
+          - button "Undo" [disabled] [ref=f59e1071]
+          - button "Redo" [disabled] [ref=f59e1075]
+        - 'button "Paragraph style: Normal text" [ref=f59e1082] [cursor=pointer]':
+          - generic [ref=f59e1083]: Normal text
+        - generic [ref=f59e1086]:
+          - button "Bold" [disabled] [ref=f59e1088]:
+            - generic [ref=f59e1089]: B
+          - button "Italic" [disabled] [ref=f59e1090]:
+            - generic [ref=f59e1091]: I
+          - button "Underline" [disabled] [ref=f59e1092]:
+            - generic [ref=f59e1093]: U
+          - button "Strikethrough" [disabled] [ref=f59e1094]:
+            - generic [ref=f59e1095]: S
+          - button "Highlight" [disabled] [ref=f59e1096]
+          - button "Code" [disabled] [ref=f59e1100]
+        - generic [ref=f59e1104]:
+          - button "Insert link" [ref=f59e1106] [cursor=pointer]
+          - button "Add comment" [ref=f59e1110] [cursor=pointer]
+          - button "Insert image" [ref=f59e1113] [cursor=pointer]
+          - button "Insert diagram" [ref=f59e1118] [cursor=pointer]
+          - button "Insert design" [ref=f59e1124] [cursor=pointer]
+          - button "Insert table" [ref=f59e1129] [cursor=pointer]
+        - generic [ref=f59e1133]:
+          - button "Checklist" [disabled] [ref=f59e1135]
+          - button "Bulleted list" [disabled] [ref=f59e1141]
+          - button "Numbered list" [disabled] [ref=f59e1147]:
+            - img [ref=f59e1148]:
+              - generic [ref=f59e1150]: "1"
+              - generic [ref=f59e1151]: "2"
+              - generic [ref=f59e1152]: "3"
+          - button "Decrease indent" [disabled] [ref=f59e1153]
+          - button "Increase indent" [disabled] [ref=f59e1157]
+        - button "Clear formatting" [ref=f59e1163] [cursor=pointer]
+    - generic [ref=f59e1168]:
+      - main [ref=f59e1169]:
+        - generic "Document" [ref=f59e1172]:
+          - figure [ref=f59e1173]:
+            - img [ref=f59e1175]:
+              - generic [ref=f59e1178]:
+                - paragraph [ref=f59e1185]: Start
+                - paragraph [ref=f59e1192]: End
+            - button "Edit diagram" [ref=f59e1193] [cursor=pointer]
+          - paragraph [ref=f59e1194]: A paragraph between.
+          - figure [ref=f59e1195]:
+            - img [ref=f59e1197]:
+              - generic [ref=f59e1198]: B
+              - generic [ref=f59e1201]: A
+              - generic [ref=f59e1204]: B
+              - generic [ref=f59e1208]: A
+              - generic [ref=f59e1212]: hi
+            - button "Edit diagram" [ref=f59e1213] [cursor=pointer]
+      - complementary [ref=f59e1214]:
+        - paragraph [ref=f59e1215]: No notes yet. Select any text and press ⌘⌥M to leave one.

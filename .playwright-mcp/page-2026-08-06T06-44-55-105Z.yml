@@ -1,0 +1,97 @@
+- generic [ref=f59e3]:
+  - complementary [ref=f59e4]:
+    - generic [ref=f59e5]: Galley
+    - textbox "Search" [ref=f59e13]:
+      - /placeholder: Search everything
+    - navigation [ref=f59e14]:
+      - generic [ref=f59e15]:
+        - generic [ref=f59e16]: Design
+        - button "Galley" [ref=f59e17] [cursor=pointer]
+        - button "Form" [active] [ref=f59e19] [cursor=pointer]
+      - generic [ref=f59e21]:
+        - generic [ref=f59e22]: Policies
+        - button "Refund policy" [ref=f59e23] [cursor=pointer]
+      - generic [ref=f59e25]:
+        - generic [ref=f59e26]: Runbooks
+        - button "Deploy runbook" [ref=f59e27] [cursor=pointer]
+      - generic [ref=f59e29]:
+        - generic [ref=f59e30]: Scratch
+        - button "Diag Test" [ref=f59e31] [cursor=pointer]
+      - generic [ref=f59e33]:
+        - generic [ref=f59e34]: Specs
+        - button "Checkout v2" [ref=f59e35] [cursor=pointer]
+    - generic [ref=f59e37]:
+      - button "New document" [ref=f59e38] [cursor=pointer]: + New document
+      - button "Sign out" [ref=f59e39] [cursor=pointer]
+  - generic [ref=f59e40]:
+    - banner [ref=f59e588]:
+      - generic [ref=f59e589]:
+        - button "Documents" [ref=f59e590] [cursor=pointer]:
+          - generic [ref=f59e591]: ☰
+        - navigation "Location" [ref=f59e592]:
+          - generic [ref=f59e593]: Design
+          - generic [ref=f59e594]: ›
+          - generic [ref=f59e595]: Form
+        - generic [ref=f59e596]:
+          - generic "Saved" [ref=f59e597]
+          - generic "priya" [ref=f59e599]: P
+          - button "Share" [ref=f59e600] [cursor=pointer]
+    - generic [ref=f59e601]:
+      - banner [ref=f59e602]:
+        - heading "Payment" [level=2] [ref=f59e603]
+        - generic [ref=f59e604]:
+          - button "Source" [ref=f59e605] [cursor=pointer]
+          - button "Done" [ref=f59e606] [cursor=pointer]
+      - generic [ref=f59e607]:
+        - complementary "Layers" [ref=f59e608]:
+          - button "Payment / default" [ref=f59e609] [cursor=pointer]:
+            - generic [ref=f59e610]: ▦
+          - button "Text" [ref=f59e612] [cursor=pointer]:
+            - generic [ref=f59e613]: T
+          - button "Card field" [ref=f59e615] [cursor=pointer]:
+            - generic [ref=f59e616]: ▢
+          - button "Text" [ref=f59e618] [cursor=pointer]:
+            - generic [ref=f59e619]: T
+          - button "Group" [ref=f59e621] [cursor=pointer]:
+            - generic [ref=f59e622]: ▢
+          - button "Text" [ref=f59e624] [cursor=pointer]:
+            - generic [ref=f59e625]: T
+          - button "Expiry and code" [ref=f59e627] [cursor=pointer]:
+            - generic [ref=f59e628]: ▢
+          - button "Group" [ref=f59e630] [cursor=pointer]:
+            - generic [ref=f59e631]: ▢
+          - button "Text" [ref=f59e633] [cursor=pointer]:
+            - generic [ref=f59e634]: T
+          - button "Group" [ref=f59e636] [cursor=pointer]:
+            - generic [ref=f59e637]: ▢
+          - button "Text" [ref=f59e639] [cursor=pointer]:
+            - generic [ref=f59e640]: T
+          - button "Group" [ref=f59e642] [cursor=pointer]:
+            - generic [ref=f59e643]: ▢
+          - button "Text" [ref=f59e645] [cursor=pointer]:
+            - generic [ref=f59e646]: T
+          - button "Group" [ref=f59e648] [cursor=pointer]:
+            - generic [ref=f59e649]: ▢
+          - button "Text" [ref=f59e651] [cursor=pointer]:
+            - generic [ref=f59e652]: T
+          - button "Pay button" [ref=f59e654] [cursor=pointer]:
+            - generic [ref=f59e655]: ▢
+          - button "Text" [ref=f59e657] [cursor=pointer]:
+            - generic [ref=f59e658]: T
+        - figure "Payment / default" [ref=f59e662]:
+          - generic [ref=f59e664]:
+            - generic [ref=f59e665]: Payment
+            - generic [ref=f59e666]:
+              - generic [ref=f59e667]: Card number
+              - generic [ref=f59e668]: 4242 4242 4242 4242
+            - generic [ref=f59e670]:
+              - generic [ref=f59e671]:
+                - generic [ref=f59e672]: Expires
+                - generic [ref=f59e673]: MM / YY
+              - generic [ref=f59e675]:
+                - generic [ref=f59e676]: Security code
+                - generic [ref=f59e677]: "123"
+            - generic [ref=f59e679]: Pay $42.00
+        - complementary "Properties" [ref=f59e681]:
+          - paragraph [ref=f59e682]: Select a layer to change it.
+      - contentinfo [ref=f59e683]: Nothing to fix.
