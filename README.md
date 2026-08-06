@@ -24,9 +24,9 @@ Open the URL the API prints. It carries a token; the app moves it out of the
 address bar on first load.
 
 ```bash
-npm test                 # unit and integration — 571 tests, ~13s
+npm test                 # unit and integration — 617 tests, ~13s
 npm run test:stress      # concurrency, saturation, chaos, latency
-npm run test:e2e         # both walkthroughs, headless, real browser
+npm run test:e2e         # the walkthroughs, headless, real browser
 npm run typecheck
 ```
 
