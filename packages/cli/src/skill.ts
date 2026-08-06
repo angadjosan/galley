@@ -86,6 +86,54 @@ new document, not an edit, and a person needs to make that call.
 Write a real \`--why\`. The reviewer is deciding whether to trust a change they
 did not make; "updated the spec" tells them nothing.
 
+## Diagrams
+
+A diagram is an ordinary fenced code block with the info string \`mermaid\`. It
+is the same bytes GitHub, GitLab and Obsidian already draw, so you write one by
+writing a fence:
+
+\`\`\`
+\`\`\`mermaid
+flowchart TD
+  Start([Start]) --> Done([Done])
+\`\`\`
+\`\`\`
+
+There is no diagram-specific command and no new op type. Editing a diagram is
+editing the block that holds it.
+
+## Designs
+
+A design is its own document whose body is a single \`design\` fence. It has an
+id, a history and comments like any other document, and a prose document points
+at one with an ordinary link.
+
+\`\`\`
+galley design outline designs/checkout      # structure only -- read this first
+galley design source  designs/checkout      # the markup
+galley design lint    designs/checkout      # what is wrong, and the fix
+galley design classes                       # the vocabulary itself
+\`\`\`
+
+Read the **outline** before the source. It is a fraction of the size and it is
+usually enough to find the layer you want.
+
+The format is a small tree of \`<box>\`, \`<text>\` and \`<image>\` inside a
+\`<frame>\`, laid out by flexbox, styled only with class names from a **closed**
+vocabulary. Two rules follow, and both matter more than they look:
+
+- **Never invent a class.** There is no syntax for a literal colour or size --
+  \`bg-[#2463eb]\` and \`bg-blue-500\` are both errors. Run
+  \`galley design classes\` and use what is there. Colours are named by role
+  (\`bg-surface\`, \`text-fg-muted\`, \`bg-accent\`), never by hue.
+- **Never reach for a coordinate.** There is no way to position a layer
+  absolutely. Say what the arrangement *is* -- \`flex-col gap-4\` -- and let the
+  browser do the arithmetic. You cannot measure rendered text and neither can the
+  format, which is why this works.
+
+Run \`galley design lint\` before you propose a design. It exits non-zero on an
+error and its messages carry the fix.
+
 ## Checking your work
 
 \`\`\`
@@ -107,4 +155,8 @@ you should have edited. Say so rather than leaving it for someone to find.
   silently detaches every comment on that block.
 - Do not add a \`galley:\` frontmatter key by hand. Document identity is minted
   once, and a duplicate makes two documents claim to be the same one.
+- Do not invent a design class name. An unknown class is an error, not a
+  fallback, and a design that does not lint is a design that will not draw.
+- Do not hand-edit a design's \`id="l_..."\` attributes. They are layer identity,
+  and a note on a layer finds it by id.
 `;

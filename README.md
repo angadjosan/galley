@@ -24,7 +24,7 @@ Open the URL the API prints. It carries a token; the app moves it out of the
 address bar on first load.
 
 ```bash
-npm test                 # unit and integration — 446 tests, ~25s
+npm test                 # unit and integration — 571 tests, ~13s
 npm run test:stress      # concurrency, saturation, chaos, latency
 npm run test:e2e         # both walkthroughs, headless, real browser
 npm run typecheck
@@ -45,6 +45,9 @@ galley read specs/checkout-v2#a1b2c3   # one block
 galley search "refund policy"          # matching blocks, as path#block refs
 galley comment <ref> "…"               # anchored comment
 galley suggest <ref> --from patch.md   # propose an edit, as block-scoped ops
+galley design outline <ref>            # a design's structure, without its styling
+galley design lint <ref>               # what is wrong with a design, and the fix
+galley design classes                  # the design vocabulary, served by the tool
 galley push                            # local edits back, as suggestions
 galley status                          # what changed, what is stale, what is pending
 galley skill                           # write the first-party agent skill
@@ -69,6 +72,8 @@ galley read specs/checkout-v2 | claude -p "implement this"
 packages/
   concurrency/   locks, channels, sequencing, watermarks — the only place
                  synchronization is implemented
+  design/        the design format: a closed utility vocabulary over a flexbox
+                 tree, its strict parser, its serializer and its linter
   markdown/      the splicing round-trip engine: parse with source ranges,
                  edit by splicing, never re-serialize
   anchor/        block identity, fingerprints, fuzzy re-anchoring
@@ -77,7 +82,8 @@ packages/
   client/        one typed client, shared by the CLI and the app
   cli/           the galley binary and the first-party skill
 apps/
-  web/           ProseMirror WYSIWYG, comment and review rails
+  web/           ProseMirror WYSIWYG, the menu bar and toolbar, the diagram
+                 renderer, the design canvas, comment and review rails
 corpus/          Markdown the round-trip engine must not disturb
 tests/
   stress/        concurrency, saturation, chaos, latency
@@ -86,7 +92,22 @@ tests/
 
 ---
 
-## The four things that carry the product
+## What carries the product
+
+**A surface nobody has to be taught.** An always-visible toolbar and a menu bar
+that enumerates everything the app can do, over a real 816px page. This reverses
+an earlier design built on a `/` menu and a selection bubble; `decisions.md` D38
+records why the earlier reasoning was persuasive and wrong. Hidden controls are
+efficient for someone who already knows the tool and a wall for everyone else,
+and this product is explicitly for everyone else. Font, size, colour and
+alignment are deliberately absent — Markdown cannot express them, so the button
+would either lie or destroy the setting on the next save.
+
+**Pictures that are still text.** A diagram is a ```mermaid fence — the same
+bytes GitHub already draws — shown in the editor as a picture with an Edit
+affordance and never as a fence. A design is its own document holding a small
+flexbox tree styled from a closed vocabulary, so a model can write one, a GUI
+edit changes one line, and nothing in the pipeline ever has to measure text.
 
 **Round-trip fidelity.** A document is never serialized from its AST. It is
 parsed into a block model that keeps every byte offset, and edits are *spliced*
@@ -126,6 +147,7 @@ to a sibling.
 | Suite | Defends |
 |---|---|
 | `packages/markdown` | byte stability; a corpus edit changes only what you typed |
+| `packages/design` | a design round-trips byte-exactly; an edited layer changes one line; an unknown construct is reported, never dropped |
 | `packages/anchor` | the ≥95% / zero-misattachment gate |
 | `packages/concurrency` | fairness, cancellation safety, fault vs. close |
 | `packages/core` | ordering, session boundaries, suggestion states |
