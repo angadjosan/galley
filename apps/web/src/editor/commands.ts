@@ -312,6 +312,26 @@ export function insertDiagram(code: string): Command {
   return insertBlock('diagram', { lang: 'mermaid', code });
 }
 
+/**
+ * A reference to a design.
+ *
+ * An ordinary link, deliberately. Galley recognises a link whose target is a
+ * design document and draws it live; every other renderer shows a link to a
+ * file, which is what it is. Nothing about the Markdown was extended, so there
+ * is nothing to degrade.
+ */
+export function insertDesignLink(path: string, label: string): Command {
+  return (state, dispatch) => {
+    const link = schema.marks.link;
+    if (!link) return false;
+    if (dispatch) {
+      const text = schema.text(label, [link.create({ href: path, title: 'design' })]);
+      dispatch(state.tr.replaceSelectionWith(text, false).scrollIntoView());
+    }
+    return true;
+  };
+}
+
 export function insertImage(src: string, alt: string): Command {
   return (state, dispatch) => {
     const image = schema.nodes.image;

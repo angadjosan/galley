@@ -21,9 +21,11 @@ import type {
 import type { EditorState } from 'prosemirror-state';
 import { diffToBlockOps } from '@galley/core/diff';
 import { parseDocument } from '@galley/markdown';
+import { STARTERS, embedDesign, extractDesign, type DesignStarter } from '@galley/design';
 import { Editor, type EditorHandle } from './editor/Editor.js';
-import { INSERT_TABLE, insertDiagram, insertImage } from './editor/commands.js';
+import { INSERT_TABLE, insertDesignLink, insertDiagram, insertImage } from './editor/commands.js';
 import { DIAGRAM_TEMPLATES } from './editor/diagram.js';
+import { DesignEditor } from './design/DesignEditor.js';
 import { MenuBar } from './chrome/MenuBar.js';
 import { Toolbar } from './chrome/Toolbar.js';
 import { emptyHighlights, type CommentAnchor, type CommentHighlightState } from './editor/plugins.js';
@@ -787,6 +789,79 @@ function DocumentView({
   const title = titleOf(loaded.content, loaded.path);
   const folder = loaded.path.includes('/') ? loaded.path.slice(0, loaded.path.lastIndexOf('/')) : '';
 
+  /**
+   * A design document opens in the canvas, not in the prose editor.
+   *
+   * A design *is* a document — same storage, same history, same comments, same
+   * CLI — so the only thing that differs is which surface is right for editing
+   * it. Deciding that by looking at the content rather than at a type field is
+   * deliberate: the file is the truth, so a document that stops being a design
+   * because someone deleted the fence stops opening as one, with nothing to get
+   * out of sync.
+   */
+  const asDesign = extractDesign(loaded.content);
+  if (asDesign) {
+    return (
+      <>
+        <header className="chrome">
+          <div className="chrome-top">
+            <button className="icon-button chrome-menu" onClick={onToggleLibrary} aria-label="Documents">
+              <span aria-hidden="true">☰</span>
+            </button>
+            <nav className="breadcrumb" aria-label="Location">
+              {folder && (
+                <>
+                  <span className="crumb">{prettyName(folder)}</span>
+                  <span className="crumb-sep" aria-hidden="true">
+                    ›
+                  </span>
+                </>
+              )}
+              <span className="crumb is-current" data-testid="doc-title">
+                {title}
+              </span>
+            </nav>
+            <div className="chrome-right">
+              <SaveBadge state={save} />
+              <Presence peers={peers} />
+              <button className="chrome-button chrome-share" onClick={() => setShareOpen(true)}>
+                Share
+              </button>
+            </div>
+          </div>
+        </header>
+        {notice && (
+          <div className={`banner banner-${notice.tone}`} data-testid="notice">
+            <span>{notice.text}</span>
+            <button className="icon-button" onClick={() => setNotice(null)} aria-label="Dismiss">
+              <span aria-hidden="true">✕</span>
+            </button>
+          </div>
+        )}
+        <DesignEditor
+          source={asDesign.source}
+          // A layer with a note on it keeps its id in the file. Same rule as a
+          // paragraph: identity materializes when something durable needs it.
+          anchored={
+            new Set(
+              comments
+                .map((comment) => comment.anchor.blockId)
+                .filter((blockId): blockId is string => !!blockId),
+            )
+          }
+          onChange={(source) => {
+            // Spliced back into the document, so the prose around the design —
+            // a title above it, notes below — is copied rather than rewritten.
+            setDraft(embedDesign(loaded.content, source));
+            setSave('dirty');
+          }}
+          onClose={onToggleLibrary}
+        />
+        {shareOpen && <Share path={loaded.path} onClose={() => setShareOpen(false)} />}
+      </>
+    );
+  }
+
   return (
     <>
       {/*
@@ -1022,6 +1097,32 @@ function DocumentView({
           onInsert={(code) => {
             setInserting(null);
             editor.current?.run(insertDiagram(code));
+          }}
+        />
+      )}
+
+      {inserting === 'design' && (
+        <DesignPicker
+          onClose={() => {
+            setInserting(null);
+            editor.current?.focus();
+          }}
+          onInsert={async (starter) => {
+            setInserting(null);
+            try {
+              // A design is its own document, so inserting one creates a
+              // document and links to it. The link is ordinary CommonMark —
+              // Galley draws it live, everything else shows a link, and the
+              // design keeps its own history and its own comments.
+              const slug = `${loaded.path}-design-${Math.random().toString(36).slice(2, 6)}`;
+              await client.create(
+                slug,
+                `# ${starter.label}\n\n\`\`\`design\n${starter.source}\n\`\`\`\n`,
+              );
+              editor.current?.run(insertDesignLink(slug, starter.label));
+            } catch (err) {
+              setNotice(failure('That design could not be created.', err));
+            }
           }}
         />
       )}
@@ -1606,6 +1707,45 @@ function ImagePicker({
           </button>
         </div>
       </form>
+    </Overlay>
+  );
+}
+
+/**
+ * Choosing a design to start from.
+ *
+ * Same reasoning as the diagram gallery, and the same evidence behind it: a
+ * blank canvas is a churn surface. Every starter is a real design in the
+ * closed vocabulary, so the first edit is renaming a label rather than
+ * learning a layout language.
+ */
+function DesignPicker({
+  onInsert,
+  onClose,
+}: {
+  onInsert(starter: DesignStarter): void;
+  onClose(): void;
+}): JSX.Element {
+  return (
+    <Overlay title="Insert a design" onClose={onClose}>
+      <p className="overlay-lead">
+        A design is its own document, so it keeps its own history and its own notes — and any
+        document can point at it.
+      </p>
+      <div className="diagram-gallery">
+        {STARTERS.map((starter) => (
+          <button
+            key={starter.id}
+            type="button"
+            className="diagram-card"
+            data-testid={`design-${starter.id}`}
+            onClick={() => onInsert(starter)}
+          >
+            <span className="diagram-card-name">{starter.label}</span>
+            <span className="diagram-card-hint">{starter.hint}</span>
+          </button>
+        ))}
+      </div>
     </Overlay>
   );
 }

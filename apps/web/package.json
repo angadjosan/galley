@@ -27,7 +27,8 @@
     "prosemirror-transform": "^1.10.2",
     "prosemirror-view": "^1.37.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "@galley/design": "*"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

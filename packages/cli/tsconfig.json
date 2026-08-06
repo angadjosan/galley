@@ -23,6 +23,9 @@
     },
     {
       "path": "../server"
+    },
+    {
+      "path": "../design"
     }
   ]
 }

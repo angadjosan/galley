@@ -1,0 +1,94 @@
+- generic [ref=f54e3]:
+  - complementary [ref=f54e4]:
+    - generic [ref=f54e5]: Galley
+    - textbox "Search" [ref=f54e13]:
+      - /placeholder: Search everything
+    - navigation [ref=f54e14]:
+      - generic [ref=f54e15]:
+        - generic [ref=f54e16]: Design
+        - button "Galley" [ref=f54e17] [cursor=pointer]
+        - button "Form" [active] [ref=f54e19] [cursor=pointer]
+      - generic [ref=f54e21]:
+        - generic [ref=f54e22]: Policies
+        - button "Refund policy" [ref=f54e23] [cursor=pointer]
+      - generic [ref=f54e25]:
+        - generic [ref=f54e26]: Runbooks
+        - button "Deploy runbook" [ref=f54e27] [cursor=pointer]
+      - generic [ref=f54e29]:
+        - generic [ref=f54e30]: Specs
+        - button "Checkout v2" [ref=f54e31] [cursor=pointer]
+    - generic [ref=f54e33]:
+      - button "New document" [ref=f54e34] [cursor=pointer]: + New document
+      - button "Sign out" [ref=f54e35] [cursor=pointer]
+  - generic [ref=f54e36]:
+    - banner [ref=f54e40]:
+      - generic [ref=f54e41]:
+        - button "Documents" [ref=f54e42] [cursor=pointer]:
+          - generic [ref=f54e43]: ☰
+        - navigation "Location" [ref=f54e44]:
+          - generic [ref=f54e45]: Design
+          - generic [ref=f54e46]: ›
+          - generic [ref=f54e47]: Form
+        - generic [ref=f54e48]:
+          - generic "Saved" [ref=f54e49]
+          - generic "priya" [ref=f54e51]: P
+          - button "Share" [ref=f54e52] [cursor=pointer]
+    - generic [ref=f54e53]:
+      - banner [ref=f54e54]:
+        - heading "Payment" [level=2] [ref=f54e55]
+        - generic [ref=f54e56]:
+          - button "Source" [ref=f54e57] [cursor=pointer]
+          - button "Done" [ref=f54e58] [cursor=pointer]
+      - generic [ref=f54e59]:
+        - complementary "Layers" [ref=f54e60]:
+          - button "Payment / default" [ref=f54e61] [cursor=pointer]:
+            - generic [ref=f54e62]: ▦
+          - button "Text" [ref=f54e64] [cursor=pointer]:
+            - generic [ref=f54e65]: T
+          - button "Card field" [ref=f54e67] [cursor=pointer]:
+            - generic [ref=f54e68]: ▢
+          - button "Text" [ref=f54e70] [cursor=pointer]:
+            - generic [ref=f54e71]: T
+          - button "Group" [ref=f54e73] [cursor=pointer]:
+            - generic [ref=f54e74]: ▢
+          - button "Text" [ref=f54e76] [cursor=pointer]:
+            - generic [ref=f54e77]: T
+          - button "Expiry and code" [ref=f54e79] [cursor=pointer]:
+            - generic [ref=f54e80]: ▢
+          - button "Group" [ref=f54e82] [cursor=pointer]:
+            - generic [ref=f54e83]: ▢
+          - button "Text" [ref=f54e85] [cursor=pointer]:
+            - generic [ref=f54e86]: T
+          - button "Group" [ref=f54e88] [cursor=pointer]:
+            - generic [ref=f54e89]: ▢
+          - button "Text" [ref=f54e91] [cursor=pointer]:
+            - generic [ref=f54e92]: T
+          - button "Group" [ref=f54e94] [cursor=pointer]:
+            - generic [ref=f54e95]: ▢
+          - button "Text" [ref=f54e97] [cursor=pointer]:
+            - generic [ref=f54e98]: T
+          - button "Group" [ref=f54e100] [cursor=pointer]:
+            - generic [ref=f54e101]: ▢
+          - button "Text" [ref=f54e103] [cursor=pointer]:
+            - generic [ref=f54e104]: T
+          - button "Pay button" [ref=f54e106] [cursor=pointer]:
+            - generic [ref=f54e107]: ▢
+          - button "Text" [ref=f54e109] [cursor=pointer]:
+            - generic [ref=f54e110]: T
+        - figure "Payment / default" [ref=f54e114]:
+          - generic [ref=f54e116]:
+            - generic [ref=f54e117]: Payment
+            - generic [ref=f54e118]:
+              - generic [ref=f54e119]: Card number
+              - generic [ref=f54e120]: 4242 4242 4242 4242
+            - generic [ref=f54e122]:
+              - generic [ref=f54e123]:
+                - generic [ref=f54e124]: Expires
+                - generic [ref=f54e125]: MM / YY
+              - generic [ref=f54e127]:
+                - generic [ref=f54e128]: Security code
+                - generic [ref=f54e129]: "123"
+            - generic [ref=f54e131]: Pay $42.00
+        - complementary "Properties" [ref=f54e133]:
+          - paragraph [ref=f54e134]: Select a layer to change it.
+      - contentinfo [ref=f54e135]: Nothing to fix.

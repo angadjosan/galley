@@ -2458,3 +2458,404 @@ kbd {
   white-space: nowrap;
   border: 0;
 }
+
+/* ---------------------------------------------------------------- designs */
+
+/**
+ * A design's own palette.
+ *
+ * Named by role, resolved here, and deliberately *not* the same variables the
+ * app chrome uses. A design is a picture of somebody else's product -- its
+ * "surface" is that product's surface, not Galley's -- so sharing the tokens
+ * would mean restyling every design in every document the day Galley changed
+ * its own colours.
+ */
+.design-surface {
+  --d-canvas: #ffffff;
+  --d-surface: #f6f7f9;
+  --d-raised: #ffffff;
+  --d-sunken: #eceef2;
+  --d-fg: #14161a;
+  --d-fg-muted: #5b6270;
+  --d-fg-subtle: #8b929e;
+  --d-on-accent: #ffffff;
+  --d-border: #dfe2e8;
+  --d-border-strong: #c3c8d2;
+  --d-accent: #2f6df0;
+  --d-accent-soft: #e5ecfd;
+  --d-danger: #d0392f;
+  --d-danger-soft: #fbeae9;
+  --d-warn: #a8700a;
+  --d-warn-soft: #fdf3e0;
+
+  font-family: var(--sans);
+  color: var(--d-fg);
+  background: var(--d-canvas);
+  position: relative;
+  overflow: hidden;
+}
+
+.design-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--desk);
+}
+
+.design-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+
+.design-editor-head h2 {
+  font-size: var(--fs-card);
+  font-weight: 600;
+}
+
+.design-editor-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.chrome-button.is-on {
+  background: var(--accent-tint);
+  color: var(--accent-text);
+}
+
+/* Three panes: what is in the design, the design, and what the selected thing
+   is. The order is the order the questions arrive in. */
+.design-editor-body {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr) 288px;
+  flex: 1;
+  min-height: 0;
+}
+
+@media (max-width: 1100px) {
+  .design-editor-body {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+  .design-inspector {
+    display: none;
+  }
+}
+
+.design-tree,
+.design-inspector {
+  overflow-y: auto;
+  background: var(--surface);
+  min-height: 0;
+}
+
+.design-tree {
+  border-right: 1px solid var(--line);
+  padding: 8px 0;
+}
+
+.design-inspector {
+  border-left: 1px solid var(--line);
+  padding: 14px;
+}
+
+.design-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  background: none;
+  text-align: left;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.design-tree-row:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.design-tree-row.is-selected {
+  background: var(--accent-tint);
+  color: var(--accent-text);
+  font-weight: 560;
+}
+
+.design-tree-row.has-problem .design-tree-name {
+  text-decoration: underline wavy var(--warn);
+  text-underline-offset: 3px;
+}
+
+.design-tree-kind {
+  width: 14px;
+  color: var(--text-3);
+  flex: none;
+  text-align: center;
+}
+
+.design-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.design-tree-anchor {
+  margin-left: auto;
+  color: var(--warn);
+  font-size: 9px;
+}
+
+.design-canvas {
+  overflow: auto;
+  padding: 40px;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.design-frames {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 40px;
+  align-items: flex-start;
+}
+
+.design-frame-name {
+  margin-bottom: 6px;
+  font-size: var(--fs-small);
+  color: var(--text-3);
+}
+
+.design-surface {
+  box-shadow: var(--sh-page);
+}
+
+/* Selection is an outline drawn *outside* the layer, never a border: a border
+   changes the box the design describes, so selecting something would move
+   everything around it. */
+.design-layer.is-hovered,
+.design-surface.is-hovered {
+  outline: 1px solid var(--accent-line);
+  outline-offset: 0;
+}
+
+.design-layer.is-selected,
+.design-surface.is-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+/* Something is anchored here -- a note, a citation -- so this layer's id is in
+   the file and has to survive an edit. */
+.design-layer.is-anchored {
+  outline: 1px dashed var(--warn);
+}
+
+.design-inspector-empty {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.inspector-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-small);
+  color: var(--text-2);
+}
+
+.inspector-field input,
+.inspector-field textarea,
+.inspector-choice select {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--page);
+  color: var(--text);
+  font-size: var(--fs-small);
+  width: 100%;
+}
+
+.inspector-group {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 10px;
+}
+
+.inspector-group legend {
+  padding: 0 5px;
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.inspector-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.inspector-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  min-width: 0;
+}
+
+.inspector-toggles {
+  grid-template-columns: 1fr;
+}
+
+.inspector-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-small);
+  color: var(--text-2);
+}
+
+.inspector-findings {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--fs-small);
+}
+
+.inspector-findings .is-error {
+  color: var(--danger);
+}
+
+.inspector-findings .is-warning {
+  color: var(--warn);
+}
+
+.inspector-raw {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.inspector-raw code {
+  display: block;
+  margin-top: 5px;
+  font-family: var(--mono);
+  word-break: break-all;
+}
+
+.design-source {
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  flex: none;
+}
+
+.design-source textarea {
+  width: 100%;
+  height: 220px;
+  padding: 12px 16px;
+  border: none;
+  background: none;
+  font-family: var(--mono);
+  font-size: var(--fs-small);
+  line-height: 1.6;
+  resize: vertical;
+}
+
+/* Findings sit along the bottom and are always visible. A problem reported as
+   it is created is a correction; the same problem reported on save is an
+   interruption. */
+.design-findings {
+  flex: none;
+  padding: 8px 16px;
+  background: var(--warn-tint);
+  border-top: 1px solid var(--warn-line);
+  font-size: var(--fs-small);
+  color: var(--warn);
+  max-height: 108px;
+  overflow-y: auto;
+}
+
+.design-findings.is-clean {
+  background: var(--surface);
+  border-top-color: var(--line);
+  color: var(--text-3);
+}
+
+.design-findings ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.design-finding button {
+  border: none;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+
+.design-finding.is-error {
+  color: var(--danger);
+}
+
+.design-errors {
+  padding: 12px 16px;
+  background: var(--danger-tint);
+  color: var(--danger);
+  font-size: var(--fs-small);
+  border-bottom: 1px solid var(--line);
+}
+
+.design-errors ul {
+  list-style: none;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.design-error-line {
+  font-family: var(--mono);
+  opacity: 0.75;
+}
+
+/* A link to a design, in prose. Marked so it reads as an object rather than a
+   destination -- it is a reference to a thing, not a jump to a page. */
+.prose a[title='design'] {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 1px 8px 2px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-sm);
+  background: var(--accent-tint);
+  color: var(--accent-text);
+  text-decoration: none;
+}
+
+.prose a[title='design']::before {
+  content: '▧';
+  font-size: 0.85em;
+  opacity: 0.75;
+}

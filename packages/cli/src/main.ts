@@ -15,6 +15,7 @@ import {
   type Manifest,
   type ManifestEntry,
 } from './config.js';
+import { lintDesign, outline as designOutline, extractDesign, VOCABULARY } from '@galley/design';
 import { SKILL_MARKDOWN } from './skill.js';
 
 export interface Io {
@@ -38,6 +39,7 @@ usage: galley <command> [options]
   status [dir]                                what changed, what is stale, what is pending
   read <ref>                                  clean Markdown on stdout (ref: path or path#block)
   search <query> [--limit n]                  matching blocks, as doc#block refs
+  design <sub> <ref>                          outline | lint | classes | source
   comment <ref> <body> [--run <id>]           anchored comment
   suggest <ref> --from <file>                 propose an edit as block-scoped ops
   suggestions <path> [--state pending]        list proposals
@@ -112,6 +114,8 @@ async function dispatch(args: ParsedArgs, io: Io): Promise<number> {
       return resolveCommand(args, io, 'reject');
     case 'orphans':
       return orphansCommand(args, io);
+    case 'design':
+      return designCommand(args, io);
     default:
       io.err(`galley: unknown command ${args.command}\n\n${HELP}`);
       return 2;
@@ -188,6 +192,68 @@ async function readCommand(args: ParsedArgs, io: Io): Promise<number> {
   // the output that gets piped into a model.
   io.out(doc.content);
   return 0;
+}
+
+/**
+ * Designs, for an agent.
+ *
+ * Three read shapes rather than one, and the cheapest exists on day one. That
+ * ordering is the lesson from Figma's MCP server, which shipped a sparse
+ * representation only after users reported a 351,378-token response from the
+ * full one: an agent orienting itself in a design should not have to load the
+ * whole thing to find out what is in it.
+ *
+ *   outline   structure without styling — ids, kinds, names, sizes
+ *   source    the exact markup, which is also what `galley read` returns
+ *   lint      what is wrong, addressed to whoever has to fix it
+ *   classes   the vocabulary itself, so the grammar cannot drift from the code
+ *
+ * `classes` takes no ref on purpose. An agent that has to guess which class
+ * names exist will invent plausible ones, which is the failure the closed
+ * vocabulary is built to prevent — so the tool serves its own grammar.
+ */
+async function designCommand(args: ParsedArgs, io: Io): Promise<number> {
+  const sub = args.positional[0];
+  if (!sub) throw new Error('usage: galley design <outline|source|lint|classes> [ref]');
+
+  if (sub === 'classes') {
+    io.out(`${JSON.stringify(VOCABULARY, null, 2)}\n`);
+    return 0;
+  }
+
+  const ref = args.positional[1];
+  if (!ref) throw new Error(`usage: galley design ${sub} <path>`);
+  const { path } = parseRef(ref);
+  const doc = await client().read(path);
+  const found = extractDesign(doc.content);
+  if (!found) {
+    io.err(`galley: ${path} is not a design\n`);
+    return 1;
+  }
+
+  if (sub === 'source') {
+    io.out(found.source.endsWith('\n') ? found.source : `${found.source}\n`);
+    return 0;
+  }
+  if (sub === 'outline') {
+    io.out(designOutline(found.design));
+    return 0;
+  }
+  if (sub === 'lint') {
+    const findings = lintDesign(found.design);
+    if (flagBool(args, 'json')) {
+      io.out(`${JSON.stringify(findings, null, 2)}\n`);
+    } else {
+      for (const finding of findings) {
+        const where = finding.layerId ? ` ${finding.layerId}` : '';
+        io.out(`${finding.severity}${where}: ${finding.message}\n`);
+      }
+    }
+    // Non-zero on an error so this composes in CI, the way a linter should.
+    return findings.some((finding) => finding.severity === 'error') ? 1 : 0;
+  }
+
+  throw new Error(`galley: unknown design command ${sub}`);
 }
 
 async function searchCommand(args: ParsedArgs, io: Io): Promise<number> {

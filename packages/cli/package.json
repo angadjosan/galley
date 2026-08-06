@@ -12,7 +12,8 @@
     "@galley/client": "*",
     "@galley/concurrency": "*",
     "@galley/core": "*",
-    "@galley/markdown": "*"
+    "@galley/markdown": "*",
+    "@galley/design": "*"
   },
   "bin": {
     "galley": "./bin/galley.mjs"
