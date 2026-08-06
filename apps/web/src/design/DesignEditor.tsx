@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import {
   VOCABULARY,
+  applyOps,
+  find,
+  idAfter,
   lintDesign,
   parseDesign,
   serializeDesign,
   walk,
   type DesignDocument,
+  type DesignOp,
   type Layer,
   type LintFinding,
+  type NewLayer,
 } from '@galley/design';
 import { DesignView } from './render.js';
 
@@ -58,20 +63,54 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
   const layers = useMemo(() => (design ? [...walk(design)] : []), [design]);
   const current = layers.find((entry) => entry.layer.id === selected)?.layer ?? null;
 
-  const write = useCallback(
-    (next: DesignDocument) => {
-      props.onChange(serializeDesign(next, { durable: props.anchored ?? new Set() }));
+  /**
+   * Every change this editor makes, expressed as ops.
+   *
+   * Nothing here rewrites the tree by hand any more. A mouse gesture and an
+   * agent's proposal go through the same `applyOps`, which is what makes undo,
+   * history, attribution and review one implementation rather than two — and
+   * what will let a drag on the canvas become a reviewable suggestion without
+   * a second code path.
+   */
+  const run = useCallback(
+    (ops: readonly DesignOp[]): DesignDocument | null => {
+      if (!design || props.readOnly || ops.length === 0) return null;
+      const result = applyOps(design, ops);
+      if (!result.ok) {
+        // An op the editor itself built and the model refused is a bug in this
+        // component, not something to show a writer. It is surfaced rather than
+        // swallowed, because a silently ignored gesture is unbearable.
+        console.error('[galley] design ops refused', result.errors);
+        return null;
+      }
+      props.onChange(serializeDesign(result.design, { durable: props.anchored ?? new Set() }));
+      return result.design;
     },
-    [props],
+    [design, props],
   );
 
-  /** Rewrite one layer and hand the whole design back as markup. */
+  /** Rewrite one layer, as an op. */
   const edit = useCallback(
-    (id: string, change: (layer: Layer) => Layer) => {
-      if (!design || props.readOnly) return;
-      write(mapLayers(design, id, change));
+    (id: string, change: (layer: Layer) => Layer): void => {
+      const layer = design ? (find(design, id) as Layer | null) : null;
+      if (!layer) return;
+      const next = change(layer);
+      const ops: DesignOp[] = [];
+      if (next.name !== layer.name) ops.push({ op: 'set-name', id, name: next.name });
+      if (next.classes.join(' ') !== layer.classes.join(' ')) {
+        ops.push({ op: 'set-classes', id, classes: next.classes });
+      }
+      if (next.kind === 'text' && layer.kind === 'text' && next.content !== layer.content) {
+        ops.push({ op: 'set-text', id, content: next.content });
+      }
+      if (next.kind === 'image' && layer.kind === 'image') {
+        if (next.src !== layer.src || next.alt !== layer.alt) {
+          ops.push({ op: 'set-image', id, src: next.src, alt: next.alt });
+        }
+      }
+      run(ops);
     },
-    [design, props.readOnly, write],
+    [design, run],
   );
 
   /**
@@ -86,28 +125,26 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
    */
   const add = useCallback(
     (kind: 'box' | 'text') => {
-      if (!design || props.readOnly) return;
-      const made: Layer =
+      if (!design) return;
+      const made: NewLayer =
         kind === 'text'
-          ? { id: 'new', kind: 'text', name: 'Text', classes: ['text-body', 'text-fg'], content: 'New text' }
-          : { id: 'new', kind: 'box', name: 'Box', classes: ['flex', 'flex-col', 'gap-2', 'p-4', 'bg-surface', 'rounded-md'], children: [] };
+          ? { kind: 'text', name: 'Text', classes: ['text-body', 'text-fg'], content: 'New text' }
+          : { kind: 'box', name: 'Box', classes: ['flex', 'flex-col', 'gap-2', 'p-4', 'bg-surface', 'rounded-md'] };
 
-      const next = insertLayer(design, selected, made);
-      write(next);
-      // Select what was just made, so the next thing typed lands on it. The id
-      // is position-derived, so it is knowable before the reparse.
-      setSelected(next.pendingId);
+      const where = placeFor(design, selected);
+      if (run([{ op: 'insert', parent: where.parent, index: where.index, layer: made }])) {
+        // Select what was just made, so the next thing typed lands on it. The
+        // id is positional, so it is knowable before the next read.
+        setSelected(idAfter(design, where.parent, where.index));
+      }
     },
-    [design, props.readOnly, selected, write],
+    [design, run, selected],
   );
 
   const remove = useCallback(() => {
-    if (!design || props.readOnly || !selected) return;
-    const next = removeLayer(design, selected);
-    if (!next) return;
-    write(next);
-    setSelected(null);
-  }, [design, props.readOnly, selected, write]);
+    if (!selected) return;
+    if (run([{ op: 'delete', id: selected }])) setSelected(null);
+  }, [run, selected]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -537,97 +574,42 @@ function Toggle({ label, on, onChange }: { label: string; on: boolean; onChange(
 }
 
 /**
- * Put a new layer in, and say where it landed.
+ * Where "add" means, given what is selected.
  *
- * Inside the selection when it is a container, after it when it is a leaf, and
- * at the end of the first frame when there is none. The returned `pendingId` is
- * the position-derived id the parser will give it on the next read — knowable
- * in advance precisely because the id is a function of position, which is the
- * property that makes selection survive an edit at all.
+ * Inside a container when one is selected, and *after* the selection when a
+ * leaf is — which is what "add" means to someone who has just clicked a label
+ * and wants another one next to it.
  */
-function insertLayer(
-  design: DesignDocument,
-  selected: string | null,
-  made: Layer,
-): DesignDocument & { pendingId: string } {
-  let pendingId = '';
+function placeFor(design: DesignDocument, selected: string | null): { parent: string; index: number } {
+  const first = design.frames[0]!;
+  if (!selected) return { parent: first.id, index: first.children.length };
 
-  const place = (children: readonly Layer[], at: number, path: readonly number[]): Layer[] => {
-    pendingId = `l_${[...path, at].join('_')}`;
-    return [...children.slice(0, at), made, ...children.slice(at)];
-  };
+  const layer = find(design, selected);
+  if (!layer) return { parent: first.id, index: first.children.length };
+  if (!('kind' in layer) || layer.kind === 'box') {
+    return { parent: layer.id, index: 'children' in layer ? layer.children.length : 0 };
+  }
 
-  const descend = (layer: Layer, path: readonly number[]): Layer => {
-    if (layer.kind !== 'box') return layer;
-    if (layer.id === selected) {
-      return { ...layer, children: place(layer.children, layer.children.length, path) };
-    }
-    const children: Layer[] = [];
-    layer.children.forEach((child, index) => {
-      if (child.id === selected && child.kind !== 'box') {
-        children.push(child);
-        pendingId = `l_${[...path, index + 1].join('_')}`;
-        children.push(made);
-        return;
+  // A leaf: after it, inside whatever holds it.
+  const parentOf = (id: string): { parent: string; index: number } | null => {
+    const search = (
+      holder: { id: string; children: readonly { id: string }[] },
+    ): { parent: string; index: number } | null => {
+      const at = holder.children.findIndex((child) => child.id === id);
+      if (at !== -1) return { parent: holder.id, index: at + 1 };
+      for (const child of holder.children) {
+        if ('children' in child) {
+          const found = search(child as { id: string; children: readonly { id: string }[] });
+          if (found) return found;
+        }
       }
-      children.push(descend(child, [...path, index]));
-    });
-    return { ...layer, children };
-  };
-
-  const frames = design.frames.map((frame, frameIndex) => {
-    const path = [frameIndex];
-    if (frame.id === selected || (!selected && frameIndex === 0)) {
-      return { ...frame, children: place(frame.children, frame.children.length, path) };
+      return null;
+    };
+    for (const frame of design.frames) {
+      const found = search(frame);
+      if (found) return found;
     }
-    const children: Layer[] = [];
-    frame.children.forEach((child, index) => {
-      if (child.id === selected && child.kind !== 'box') {
-        children.push(child);
-        pendingId = `l_${[...path, index + 1].join('_')}`;
-        children.push(made);
-        return;
-      }
-      children.push(descend(child, [...path, index]));
-    });
-    return { ...frame, children };
-  });
-
-  return { ...design, frames, pendingId };
-}
-
-/** Take a layer out. A frame is not removable — a design needs one. */
-function removeLayer(design: DesignDocument, id: string): DesignDocument | null {
-  if (design.frames.some((frame) => frame.id === id)) return null;
-  const prune = (children: readonly Layer[]): Layer[] =>
-    children
-      .filter((child) => child.id !== id)
-      .map((child) => (child.kind === 'box' ? { ...child, children: prune(child.children) } : child));
-  return { ...design, frames: design.frames.map((frame) => ({ ...frame, children: prune(frame.children) })) };
-}
-
-/**
- * Rewrite the one layer with this id, leaving the rest of the tree identical.
- *
- * A frame is not a layer — it has a width and a height and no kind — so it
- * takes its own branch rather than being cast into one. The inspector only
- * offers a frame the properties they share, `name` and `classes`, so those are
- * the only two read back off the result.
- */
-function mapLayers(design: DesignDocument, id: string, change: (layer: Layer) => Layer): DesignDocument {
-  const descend = (layer: Layer): Layer => {
-    const next = layer.id === id ? change(layer) : layer;
-    if (next.kind !== 'box') return next;
-    return { ...next, children: next.children.map(descend) };
+    return null;
   };
-
-  return {
-    ...design,
-    frames: design.frames.map((frame) => {
-      const children = frame.children.map(descend);
-      if (frame.id !== id) return { ...frame, children };
-      const edited = change({ id: frame.id, name: frame.name, classes: frame.classes, kind: 'box', children: [] });
-      return { ...frame, name: edited.name, classes: edited.classes, children };
-    }),
-  };
+  return parentOf(selected) ?? { parent: first.id, index: first.children.length };
 }
