@@ -85,6 +85,34 @@ describe('diagrams', () => {
   });
 });
 
+/**
+ * The info string after the language.
+ *
+ * The parser and the serializer have both always carried it; the editor was the
+ * one layer that dropped it, so editing such a block deleted the tail. That is
+ * the "silently disappears on save" failure the schema's own header warns
+ * about, and it was live.
+ */
+describe('fence info strings', () => {
+  it('keeps the tail when a code block is edited', () => {
+    const source = '```ts title="server.ts"\nconst x = 1;\n```\n';
+    expect(roundTrip(source, ({ doc }) => touch(doc, 0))).toBe(source);
+  });
+
+  it('keeps the tail when a diagram is edited', () => {
+    const source = '```mermaid {"theme":"dark"}\ngraph TD;\n  A-->B;\n```\n';
+    const { doc } = markdownToDoc(source);
+    expect(doc.child(0).type.name).toBe('diagram');
+    expect(doc.child(0).attrs.meta).toBe('{"theme":"dark"}');
+    expect(roundTrip(source, ({ doc: d }) => touch(d, 0))).toBe(source);
+  });
+
+  it('adds nothing when there was no tail', () => {
+    const source = '```ts\nconst x = 1;\n```\n';
+    expect(roundTrip(source, ({ doc }) => touch(doc, 0))).toBe(source);
+  });
+});
+
 describe('underline and highlight', () => {
   it('reads inline HTML back as marks, not as visible tags', () => {
     const { doc } = markdownToDoc('Plain <u>under</u> and <mark>lit</mark>.\n');

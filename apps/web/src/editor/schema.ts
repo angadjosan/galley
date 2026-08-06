@@ -87,11 +87,28 @@ const nodes: Record<string, NodeSpec> = {
     code: true,
     defining: true,
     marks: '',
-    attrs: { lang: { default: null as string | null }, ...blockAttrs },
+    attrs: {
+      lang: { default: null as string | null },
+      /**
+       * The rest of the fence's info string, after the language.
+       *
+       * ` ```ts title="server.ts" ` is a real and common convention, and the
+       * parser and the serializer have both always carried it. The editor was
+       * the one layer that dropped it, so editing such a block deleted the tail
+       * — the exact "silently disappears on save" failure this file's header
+       * warns about.
+       */
+      meta: { default: null as string | null },
+      ...blockAttrs,
+    },
     parseDOM: [{ tag: 'pre', preserveWhitespace: 'full' }],
     toDOM: (node) => [
       'pre',
-      { 'data-lang': node.attrs.lang ?? undefined, 'data-block-id': node.attrs.blockId ?? undefined },
+      {
+        'data-lang': node.attrs.lang ?? undefined,
+        'data-meta': node.attrs.meta ?? undefined,
+        'data-block-id': node.attrs.blockId ?? undefined,
+      },
       ['code', 0],
     ],
   },
@@ -120,6 +137,8 @@ const nodes: Record<string, NodeSpec> = {
     attrs: {
       /** The diagram's own language. `mermaid` today; the fence carries it. */
       lang: { default: 'mermaid' },
+      /** The fence's info-string tail, carried across untouched. */
+      meta: { default: null as string | null },
       code: { default: '' },
       /** Rendered width as a fraction of the text column, 0.25–1. */
       width: { default: 1 },

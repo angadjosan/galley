@@ -169,11 +169,12 @@ function flowToNode(
         return schema.nodes.diagram!.create({
           ...attrs,
           lang: node.lang.toLowerCase(),
+          meta: node.meta ?? null,
           code: node.value ?? '',
         });
       }
       return schema.nodes.code_block!.create(
-        { ...attrs, lang: node.lang ?? null },
+        { ...attrs, lang: node.lang ?? null, meta: node.meta ?? null },
         node.value ? [schema.text(node.value)] : [],
       );
     case 'thematicBreak':
@@ -465,7 +466,12 @@ function nodeToFlow(node: PmNode): RootContent {
         children: withMarker(nodeToInline(node), node),
       };
     case 'code_block':
-      return { type: 'code', lang: (node.attrs.lang as string | null) ?? null, meta: null, value: node.textContent };
+      return {
+        type: 'code',
+        lang: (node.attrs.lang as string | null) ?? null,
+        meta: (node.attrs.meta as string | null) ?? null,
+        value: node.textContent,
+      };
     case 'diagram':
       // Back to the fence it came from. A diagram the writer never opened is
       // still covered by the unchanged-block rule above and re-emitted byte for
@@ -473,7 +479,7 @@ function nodeToFlow(node: PmNode): RootContent {
       return {
         type: 'code',
         lang: (node.attrs.lang as string | null) ?? 'mermaid',
-        meta: null,
+        meta: (node.attrs.meta as string | null) ?? null,
         value: String(node.attrs.code ?? ''),
       };
     case 'horizontal_rule':
