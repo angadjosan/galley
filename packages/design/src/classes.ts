@@ -201,6 +201,22 @@ export function resolveClass(name: string): Resolution {
   const items = /^items-(start|center|end|stretch|baseline)$/.exec(name);
   if (items) return ok({ 'align-items': items[1] === 'start' || items[1] === 'end' ? `flex-${items[1]}` : items[1]! });
 
+  /**
+   * One child's own cross-axis alignment.
+   *
+   * `items-*` lives on the parent and applies to every child, which makes
+   * "size *this* box across the axis" inexpressible — the box gets an explicit
+   * width and then sits stretched or clipped according to a rule its siblings
+   * share. Five values, closed, mirroring `items-*` exactly. It is the smallest
+   * widening of the vocabulary that makes cross-axis direct manipulation
+   * possible at all.
+   */
+  const self = /^self-(start|center|end|stretch|auto|baseline)$/.exec(name);
+  if (self) {
+    const value = self[1]!;
+    return ok({ 'align-self': value === 'start' || value === 'end' ? `flex-${value}` : value });
+  }
+
   const justify = /^justify-(start|center|end|between|around)$/.exec(name);
   if (justify) {
     const value = justify[1]!;

@@ -215,13 +215,33 @@ function splitClasses(value: string | undefined): string[] {
  * which is exactly the guarantee a *provisional* id should make. The moment a
  * layer needs to survive being moved, it has earned a durable id in the file.
  */
-function provisional(path: readonly number[]): LayerId {
-  return `l_${path.join('_')}`;
+function provisional(path: readonly number[], taken: ReadonlySet<string>): LayerId {
+  const derived = `l_${path.join('_')}`;
+  if (!taken.has(derived)) return derived;
+  // A layer the file names explicitly has already claimed this string — which
+  // happens the moment anything is *moved*, because the layer that carried an
+  // anchor keeps its id while a different layer inherits its position. Without
+  // this the two collide and the design stops parsing altogether, so one drag
+  // on a design with a comment on it destroys the file.
+  //
+  // Determinism is preserved: the same bytes still produce the same ids,
+  // because `taken` is a property of the bytes.
+  for (let suffix = 1; ; suffix++) {
+    const candidate = `${derived}b${suffix}`;
+    if (!taken.has(candidate)) return candidate;
+  }
 }
 
 export function parseDesign(source: string): ParseResult {
   const errors: ParseError[] = [];
   const tokens = tokenize(source, errors);
+
+  // Every id the file states outright, gathered before anything is assigned.
+  // Positional ids are then chosen around them rather than into them.
+  const claimed = new Set<string>();
+  for (const token of tokens) {
+    if (token.kind === 'open' && token.attrs.id) claimed.add(token.attrs.id);
+  }
 
   let name = 'Untitled design';
   let seenDesign = false;
@@ -248,7 +268,7 @@ export function parseDesign(source: string): ParseResult {
   ): Layer | null => {
     const attrs = frame.attrs;
     const base = {
-      id: attrs.id || provisional(path),
+      id: attrs.id || provisional(path, claimed),
       name: attrs.name || defaultLayerName(frame.name as 'box' | 'text' | 'image', frame.children.length),
       classes: splitClasses(attrs.class),
     };
@@ -376,7 +396,7 @@ export function parseDesign(source: string): ParseResult {
         continue;
       }
       frames.push({
-        id: top.attrs.id || provisional([frames.length]),
+        id: top.attrs.id || provisional([frames.length], claimed),
         name: top.attrs.name || defaultFrameName(frames.length),
         width,
         height,
@@ -403,10 +423,10 @@ export function parseDesign(source: string): ParseResult {
   // well, but by then the tree has already been handed to a canvas that keys
   // React on it and matches edits by it — so selecting, editing or deleting
   // one of a colliding pair hit all of them.
-  const claimed = new Set<string>();
+  const seen = new Set<string>();
   const collide = (id: string, line: number): void => {
-    if (claimed.has(id)) errors.push({ line, message: `\`${id}\` names more than one layer.` });
-    claimed.add(id);
+    if (seen.has(id)) errors.push({ line, message: `\`${id}\` names more than one layer.` });
+    seen.add(id);
   };
   const visit = (layer: Layer): void => {
     collide(layer.id, 0);

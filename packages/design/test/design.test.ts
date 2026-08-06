@@ -698,3 +698,66 @@ describe('contrast', () => {
     expect(found.filter((message) => message.includes(':1'))).toEqual([]);
   });
 });
+
+/**
+ * The hazard that a drag creates, and the reason it has to be fixed before
+ * there is a drag.
+ *
+ * Layer ids are derived from position, and something *anchored* — a comment, a
+ * citation — keeps its id written into the file so the anchor can find it
+ * again. Move a layer and those two facts collide: the anchored layer keeps
+ * `l_0_2` while a different layer inherits position 2 and derives the same
+ * string. Before this fix that produced a design which **would not parse at
+ * all** — one drag on a design with one comment on it destroyed the file.
+ *
+ * The fix is small and general: a derived id is chosen *around* the ids the
+ * file states outright, never into them. Determinism survives, because the set
+ * of stated ids is a property of the bytes.
+ */
+describe('an anchor survives the layer being moved', () => {
+  const source = [
+    '<design name="x">',
+    '  <frame width="100">',
+    '    <box name="A"></box>',
+    '    <box name="B"></box>',
+    '    <box name="C"></box>',
+    '  </frame>',
+    '</design>',
+  ].join('\n');
+
+  /** Move the first child to the end, keeping `anchored` durable. */
+  function shuffle(design: DesignDocument, anchored: ReadonlySet<string>): DesignDocument {
+    const first = design.frames[0]!.children[0]!.id;
+    const moved = applyOps(design, [{ op: 'move', id: first, parent: design.frames[0]!.id, index: 3 }]);
+    if (!moved.ok) throw new Error(moved.errors.join('; '));
+    const markup = serializeDesign(moved.design, { durable: anchored });
+    const back = parseDesign(markup);
+    if (!back.ok) throw new Error(`the design stopped parsing: ${back.errors.map((e) => e.message).join('; ')}`);
+    return back.design;
+  }
+
+  it('keeps pointing at the same layer across repeated moves', () => {
+    const anchored = new Set(['l_0_2']);
+    let design = parsed(source);
+    // Three rounds, because the collision only appears once a *different*
+    // layer has inherited the anchored one's old position.
+    for (let round = 0; round < 3; round++) {
+      design = shuffle(design, anchored);
+      const anchoredLayer = design.frames[0]!.children.find((child) => child.id === 'l_0_2');
+      expect(anchoredLayer?.name, `round ${round}`).toBe('C');
+    }
+  });
+
+  it('never derives an id the file has already claimed', () => {
+    const design = shuffle(parsed(source), new Set(['l_0_2']));
+    const ids = [...walk(design)].map(({ layer }) => layer.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('is deterministic: the same bytes give the same ids', () => {
+    const markup = serializeDesign(shuffle(parsed(source), new Set(['l_0_2'])), { durable: new Set(['l_0_2']) });
+    const once = [...walk(parsed(markup))].map(({ layer }) => layer.id);
+    const twice = [...walk(parsed(markup))].map(({ layer }) => layer.id);
+    expect(once).toEqual(twice);
+  });
+});
