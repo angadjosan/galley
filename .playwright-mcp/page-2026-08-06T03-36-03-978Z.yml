@@ -1,0 +1,107 @@
+- generic [ref=f5e3]:
+  - complementary [ref=f5e4]:
+    - generic [ref=f5e5]: Galley
+    - textbox "Search" [ref=f5e13]:
+      - /placeholder: Search everything
+    - navigation [ref=f5e14]:
+      - generic [ref=f5e15]:
+        - generic [ref=f5e16]: Design
+        - button "Galley" [ref=f5e17] [cursor=pointer]
+      - generic [ref=f5e19]:
+        - generic [ref=f5e20]: Policies
+        - button "Refund policy" [ref=f5e21] [cursor=pointer]
+      - generic [ref=f5e23]:
+        - generic [ref=f5e24]: Runbooks
+        - button "Deploy runbook" [ref=f5e25] [cursor=pointer]
+      - generic [ref=f5e27]:
+        - generic [ref=f5e28]: Specs
+        - button "Checkout v2" [active] [ref=f5e29] [cursor=pointer]
+    - generic [ref=f5e31]:
+      - button "New document" [ref=f5e32] [cursor=pointer]: + New document
+      - button "Sign out" [ref=f5e33] [cursor=pointer]
+  - generic [ref=f5e34]:
+    - banner [ref=f5e596]:
+      - button "Documents" [ref=f5e597] [cursor=pointer]:
+        - generic [ref=f5e598]: ☰
+      - navigation "Location" [ref=f5e599]:
+        - generic [ref=f5e600]: Specs
+        - generic [ref=f5e601]: ›
+        - generic [ref=f5e602]: Checkout v2
+      - generic [ref=f5e603]:
+        - button "Insert" [ref=f5e604] [cursor=pointer]:
+          - generic [ref=f5e605]: +
+          - text: Insert
+        - generic "Saved" [ref=f5e606]
+        - generic "priya" [ref=f5e608]: P
+        - button "Share" [ref=f5e609] [cursor=pointer]
+        - button "More" [ref=f5e611] [cursor=pointer]:
+          - generic [ref=f5e612]: ⋯
+    - generic [ref=f5e614]:
+      - main [ref=f5e615]:
+        - generic "Document" [ref=f5e618]:
+          - heading [level=1] [ref=f5e619]:
+            - button "Insert below" [ref=f5e620] [cursor=pointer]: +
+            - text: Checkout v2
+          - paragraph [ref=f5e621]:
+            - button "Insert below" [ref=f5e622] [cursor=pointer]: +
+            - text: The currency field is optional for a charge request, and defaults to the account's settlement currency when it is left out.
+          - paragraph [ref=f5e623]:
+            - button "Insert below" [ref=f5e624] [cursor=pointer]: +
+            - text: The amount field is required and is expressed in the minor units of the charge currency — cents for USD, yen for JPY.
+          - complementary [ref=f5e625]:
+            - generic [ref=f5e628]:
+              - generic [ref=f5e629]: galley-bot/ci
+              - generic [ref=f5e630]: set up by priya · suggested a change
+            - paragraph [ref=f5e631]: JPY has no minor unit; the implementation special-cases it.
+            - generic [ref=f5e632]: The amount field is required and is expressed in the minor units of the charge currency — cents for USD, and whole yen for JPY.JPY, which has no minor unit.
+            - generic [ref=f5e633]:
+              - paragraph [ref=f5e634]: Nothing changes until you accept it.
+              - generic [ref=f5e635]:
+                - button "Use this" [ref=f5e636] [cursor=pointer]
+                - button "Dismiss" [ref=f5e637] [cursor=pointer]
+                - button "Edit instead" [ref=f5e638] [cursor=pointer]
+          - heading [level=2] [ref=f5e639]:
+            - button "Insert below" [ref=f5e640] [cursor=pointer]: +
+            - text: Validation
+          - list [ref=f5e641]:
+            - button "Insert below" [ref=f5e642] [cursor=pointer]: +
+            - listitem [ref=f5e643]:
+              - paragraph [ref=f5e644]:
+                - text: Reject a request with no
+                - code [ref=f5e645]: amount
+                - text: .
+            - listitem [ref=f5e646]:
+              - paragraph [ref=f5e647]:
+                - text: Reject a negative
+                - code [ref=f5e648]: amount
+                - text: .
+            - listitem [ref=f5e649]:
+              - paragraph [ref=f5e650]: Accept everything else.
+          - complementary [ref=f5e651]:
+            - generic [ref=f5e652]: NOTE
+            - generic [ref=f5e653]:
+              - button "Insert below" [ref=f5e654] [cursor=pointer]: +
+              - paragraph [ref=f5e655]: Support may override this policy for a customer with a documented exception.
+          - table [ref=f5e656]:
+            - rowgroup [ref=f5e657]:
+              - button "Insert below" [ref=f5e658] [cursor=pointer]: +
+              - row [ref=f5e659]:
+                - columnheader "Field" [ref=f5e660]
+                - columnheader "Type" [ref=f5e661]
+                - columnheader "Required" [ref=f5e662]
+              - row [ref=f5e663]:
+                - cell "currency" [ref=f5e664]
+                - cell "string" [ref=f5e665]
+                - cell "no" [ref=f5e666]
+              - row [ref=f5e667]:
+                - cell "amount" [ref=f5e668]
+                - cell "integer" [ref=f5e669]
+                - cell "yes" [ref=f5e670]
+      - complementary [ref=f5e671]:
+        - article [ref=f5e672] [cursor=pointer]:
+          - generic [ref=f5e673]:
+            - generic [ref=f5e674]: S
+            - generic [ref=f5e675]:
+              - generic [ref=f5e676]: sam
+              - generic [ref=f5e677]: just now
+          - paragraph [ref=f5e678]: Is this still true after the settlement change?

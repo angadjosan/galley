@@ -6,6 +6,33 @@ import { parseDocument, serializeFlow } from '@galley/markdown';
 import { segment } from '@galley/core/segments';
 import { schema } from './schema.js';
 const CALLOUT = /^\[!([A-Za-z]+)\]([+-])?\s*/;
+const MARKER = /^<!--\s*\^([A-Za-z0-9_-]{2,64})\s*-->$/;
+/**
+ * Pull a trailing id marker off a paragraph or heading's inline content.
+ *
+ * Done here rather than only for top-level blocks, because nested blocks carry
+ * ids too — a comment can be anchored to the third bullet. Leaving the marker
+ * in the inline content would show `<!-- ^abc123 -->` to the writer, which is
+ * the one thing the marker design promises never happens.
+ */
+function extractMarker(children) {
+    const last = children[children.length - 1];
+    if (last?.type !== 'html')
+        return { inline: [...children], blockId: null };
+    const match = MARKER.exec(last.value.trim());
+    if (!match)
+        return { inline: [...children], blockId: null };
+    const inline = children.slice(0, -1);
+    const tail = inline[inline.length - 1];
+    if (tail?.type === 'text') {
+        const trimmed = tail.value.replace(/[ \t]+$/, '');
+        if (trimmed === '')
+            inline.pop();
+        else
+            inline[inline.length - 1] = { ...tail, value: trimmed };
+    }
+    return { inline, blockId: match[1] };
+}
 export function markdownToDoc(markdown) {
     const parsed = parseDocument(markdown);
     const topLevel = parsed.blocks.filter((b) => b.depth === 0);
@@ -35,10 +62,15 @@ export function markdownToDoc(markdown) {
             continue;
         children.push(node.type.create({ ...node.attrs, sep: segments[i]?.separator ?? null }, node.content, node.marks));
     }
-    if (children.length === 0)
+    // A document with no body still needs one node for the editor to have a
+    // cursor. It is recorded so `docToMarkdown` knows the body was empty and does
+    // not append a newline for it on every save — which grew the file without
+    // bound, one byte per open.
+    const hadBody = children.length > 0;
+    if (!hadBody)
         children.push(schema.nodes.paragraph.create());
     const doc = schema.nodes.doc.create(null, children);
-    return { doc, parsed, pristine: children, style: parsed.style, preamble };
+    return { doc, parsed, pristine: children, style: parsed.style, preamble, hadBody };
 }
 /** The mdast node behind a block, found by its start offset. */
 function blockNode(parsed, start) {
@@ -52,13 +84,14 @@ function blockNode(parsed, start) {
 function flowToNode(node, blockId, source, block) {
     const attrs = { blockId, source };
     switch (node.type) {
-        case 'paragraph':
-            // Prefer the block's inline content: the parser has already taken the id
-            // marker out of it, and feeding the raw mdast children here would put the
-            // marker back into the editor as visible text.
-            return schema.nodes.paragraph.create(attrs, inlineToNodes(block?.inline ?? node.children));
-        case 'heading':
-            return schema.nodes.heading.create({ ...attrs, level: node.depth }, inlineToNodes(block?.inline ?? node.children));
+        case 'paragraph': {
+            const extracted = extractMarker(block?.inline ?? node.children);
+            return schema.nodes.paragraph.create({ ...attrs, blockId: blockId ?? extracted.blockId }, inlineToNodes(extracted.inline));
+        }
+        case 'heading': {
+            const extracted = extractMarker(block?.inline ?? node.children);
+            return schema.nodes.heading.create({ ...attrs, blockId: blockId ?? extracted.blockId, level: node.depth }, inlineToNodes(extracted.inline));
+        }
         case 'code':
             return schema.nodes.code_block.create({ ...attrs, lang: node.lang ?? null }, node.value ? [schema.text(node.value)] : []);
         case 'thematicBreak':
@@ -98,15 +131,14 @@ function flowToNode(node, blockId, source, block) {
             return schema.nodes.table.create({ ...attrs, align: node.align ?? [] }, rows);
         }
         case 'html':
-            // Raw HTML has no rich representation and must survive untouched; render
-            // it as a code block so it is visible, editable and losslessly re-emitted.
-            return schema.nodes.code_block.create({ ...attrs, lang: 'html' }, [schema.text(node.value)]);
+            // Held as an atom carrying its exact bytes, not as a code block: a code
+            // block round-trips to a *fenced* block, so editing an HTML block turned
+            // it into ```html and it stopped being HTML.
+            return schema.nodes.raw_block.create({ ...attrs, raw: node.value });
         default:
             // Definitions, footnote definitions, anything the schema does not model:
             // keep the bytes rather than dropping the author's content.
-            return source
-                ? schema.nodes.raw_block.create(attrs)
-                : null;
+            return source ? schema.nodes.raw_block.create({ ...attrs, raw: source }) : null;
     }
 }
 /**
@@ -128,6 +160,17 @@ function trimTrailing(inline) {
     }
     return out;
 }
+/** Flatten phrasing content to plain text, for an atom's display label. */
+function plainOf(children) {
+    return children
+        .map((child) => {
+        if (child.type === 'text' || child.type === 'inlineCode')
+            return child.value;
+        const anyChild = child;
+        return anyChild.children ? plainOf(anyChild.children) : '';
+    })
+        .join('');
+}
 /** Remove the `[!NOTE]` label from a callout's first paragraph. */
 function stripCalloutLabel(node, strip) {
     if (!strip || node.type !== 'paragraph')
@@ -144,10 +187,19 @@ function inlineToNodes(children, marks = []) {
     const out = [];
     for (const child of children) {
         switch (child.type) {
-            case 'text':
-                if (child.value)
-                    out.push(schema.text(child.value, marks));
+            case 'text': {
+                // Soft line breaks are Markdown's line-wrapping, not the author's
+                // intent — `a\nb` renders as `a b` everywhere. ProseMirror's
+                // `pre-wrap` would show them as real breaks, so they are folded to
+                // spaces here. Untouched blocks still re-emit their original bytes
+                // from `source`, so a document's wrapping survives unless the block is
+                // edited; an edited block reflows onto one line, which is the same
+                // thing every WYSIWYG does. See `tradeoffs.md`.
+                const value = child.value.replace(/[ \t]*\n[ \t]*/g, ' ');
+                if (value)
+                    out.push(schema.text(value, marks));
                 break;
+            }
             case 'strong':
                 out.push(...inlineToNodes(child.children, [...marks, schema.marks.strong.create()]));
                 break;
@@ -173,8 +225,29 @@ function inlineToNodes(children, marks = []) {
                 out.push(schema.nodes.hard_break.create());
                 break;
             case 'html':
-                if (child.value)
-                    out.push(schema.text(child.value, marks));
+                // As an atom, not as text: text is escaped on the way out, so
+                // `<span class="x">` came back as `\<span class="x"\>`.
+                if (child.value) {
+                    out.push(schema.nodes.inline_raw.create({ source: child.value, label: child.value }));
+                }
+                break;
+            case 'linkReference':
+                out.push(schema.nodes.inline_raw.create({
+                    source: `[${plainOf(child.children)}][${child.identifier}]`,
+                    label: plainOf(child.children),
+                }));
+                break;
+            case 'imageReference':
+                out.push(schema.nodes.inline_raw.create({
+                    source: `![${child.alt ?? ''}][${child.identifier}]`,
+                    label: child.alt ?? child.identifier,
+                }));
+                break;
+            case 'footnoteReference':
+                out.push(schema.nodes.inline_raw.create({
+                    source: `[^${child.identifier}]`,
+                    label: `[${child.identifier}]`,
+                }));
                 break;
             default: {
                 const anyChild = child;
@@ -191,6 +264,10 @@ function inlineToNodes(children, marks = []) {
 // ProseMirror → Markdown
 // ---------------------------------------------------------------------------
 export function docToMarkdown(doc, loaded) {
+    // Nothing was written into an empty document: emit exactly what came in.
+    if (!loaded.hadBody && doc.childCount === 1 && doc.child(0).content.size === 0) {
+        return loaded.preamble;
+    }
     const fallbackSeparator = loaded.style.eol.repeat(loaded.style.blockSpacing + 1);
     const parts = [];
     doc.forEach((node, _offset, index) => {
@@ -215,15 +292,19 @@ export function docToMarkdown(doc, loaded) {
 function nodeToFlow(node) {
     switch (node.type.name) {
         case 'paragraph':
-            return { type: 'paragraph', children: nodeToInline(node) };
+            return { type: 'paragraph', children: withMarker(nodeToInline(node), node) };
         case 'heading':
-            return { type: 'heading', depth: node.attrs.level ?? 1, children: nodeToInline(node) };
+            return {
+                type: 'heading',
+                depth: node.attrs.level ?? 1,
+                children: withMarker(nodeToInline(node), node),
+            };
         case 'code_block':
             return { type: 'code', lang: node.attrs.lang ?? null, meta: null, value: node.textContent };
         case 'horizontal_rule':
             return { type: 'thematicBreak' };
         case 'raw_block':
-            return { type: 'html', value: String(node.attrs.source ?? '') };
+            return { type: 'html', value: String(node.attrs.raw ?? node.attrs.source ?? '') };
         case 'blockquote':
             return { type: 'blockquote', children: childrenToFlow(node) };
         case 'callout': {
@@ -286,6 +367,19 @@ function nodeToFlow(node) {
  * the assertion is describing a fact the type system cannot see rather than
  * papering over one it can.
  */
+/**
+ * Re-append a block's id marker when serializing it.
+ *
+ * Symmetric with `extractMarker`, and at every depth: a list whose third bullet
+ * is annotated must come back with that bullet's marker where it was, or
+ * editing the list silently detaches the comment on it.
+ */
+function withMarker(children, node) {
+    const blockId = node.attrs.blockId;
+    if (!blockId)
+        return children;
+    return [...children, { type: 'text', value: ' ' }, { type: 'html', value: `<!-- ^${blockId} -->` }];
+}
 function childrenToFlow(node) {
     return node.content.content.map(nodeToFlow);
 }
@@ -375,6 +469,12 @@ function wrapMark(mark, children) {
 function nodeToPhrasing(node) {
     if (node.type.name === 'hard_break')
         return { type: 'break' };
+    // `html` is the verbatim escape hatch in mdast: the serializer emits its
+    // value untouched, which is exactly what an atom holding original source
+    // needs.
+    if (node.type.name === 'inline_raw') {
+        return { type: 'html', value: String(node.attrs.source ?? '') };
+    }
     if (node.type.name === 'image') {
         return {
             type: 'image',

@@ -1,0 +1,41 @@
+- generic [ref=f35e3]:
+  - link "skip to main content" [ref=f35e4] [cursor=pointer]:
+    - /url: /components/menus/specs#main_content
+    - text: Skip to main content
+  - generic [ref=f35e5]:
+    - navigation "Main" [ref=f35e6]:
+      - link "Search" [ref=f35e7] [cursor=pointer]:
+        - /url: /search.html
+        - generic [ref=f35e8]: search
+      - link "Home" [ref=f35e9] [cursor=pointer]:
+        - /url: /
+        - generic [ref=f35e10]: material_design
+      - link "Get started" [ref=f35e12] [cursor=pointer]:
+        - /url: /get-started
+        - generic [ref=f35e13]: apps
+      - button "Develop" [ref=f35e15] [cursor=pointer]:
+        - generic [ref=f35e16]: code
+      - button "Foundations" [ref=f35e18] [cursor=pointer]:
+        - generic [ref=f35e19]: book
+      - button "Styles" [ref=f35e21] [cursor=pointer]:
+        - generic [ref=f35e22]: palette
+      - button "Components" [ref=f35e24] [cursor=pointer]:
+        - generic [ref=f35e25]: add_circle
+      - link "Blog" [ref=f35e27] [cursor=pointer]:
+        - /url: /blog
+        - generic [ref=f35e28]: pages
+    - generic [ref=f35e32]:
+      - switch "Pause animations" [checked] [ref=f35e33] [cursor=pointer]:
+        - generic [ref=f35e34]:
+          - generic [ref=f35e35]: play_arrow
+          - generic [ref=f35e37]: pause
+      - switch "Switch to dark mode" [ref=f35e39] [cursor=pointer]:
+        - generic [ref=f35e40]:
+          - generic [ref=f35e41]: dark_mode
+          - generic [ref=f35e43]: light_mode
+  - generic [ref=f35e46]:
+    - generic: arrow_drop_down
+    - generic: arrow_drop_down
+    - generic: arrow_drop_down
+    - generic: arrow_drop_down
+    - generic: arrow_drop_down

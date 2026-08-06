@@ -43,14 +43,14 @@ async function seeded(): Promise<{ actor: DocumentActor; ids: string[] }> {
 
 describe('summaries', () => {
   it('describes an operation set in words a person can read', () => {
-    expect(summarize([{ kind: 'replace', target: 'a', markdown: 'x' }])).toBe('edited a block');
+    expect(summarize([{ kind: 'replace', target: 'a', markdown: 'x' }])).toBe('edited a paragraph');
     expect(
       summarize([
         { kind: 'replace', target: 'a', markdown: 'x' },
         { kind: 'replace', target: 'b', markdown: 'y' },
         { kind: 'delete', target: 'c' },
       ]),
-    ).toBe('2 blocks edited, removed a block');
+    ).toBe('2 paragraphs edited, removed a paragraph');
   });
 
   it('says nothing about commits, branches, merges or rebases', () => {
@@ -84,9 +84,9 @@ describe('the timeline', () => {
     await actor.applyOps([{ kind: 'insert', after: ids[1]!, markdown: 'A new paragraph.' }], SAM);
 
     const revisions = actor.listRevisions();
-    expect(revisions[0]!.summary).toBe('added a block');
+    expect(revisions[0]!.summary).toBe('added a paragraph');
     expect(revisions[0]!.authorName).toBe('sam');
-    expect(revisions[1]!.summary).toBe('edited a block');
+    expect(revisions[1]!.summary).toBe('edited a paragraph');
     expect(revisions[1]!.authorName).toBe('priya');
     expect(revisions[0]!.ticket).toBeGreaterThan(revisions[1]!.ticket);
   });

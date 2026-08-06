@@ -1,0 +1,62 @@
+- generic [active]:
+  - link "Skip to main content" [ref=f30e1] [cursor=pointer]:
+    - /url: "#search-form"
+  - generic [ref=f30e3]:
+    - banner [ref=f30e5]:
+      - generic [ref=f30e6]:
+        - button "Main menu" [ref=f30e8] [cursor=pointer]
+        - generic [ref=f30e11]:
+          - link "Google Docs Editors Help" [ref=f30e14] [cursor=pointer]:
+            - /url: /docs
+          - search [ref=f30e16]:
+            - combobox "Search Help Center" [ref=f30e18]
+            - button "Search Help Center" [ref=f30e19] [cursor=pointer]
+        - generic [ref=f30e24]:
+          - button "Google apps" [ref=f30e28] [cursor=pointer]
+          - link "Sign in" [ref=f30e32] [cursor=pointer]:
+            - /url: https://accounts.google.com/ServiceLogin?hl=en&passive=true&continue=http://support.google.com/docs/answer/12388519%3Fhl%3Den&ec=GAZAdQ
+    - navigation "Support page navigation bar" [ref=f30e37]:
+      - generic [ref=f30e38]:
+        - generic "Helpcenter sections" [ref=f30e39]:
+          - list [ref=f30e40]:
+            - listitem [ref=f30e41]:
+              - link "Help Center" [ref=f30e42] [cursor=pointer]:
+                - /url: /docs/?hl=en
+            - listitem [ref=f30e43]:
+              - link "Community" [ref=f30e44] [cursor=pointer]:
+                - /url: /docs/community?hl=en
+            - listitem [ref=f30e45]:
+              - link "Gemini in Docs Editors" [ref=f30e46] [cursor=pointer]:
+                - /url: /docs/announcements/15399311
+        - link "Google Docs Editors (Open in a new window)" [ref=f30e50] [cursor=pointer]:
+          - /url: //www.google.com/docs/about
+          - text: Google Docs Editors
+    - generic [ref=f30e53]:
+      - main [ref=f30e54]:
+        - generic [ref=f30e57]:
+          - heading "Sorry, this page can't be found." [level=1] [ref=f30e58]
+          - paragraph
+          - paragraph [ref=f30e59]: This page doesn't exist in Google Docs Editors Help. It may be deleted because the feature doesn't exist anymore, or the URL may be incorrect.
+          - paragraph
+          - generic [ref=f30e60]:
+            - link "Get Google Docs Editors Help" [ref=f30e62] [cursor=pointer]:
+              - /url: /docs?source=404
+            - link "Search on Google" [ref=f30e64] [cursor=pointer]:
+              - /url: //www.google.com?source=404
+      - contentinfo [ref=f30e67]:
+        - generic [ref=f30e69]:
+          - generic [ref=f30e70]:
+            - generic [ref=f30e71]: ©2026 Google
+            - list [ref=f30e72]:
+              - text: "-"
+              - listitem [ref=f30e73]:
+                - link "Privacy Policy" [ref=f30e74] [cursor=pointer]:
+                  - /url: //www.google.com/intl/en/privacy.html
+              - listitem [ref=f30e75]:
+                - text: "-"
+                - link "Terms of Service" [ref=f30e76] [cursor=pointer]:
+                  - /url: https://www.google.com/accounts/TOS?hl=en&loc=US
+          - generic "Language" [ref=f30e77]:
+            - listbox "Language (English‎)" [ref=f30e79] [cursor=pointer]:
+              - generic [ref=f30e80]: English‎
+          - button "Enable Dark Mode" [ref=f30e84] [cursor=pointer]

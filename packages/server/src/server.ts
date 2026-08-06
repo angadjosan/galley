@@ -226,7 +226,17 @@ export function build(options: ServerOptions = {}): GalleyServer {
       actor.docId,
       `${body.ops.length} op(s): ${body.ops.map((o) => o.kind).join(', ')}`,
     );
-    return { ticket: result.ticket, content: renderCleanMarkdown(result.source) };
+    // `content` is the clean form every other reader wants. `source` is the
+    // annotated form, returned because a client that edits has to diff its next
+    // change against the *same* bytes it holds: diffing a marked draft against
+    // a clean base makes every block look new, which turns a one-word edit into
+    // a delete-and-reinsert of the document and destroys block identity — the
+    // thing comments, citations and attribution are all anchored to.
+    return {
+      ticket: result.ticket,
+      content: renderCleanMarkdown(result.source),
+      source: result.source,
+    };
   });
 
   app.post('/v1/docs/:ref/ingest', async (request) => {
@@ -265,6 +275,8 @@ export function build(options: ServerOptions = {}): GalleyServer {
       assigneeId?: string;
       runId?: string;
       requestId?: string;
+      spanStart?: number;
+      spanEnd?: number;
     };
     const comment = await actor.comment(
       {
@@ -273,6 +285,10 @@ export function build(options: ServerOptions = {}): GalleyServer {
         threadId: body.threadId,
         assigneeId: body.assigneeId,
         runId: body.runId,
+        // Which words were selected, so a note can highlight a sentence rather
+        // than the paragraph containing it.
+        spanStart: body.spanStart,
+        spanEnd: body.spanEnd,
       },
       principalOf(session),
       body.requestId,
@@ -408,6 +424,24 @@ export function build(options: ServerOptions = {}): GalleyServer {
     const index = parsed.blocks.findIndex((b) => b.id === blockId);
     if (index < 0) return reply.code(404).send({ error: `no block ${blockId}` });
     return { citation: citationFor(parsed, index, workspace.pathOf(actor.docId) ?? actor.docId) };
+  });
+
+  /**
+   * The directory, so an interface can say "sam" and "galley-bot/ci, set up by
+   * priya" where it would otherwise print `u-sam` and `a-bot`.
+   *
+   * Any authenticated principal may read it. Names and delegation are already
+   * visible in every history entry and audit line; withholding them here would
+   * only force the client to print raw ids at people.
+   */
+  app.get('/v1/people', async (request) => {
+    const session = sessionOf(request);
+    // Scoped to the caller's own workspace, like every other listing here. A
+    // directory is exactly the kind of endpoint that quietly becomes a
+    // cross-tenant leak when it is the one query without a WHERE clause.
+    const self = store.getPrincipal(session.principal.id);
+    if (!self) return { people: [] };
+    return { people: store.listPrincipals(String(self.workspace_id)) };
   });
 
   app.get('/v1/status', async (request) => {

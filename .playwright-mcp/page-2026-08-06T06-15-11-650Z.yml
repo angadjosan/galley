@@ -1,0 +1,77 @@
+- generic [ref=f47e3]:
+  - complementary [ref=f47e4]:
+    - generic [ref=f47e5]: Galley
+    - textbox "Search" [ref=f47e13]:
+      - /placeholder: Search everything
+    - navigation [ref=f47e14]:
+      - generic [ref=f47e15]:
+        - generic [ref=f47e16]: Design
+        - button "Galley" [ref=f47e17] [cursor=pointer]
+      - generic [ref=f47e19]:
+        - generic [ref=f47e20]: Policies
+        - button "Refund policy" [ref=f47e21] [cursor=pointer]
+      - generic [ref=f47e23]:
+        - generic [ref=f47e24]: Runbooks
+        - button "Deploy runbook" [ref=f47e25] [cursor=pointer]
+      - generic [ref=f47e27]:
+        - generic [ref=f47e28]: Specs
+        - button "Checkout v2" [ref=f47e29] [cursor=pointer]
+    - generic [ref=f47e31]:
+      - button "New document" [ref=f47e32] [cursor=pointer]: + New document
+      - button "Sign out" [ref=f47e33] [cursor=pointer]
+  - generic [ref=f47e34]:
+    - banner [ref=f47e35]:
+      - generic [ref=f47e36]:
+        - button "Documents" [ref=f47e37] [cursor=pointer]:
+          - generic [ref=f47e38]: ☰
+        - navigation "Location" [ref=f47e39]:
+          - generic [ref=f47e40]: Design
+          - generic [ref=f47e41]: ›
+          - generic [ref=f47e42]: Galley
+        - generic [ref=f47e43]:
+          - generic "Saved" [ref=f47e44]
+          - button "Share" [ref=f47e45] [cursor=pointer]
+      - menubar "Main" [ref=f47e46]:
+        - menuitem "File" [ref=f47e48] [cursor=pointer]
+        - menuitem "Edit" [ref=f47e50] [cursor=pointer]
+        - menuitem "Insert" [ref=f47e52] [cursor=pointer]
+        - menuitem "Format" [ref=f47e54] [cursor=pointer]
+      - toolbar "Formatting" [ref=f47e56]:
+        - generic [ref=f47e57]:
+          - button "Undo" [disabled] [ref=f47e58]
+          - button "Redo" [disabled] [ref=f47e62]
+        - 'button "Paragraph style: Normal text" [disabled] [ref=f47e69]':
+          - generic [ref=f47e70]: Normal text
+        - generic [ref=f47e73]:
+          - button "Bold" [disabled] [ref=f47e75]:
+            - generic [ref=f47e76]: B
+          - button "Italic" [disabled] [ref=f47e77]:
+            - generic [ref=f47e78]: I
+          - button "Underline" [disabled] [ref=f47e79]:
+            - generic [ref=f47e80]: U
+          - button "Strikethrough" [disabled] [ref=f47e81]:
+            - generic [ref=f47e82]: S
+          - button "Highlight" [disabled] [ref=f47e83]
+          - button "Code" [disabled] [ref=f47e87]
+        - generic [ref=f47e91]:
+          - button "Insert link" [disabled] [ref=f47e93]
+          - button "Add comment" [disabled] [ref=f47e97]
+          - button "Insert image" [disabled] [ref=f47e100]
+          - button "Insert diagram" [disabled] [ref=f47e105]
+          - button "Insert design" [disabled] [ref=f47e111]
+          - button "Insert table" [disabled] [ref=f47e116]
+        - generic [ref=f47e120]:
+          - button "Checklist" [disabled] [ref=f47e122]
+          - button "Bulleted list" [disabled] [ref=f47e128]
+          - button "Numbered list" [disabled] [ref=f47e134]:
+            - img [ref=f47e135]:
+              - generic [ref=f47e137]: "1"
+              - generic [ref=f47e138]: "2"
+              - generic [ref=f47e139]: "3"
+          - button "Decrease indent" [disabled] [ref=f47e140]
+          - button "Increase indent" [disabled] [ref=f47e144]
+        - button "Clear formatting" [disabled] [ref=f47e150]
+    - generic [ref=f47e155]:
+      - main [ref=f47e156]
+      - complementary [ref=f47e157]:
+        - paragraph [ref=f47e158]: No notes yet. Select any text and press ⌘⌥M to leave one.

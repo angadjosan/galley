@@ -1,0 +1,22 @@
+- generic [active] [ref=f33e1]:
+  - generic [ref=f33e4]:
+    - generic [ref=f33e6]:
+      - link "Skip to content" [ref=f33e8] [cursor=pointer]:
+        - /url: "#main"
+      - generic [ref=f33e12]:
+        - generic [ref=f33e13]: Notion
+        - generic [ref=f33e18]:
+          - paragraph [ref=f33e19]: This page couldn’t be found
+          - paragraph [ref=f33e20]: You may not have access, or it might have been deleted or moved. Check the link and try again.
+        - generic [ref=f33e21]:
+          - link "What is Notion?" [ref=f33e23] [cursor=pointer]:
+            - /url: https://www.notion.com/product
+          - generic [ref=f33e26]: ·
+          - button "Message support" [ref=f33e28] [cursor=pointer]
+          - generic [ref=f33e29]: ·
+          - link "Terms" [ref=f33e31] [cursor=pointer]:
+            - /url: https://www.notion.so/28ffdd083dc3473e9c2da6ec011b58ac
+    - status [ref=f33e32]
+    - alert [ref=f33e33]
+  - iframe [ref=f33e34]:
+    

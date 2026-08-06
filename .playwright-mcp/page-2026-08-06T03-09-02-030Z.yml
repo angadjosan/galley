@@ -1,0 +1,65 @@
+- generic [ref=f4e3]:
+  - complementary [ref=f4e4]:
+    - generic [ref=f4e5]: Galley
+    - textbox "Search" [ref=f4e13]:
+      - /placeholder: Search blocks…
+    - navigation [ref=f4e14]:
+      - generic [ref=f4e15]:
+        - generic [ref=f4e16]: design
+        - button "Galley design/galley" [ref=f4e17] [cursor=pointer]:
+          - generic [ref=f4e18]: Galley
+          - generic [ref=f4e19]: design/galley
+      - generic [ref=f4e20]:
+        - generic [ref=f4e21]: policies
+        - button "Refund policy policies/refunds" [ref=f4e22] [cursor=pointer]:
+          - generic [ref=f4e23]: Refund policy
+          - generic [ref=f4e24]: policies/refunds
+      - generic [ref=f4e25]:
+        - generic [ref=f4e26]: runbooks
+        - button "Deploy runbook runbooks/deploy" [ref=f4e27] [cursor=pointer]:
+          - generic [ref=f4e28]: Deploy runbook
+          - generic [ref=f4e29]: runbooks/deploy
+      - generic [ref=f4e30]:
+        - generic [ref=f4e31]: specs
+        - button "Checkout v2 specs/checkout-v2" [ref=f4e32] [cursor=pointer]:
+          - generic [ref=f4e33]: Checkout v2
+          - generic [ref=f4e34]: specs/checkout-v2
+    - button "Sign out" [ref=f4e36] [cursor=pointer]
+  - main [ref=f4e38]:
+    - generic [ref=f4e39]:
+      - generic [ref=f4e40]:
+        - heading "Galley" [level=1] [ref=f4e41]
+        - generic [ref=f4e42]:
+          - generic [ref=f4e43]: design/galley
+          - generic [ref=f4e44]:
+            - generic [ref=f4e45]: owner
+            - text: u-priya
+      - generic "Saved" [ref=f4e47]
+    - generic [ref=f4e49]:
+      - toolbar "Formatting" [ref=f4e51]:
+        - generic [ref=f4e52]:
+          - button "Paragraph" [ref=f4e53] [cursor=pointer]: ¶
+          - button "Heading 1" [ref=f4e54] [cursor=pointer]: H1
+          - button "Heading 2" [ref=f4e55] [cursor=pointer]: H2
+          - button "Heading 3" [ref=f4e56] [cursor=pointer]: H3
+        - generic [ref=f4e58]:
+          - button "Bold" [ref=f4e59] [cursor=pointer]: B
+          - button "Italic" [ref=f4e60] [cursor=pointer]: I
+          - button "Code" [ref=f4e61] [cursor=pointer]: ‹›
+          - button "Strikethrough" [ref=f4e62] [cursor=pointer]: S
+        - generic [ref=f4e64]:
+          - button "Bullet list" [ref=f4e65] [cursor=pointer]: •
+          - button "Numbered list" [ref=f4e66] [cursor=pointer]: "1."
+          - button "Quote" [ref=f4e67] [cursor=pointer]: ❝
+          - button "Note callout" [ref=f4e68] [cursor=pointer]: "!"
+      - complementary [ref=f4e70]:
+        - tablist [ref=f4e71]:
+          - tab "Comments" [selected] [ref=f4e72] [cursor=pointer]
+          - tab "Suggestions" [ref=f4e73] [cursor=pointer]
+          - tab "Orphans" [ref=f4e74] [cursor=pointer]
+          - tab "History" [ref=f4e75] [cursor=pointer]
+        - generic [ref=f4e76]:
+          - paragraph [ref=f4e77]: No open threads.
+          - generic [ref=f4e78]:
+            - textbox "Select a block to comment" [disabled] [ref=f4e79]
+            - button "Comment" [disabled] [ref=f4e80]

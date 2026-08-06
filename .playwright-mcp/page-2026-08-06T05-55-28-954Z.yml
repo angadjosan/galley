@@ -1,0 +1,15 @@
+- generic [ref=f9e3]:
+  - link [ref=f9e5] [cursor=pointer]:
+    - /url: //support.google.com/docs/
+    - img "Google logo" [ref=f9e6]
+  - paragraph [ref=f9e7]:
+    - generic [ref=f9e8]:
+      - text: We're sorry. You can't access this item because it is in violation of our
+      - link "Terms of Service" [ref=f9e9] [cursor=pointer]:
+        - /url: http://www.google.com/google-d-s/intl/en/terms.html
+      - text: .
+  - paragraph [ref=f9e10]:
+    - text: Find out more
+    - link "about this topic at the Google Drive Help Center" [ref=f9e11] [cursor=pointer]:
+      - /url: https://support.google.com/drive/bin/answer.py?hl=en&answer=148505
+    - text: .

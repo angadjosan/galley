@@ -173,7 +173,14 @@ export function galleyKeymap(onComment: () => void, onLink: () => void): Plugin 
 // ---------------------------------------------------------------------------
 
 /**
- * The "type / for commands" affordance.
+ * The empty-block hints.
+ *
+ * These say what a block *is*, never what to press. An earlier version read
+ * "Type / for commands", which is the pattern this editor deliberately dropped:
+ * a hint that teaches a hidden control is an admission that the control cannot
+ * be found, and writers reported the same hint in Dropbox Paper as an
+ * interruption. Everything it used to advertise is now visible in the toolbar
+ * and enumerated in the menus.
  *
  * Node decorations with a CSS `::before`, never widget decorations: a widget is
  * a real DOM node, so it lands in `getSelection()`, is read aloud as document
@@ -195,7 +202,7 @@ export function placeholders(): Plugin {
           return DecorationSet.create(doc, [
             Decoration.node(0, only.nodeSize, {
               class: 'placeholder placeholder-doc',
-              'data-placeholder': 'Write something, or press / for headings, lists and more',
+              'data-placeholder': 'Start writing',
             }),
           ]);
         }
@@ -212,7 +219,8 @@ export function placeholders(): Plugin {
             ? `Heading ${parent.attrs.level as number}`
             : parent.type === schema.nodes.blockquote
               ? 'Quote'
-              : 'Type / for commands';
+              : '';
+        if (!label) return null;
         const pos = $from.before($from.depth);
         return DecorationSet.create(doc, [
           Decoration.node(pos, pos + parent.nodeSize, {
@@ -478,15 +486,10 @@ export interface CorePluginOptions {
   onOpenThread(threadId: string): void;
   onComment(): void;
   onLink(): void;
-  slash: Plugin;
 }
 
 export function corePlugins(options: CorePluginOptions): Plugin[] {
   return [
-    // Before the keymaps: plugins see keydown in array order, and the slash
-    // menu has to claim Enter and the arrow keys before the base keymap
-    // splits the paragraph.
-    options.slash,
     markdownInputRules(),
     galleyKeymap(options.onComment, options.onLink),
     keymap(baseKeymap),

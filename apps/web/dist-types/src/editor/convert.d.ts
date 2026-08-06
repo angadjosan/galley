@@ -23,6 +23,8 @@ export interface Loaded {
     readonly style: StyleProfile;
     /** Frontmatter and leading whitespace, carried across untouched. */
     readonly preamble: string;
+    /** False when the source had no body at all — only frontmatter, or nothing. */
+    readonly hadBody: boolean;
 }
 export declare function markdownToDoc(markdown: string): Loaded;
 export declare function docToMarkdown(doc: PmNode, loaded: Loaded): string;

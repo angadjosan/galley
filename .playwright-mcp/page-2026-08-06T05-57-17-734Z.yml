@@ -1,0 +1,1187 @@
+- generic [ref=f26e2]:
+  - navigation "skip link":
+    - link "Skip to main content." [active] [ref=f26e3] [cursor=pointer]:
+      - /url: /components/menus#main_content
+  - generic [ref=f26e4]:
+    - generic [ref=f26e7]:
+      - generic [ref=f26e9]:
+        - generic [ref=f26e10]: Material 2 is no longer maintained. Upgrade to Material 3, the latest version of Material Design.
+        - generic [ref=f26e11]: Learn about Material 3's Expressive components, dynamic color, adaptive design, and more
+      - link "Read the new Material Design 3 guidelines" [ref=f26e13] [cursor=pointer]:
+        - /url: https://m3.material.io
+        - generic:
+          - button "arrow_right_alt" [disabled]:
+            - generic: Use Material 3
+    - banner [ref=f26e14]:
+      - link "Navigate to the material design homepage." [ref=f26e15] [cursor=pointer]:
+        - /url: /
+        - generic [ref=f26e17]: Material Design
+      - navigation "tool bar" [ref=f26e18]:
+        - list [ref=f26e19]:
+          - listitem [ref=f26e20]:
+            - link "Design" [ref=f26e22] [cursor=pointer]:
+              - /url: /design
+          - listitem [ref=f26e23]:
+            - link "Components" [ref=f26e25] [cursor=pointer]:
+              - /url: /components
+          - listitem [ref=f26e27]:
+            - link "Develop" [ref=f26e29] [cursor=pointer]:
+              - /url: /develop
+          - listitem [ref=f26e30]:
+            - link "Resources" [ref=f26e32] [cursor=pointer]:
+              - /url: /resources
+          - listitem [ref=f26e33]:
+            - link "Material Design Blog" [ref=f26e35] [cursor=pointer]:
+              - /url: https://material.io/blog
+              - text: Blog
+      - button "Search Material Design" [ref=f26e36] [cursor=pointer]:
+        - generic "Search Material Design" [ref=f26e38]: search
+  - generic [ref=f26e39]:
+    - complementary "navigation drawer" [ref=f26e41]:
+      - link "logo" [ref=f26e43] [cursor=pointer]:
+        - /url: /
+        - generic [ref=f26e45]: Material Design
+      - generic [ref=f26e46]:
+        - generic [ref=f26e47]: Components
+        - list [ref=f26e48]:
+          - listitem [ref=f26e49]:
+            - 'link "App bars: bottom" [ref=f26e52] [cursor=pointer]':
+              - /url: /components/app-bars-bottom
+          - listitem [ref=f26e53]:
+            - 'link "App bars: top" [ref=f26e56] [cursor=pointer]':
+              - /url: /components/app-bars-top
+          - listitem [ref=f26e57]:
+            - link "Backdrop" [ref=f26e60] [cursor=pointer]:
+              - /url: /components/backdrop
+          - listitem [ref=f26e61]:
+            - link "Banners" [ref=f26e64] [cursor=pointer]:
+              - /url: /components/banners
+          - listitem [ref=f26e65]:
+            - link "Bottom navigation" [ref=f26e68] [cursor=pointer]:
+              - /url: /components/bottom-navigation
+          - listitem [ref=f26e69]:
+            - link "Buttons" [ref=f26e72] [cursor=pointer]:
+              - /url: /components/buttons
+          - listitem [ref=f26e73]:
+            - 'link "Buttons: floating action button" [ref=f26e76] [cursor=pointer]':
+              - /url: /components/buttons-floating-action-button
+          - listitem [ref=f26e77]:
+            - link "Cards" [ref=f26e80] [cursor=pointer]:
+              - /url: /components/cards
+          - listitem [ref=f26e81]:
+            - link "Checkboxes" [ref=f26e84] [cursor=pointer]:
+              - /url: /components/checkboxes
+          - listitem [ref=f26e85]:
+            - link "Chips" [ref=f26e88] [cursor=pointer]:
+              - /url: /components/chips
+          - listitem [ref=f26e89]:
+            - link "Data tables" [ref=f26e92] [cursor=pointer]:
+              - /url: /components/data-tables
+          - listitem [ref=f26e93]:
+            - link "Date pickers" [ref=f26e96] [cursor=pointer]:
+              - /url: /components/date-pickers
+          - listitem [ref=f26e97]:
+            - link "Dialogs" [ref=f26e100] [cursor=pointer]:
+              - /url: /components/dialogs
+          - listitem [ref=f26e101]:
+            - link "Dividers" [ref=f26e104] [cursor=pointer]:
+              - /url: /components/dividers
+          - listitem [ref=f26e105]:
+            - link "Image lists" [ref=f26e108] [cursor=pointer]:
+              - /url: /components/image-lists
+          - listitem [ref=f26e109]:
+            - link "Lists" [ref=f26e112] [cursor=pointer]:
+              - /url: /components/lists
+          - listitem [ref=f26e113]:
+            - link "Menus" [ref=f26e116] [cursor=pointer]:
+              - /url: /components/menus
+          - listitem [ref=f26e117]:
+            - link "Navigation drawer" [ref=f26e120] [cursor=pointer]:
+              - /url: /components/navigation-drawer
+          - listitem [ref=f26e121]:
+            - link "Navigation rail" [ref=f26e124] [cursor=pointer]:
+              - /url: /components/navigation-rail
+          - listitem [ref=f26e125]:
+            - link "Progress indicators" [ref=f26e128] [cursor=pointer]:
+              - /url: /components/progress-indicators
+          - listitem [ref=f26e129]:
+            - link "Radio buttons" [ref=f26e132] [cursor=pointer]:
+              - /url: /components/radio-buttons
+          - listitem [ref=f26e133]:
+            - 'link "Sheets: bottom" [ref=f26e136] [cursor=pointer]':
+              - /url: /components/sheets-bottom
+          - listitem [ref=f26e137]:
+            - 'link "Sheets: side" [ref=f26e140] [cursor=pointer]':
+              - /url: /components/sheets-side
+          - listitem [ref=f26e141]:
+            - link "Sliders" [ref=f26e144] [cursor=pointer]:
+              - /url: /components/sliders
+          - listitem [ref=f26e145]:
+            - link "Snackbars" [ref=f26e148] [cursor=pointer]:
+              - /url: /components/snackbars
+          - listitem [ref=f26e149]:
+            - link "Switches" [ref=f26e152] [cursor=pointer]:
+              - /url: /components/switches
+          - listitem [ref=f26e153]:
+            - link "Tabs" [ref=f26e156] [cursor=pointer]:
+              - /url: /components/tabs
+          - listitem [ref=f26e157]:
+            - link "Text fields" [ref=f26e160] [cursor=pointer]:
+              - /url: /components/text-fields
+          - listitem [ref=f26e161]:
+            - link "Time pickers" [ref=f26e164] [cursor=pointer]:
+              - /url: /components/time-pickers
+          - listitem [ref=f26e165]:
+            - link "Tooltips" [ref=f26e168] [cursor=pointer]:
+              - /url: /components/tooltips
+    - generic [ref=f26e169]:
+      - main "Main Content" [ref=f26e171]:
+        - generic [ref=f26e173]:
+          - heading "Menus" [level=1] [ref=f26e174]
+          - paragraph [ref=f26e175]: Menus display a list of choices on temporary surfaces.
+        - tablist [ref=f26e179]:
+          - generic [ref=f26e183]:
+            - generic:
+              - generic:
+                - tab "design_services Design" [selected] [ref=f26e185] [cursor=pointer]:
+                  - generic:
+                    - generic: design_services
+                    - generic: Design
+                - tab "integration_instructions Implementation" [ref=f26e187] [cursor=pointer]:
+                  - generic:
+                    - generic: integration_instructions
+                    - generic: Implementation
+        - generic [ref=f26e188]:
+          - navigation "Contents" [ref=f26e191]:
+            - heading "Contents" [level=2] [ref=f26e192]
+            - list [ref=f26e193]:
+              - listitem [ref=f26e194]:
+                - link "Usage" [ref=f26e195] [cursor=pointer]:
+                  - /url: /components/menus#usage
+              - listitem [ref=f26e196]:
+                - link "Anatomy" [ref=f26e197] [cursor=pointer]:
+                  - /url: /components/menus#anatomy
+              - listitem [ref=f26e198]:
+                - link "Behavior" [ref=f26e199] [cursor=pointer]:
+                  - /url: /components/menus#behavior
+              - listitem [ref=f26e200]:
+                - link "Dropdown menu" [ref=f26e201] [cursor=pointer]:
+                  - /url: /components/menus#dropdown-menu
+              - listitem [ref=f26e202]:
+                - link "Exposed dropdown menu" [ref=f26e203] [cursor=pointer]:
+                  - /url: /components/menus#exposed-dropdown-menu
+              - listitem [ref=f26e204]:
+                - link "Theming" [ref=f26e205] [cursor=pointer]:
+                  - /url: /components/menus#theming
+              - listitem [ref=f26e206]:
+                - link "Specs" [ref=f26e207] [cursor=pointer]:
+                  - /url: /components/menus#specs
+          - tabpanel [ref=f26e208]:
+            - generic [ref=f26e209]:
+              - figure [ref=f26e216]
+              - separator [ref=f26e219]
+              - generic [ref=f26e220]:
+                - generic [ref=f26e221]:
+                  - heading "Usage" [level=2] [ref=f26e222]:
+                    - text: Usage
+                    - button "Copy link to Usage section" [ref=f26e225] [cursor=pointer]:
+                      - generic [ref=f26e226]: link
+                  - generic [ref=f26e227]:
+                    - paragraph [ref=f26e230]: A menu displays a list of choices on a temporary surface. They appear when users interact with a button, action, or other control.
+                    - heading "Principles" [level=3] [ref=f26e231]
+                    - generic [ref=f26e233]:
+                      - generic [ref=f26e234]:
+                        - figure [ref=f26e237]
+                        - heading "Nimble" [level=4] [ref=f26e239]
+                        - paragraph [ref=f26e240]: Menus should be easy to open, close, and interact with.
+                      - generic [ref=f26e241]:
+                        - figure [ref=f26e244]
+                        - heading "Contextual" [level=4] [ref=f26e246]
+                        - paragraph [ref=f26e247]: Menu content should be suited to user needs.
+                      - generic [ref=f26e248]:
+                        - figure [ref=f26e251]
+                        - heading "Scannable" [level=4] [ref=f26e253]
+                        - paragraph [ref=f26e254]: Menu items should be easy to scan.
+                    - separator [ref=f26e255]
+                    - generic [ref=f26e257]:
+                      - generic [ref=f26e258] [cursor=pointer]:
+                        - heading "Types" [level=3] [ref=f26e259]
+                        - button "Collapse Types Section" [ref=f26e260]: keyboard_arrow_up
+                      - generic [ref=f26e261]:
+                        - generic:
+                          - paragraph: Menus allow users to make a selection from multiple options. They are less prominent and take up less space than selection controls, such as a set...
+                        - generic [ref=f26e264]:
+                          - paragraph [ref=f26e265]: Menus allow users to make a selection from multiple options. They are less prominent and take up less space than selection controls, such as a set of radio buttons.
+                          - generic [ref=f26e267]:
+                            - figure [ref=f26e271]:
+                              - img "List of options in a dropdown menu" [ref=f26e273]
+                              - generic [ref=f26e275]:
+                                - strong [ref=f26e276]: Dropdown menus
+                                - text: Dropdown menus display a list of options, triggered by an icon, button, or action. Their placement varies based on the element that opens them.
+                            - figure [ref=f26e280]:
+                              - img "Exposed dropdown menu with an item selected" [ref=f26e282]
+                              - generic [ref=f26e284]:
+                                - strong [ref=f26e285]: Exposed dropdown menus
+                                - text: Exposed dropdown menus display the currently selected menu item above the list of options. Some variations can accept user-entered input.
+                    - separator [ref=f26e286]
+                    - generic [ref=f26e288]:
+                      - generic [ref=f26e289] [cursor=pointer]:
+                        - heading "Placement" [level=3] [ref=f26e290]
+                        - button "Collapse Placement Section" [ref=f26e291]: keyboard_arrow_up
+                      - generic [ref=f26e292]:
+                        - generic:
+                          - paragraph: Menus appear in front of all other permanent UI elements. The maximum height of a menu should be at least one row less than the...
+                        - generic [ref=f26e295]:
+                          - heading "Elevation" [level=4] [ref=f26e296]
+                          - paragraph [ref=f26e297]: Menus appear in front of all other permanent UI elements.
+                          - figure "Menus appear at a higher elevation than all other permanent UI elements." [ref=f26e300]:
+                            - generic [ref=f26e301]:
+                              - img "Menu appearing on top of UI body text"
+                          - heading "Height" [level=4] [ref=f26e303]
+                          - paragraph [ref=f26e304]: The maximum height of a menu should be at least one row less than the height of the app’s UI.
+                          - figure "The rows in this menu are 32dp tall. That’s also the space used between the menu and the bottom of the screen." [ref=f26e307]:
+                            - generic [ref=f26e308]:
+                              - img "Desktop UI showing 32 dp for each menu row & another 32 dp padding between dropdown and bottom of screen"
+                          - heading "Position" [level=4] [ref=f26e310]
+                          - paragraph [ref=f26e311]: Menus should be positioned relative to the edge of the screen or browser. They typically appear next to (or in front of) the element that generates them. If they are in a position to be cut off by the browser or screen’s edge, the menu can instead appear to the left, right, or above the element that generates it.
+                          - figure "Menus can change their position to avoid being truncated by the screen or browser’s edge." [ref=f26e314]:
+                            - generic [ref=f26e315]:
+                              - img "Desktop UI showing a parent dropdown menu with a cascading menu to its right"
+                - separator [ref=f26e317]
+              - generic [ref=f26e318]:
+                - heading "Anatomy" [level=2] [ref=f26e319]:
+                  - text: Anatomy
+                  - button "Copy link to Anatomy section" [ref=f26e322] [cursor=pointer]:
+                    - generic [ref=f26e323]: link
+                - generic [ref=f26e324]:
+                  - generic [ref=f26e326]:
+                    - paragraph [ref=f26e327]: Menus display lists of related options (which can be grouped together) as well as unrelated options. Menus appear when a user taps an interactive UI element such as an icon, button, action, or content, such as selected items or text.
+                    - generic [ref=f26e329]:
+                      - figure [ref=f26e333]:
+                        - generic [ref=f26e334]:
+                          - img "Dropdown menu displaying a list of text items, some separated by a divider"
+                      - generic [ref=f26e335]:
+                        - heading "Text list" [level=3] [ref=f26e336]
+                        - list [ref=f26e337]:
+                          - listitem [ref=f26e338]: Container
+                          - listitem [ref=f26e339]: Text
+                          - listitem [ref=f26e340]: Divider
+                    - generic [ref=f26e342]:
+                      - figure [ref=f26e346]:
+                        - generic [ref=f26e347]:
+                          - img "Dropdown menu displaying a list of text and icon items"
+                      - generic [ref=f26e348]:
+                        - heading "Text and icon list" [level=3] [ref=f26e349]
+                        - list [ref=f26e350]:
+                          - listitem [ref=f26e351]: Container
+                          - listitem [ref=f26e352]: Leading icon
+                          - listitem [ref=f26e353]: Text
+                          - listitem [ref=f26e354]: Divider
+                    - generic [ref=f26e356]:
+                      - figure [ref=f26e360]:
+                        - generic [ref=f26e361]:
+                          - img "Dropdown menu displaying text and icon items, key commands and a cascading menu indicator"
+                      - generic [ref=f26e362]:
+                        - heading "Text, icon, and keyboard command list" [level=3] [ref=f26e363]
+                        - list [ref=f26e364]:
+                          - listitem [ref=f26e365]: Container
+                          - listitem [ref=f26e366]: Leading icon
+                          - listitem [ref=f26e367]: Text
+                          - listitem [ref=f26e368]: Divider
+                          - listitem [ref=f26e369]: Command
+                          - listitem [ref=f26e370]: Cascading menu indicator
+                    - generic [ref=f26e372]:
+                      - figure [ref=f26e376]:
+                        - generic [ref=f26e377]:
+                          - img "Dropdown menu with 1 out of 6 items selected. A check icon marks the item that is selected"
+                      - generic [ref=f26e378]:
+                        - heading "Text with selection state list" [level=3] [ref=f26e379]
+                        - list [ref=f26e380]:
+                          - listitem [ref=f26e381]: Selection state
+                  - link "Related article - Lists" [ref=f26e386] [cursor=pointer]:
+                    - /url: /components/lists
+                    - generic [ref=f26e388]:
+                      - generic [ref=f26e389]: Lists
+                      - paragraph [ref=f26e390]: Lists are continuous, vertical display of text or images.
+                    - paragraph [ref=f26e391]:
+                      - text: Related article
+                      - generic [ref=f26e392]: arrow_downward
+                  - generic [ref=f26e394]:
+                    - generic [ref=f26e395] [cursor=pointer]:
+                      - heading "Actions" [level=3] [ref=f26e396]
+                      - button "Collapse Actions Section" [ref=f26e397]: keyboard_arrow_up
+                    - generic [ref=f26e398]:
+                      - generic:
+                        - paragraph: Action states inside menus
+                      - generic [ref=f26e401]:
+                        - heading "Disabled actions" [level=4] [ref=f26e402]
+                        - paragraph [ref=f26e403]: Display actions as disabled when they can only be used sometimes, under certain conditions. They should be displayed as disabled rather than removing them.
+                        - figure "The Redo action is disabled when that action isn’t available, and the Cut and Copy actions are disabled until content is selected." [ref=f26e406]:
+                          - generic [ref=f26e407]:
+                            - img "Menu shows 3 items that are disabled, the text color of disabled items are lighter than the active items"
+              - separator [ref=f26e409]
+              - generic [ref=f26e410]:
+                - heading "Behavior" [level=2] [ref=f26e411]:
+                  - text: Behavior
+                  - button "Copy link to Behavior section" [ref=f26e414] [cursor=pointer]:
+                    - generic [ref=f26e415]: link
+                - generic [ref=f26e416]:
+                  - generic [ref=f26e418]:
+                    - generic [ref=f26e419] [cursor=pointer]:
+                      - heading "Scrolling" [level=3] [ref=f26e420]
+                      - button "Collapse Scrolling Section" [ref=f26e421]: keyboard_arrow_up
+                    - generic [ref=f26e422]:
+                      - generic:
+                        - paragraph: If not all menu items are displayed at once, menus can be scrollable. In this state, menus show a persistent scrollbar.
+                      - generic [ref=f26e425]:
+                        - paragraph [ref=f26e426]: If not all menu items are displayed at once, menus can be scrollable. In this state, menus show a persistent scrollbar.
+                        - figure "When content is scrollable, menus display scrollbars." [ref=f26e429]:
+                          - generic [ref=f26e430]:
+                            - img "Dropdown menu in a document UI, displaying a scrollable list of fonts"
+                  - separator [ref=f26e432]
+                  - generic [ref=f26e434]:
+                    - generic [ref=f26e435] [cursor=pointer]:
+                      - heading "Transitions" [level=3] [ref=f26e436]
+                      - button "Collapse Transitions Section" [ref=f26e437]: keyboard_arrow_up
+                    - generic [ref=f26e438]:
+                      - generic:
+                        - paragraph: Menus open using a scale animation (an animation that shows an element grow in size). The animation creates a relationship between the menu and the...
+                      - generic [ref=f26e439]:
+                        - generic [ref=f26e441]:
+                          - paragraph [ref=f26e442]: Menus use a fade transition pattern to enter and exit the screen. The animation creates a relationship between the menu and the action that generates the menu.
+                          - heading "Position" [level=4] [ref=f26e443]
+                          - paragraph [ref=f26e444]: A menu’s position on screen affects where and how it will appear. If opened at the top of the screen, it will expand downwards (to avoid being cropped).
+                          - figure "Menus at different positions on screen open in different ways, adapting to the space available." [ref=f26e447]:
+                            - button "Play" [ref=f26e451]
+                          - paragraph [ref=f26e453]: By default, menus open with an entrance animation. However, on desktop, menus can skip the animation and open instantly instead.
+                          - figure "1. Mobile menus have entrance animations 2. Desktop menus have the option to open instantly" [ref=f26e456]:
+                            - button "Play" [ref=f26e460]
+                        - link "Related article - Fade" [ref=f26e467] [cursor=pointer]:
+                          - /url: /design/motion/the-motion-system.html#fade
+                          - generic [ref=f26e469]:
+                            - generic [ref=f26e470]: Fade
+                            - paragraph [ref=f26e471]: A pattern for UI elements that enter or exit within the bounds of the screen
+                          - paragraph [ref=f26e472]:
+                            - text: Related article
+                            - generic [ref=f26e473]: arrow_downward
+                  - separator [ref=f26e474]
+                  - generic [ref=f26e476]:
+                    - generic [ref=f26e477] [cursor=pointer]:
+                      - heading "Scaling and adaptation" [level=3] [ref=f26e478]
+                      - button "Collapse Scaling and adaptation Section" [ref=f26e479]: keyboard_arrow_up
+                    - generic [ref=f26e480]:
+                      - generic:
+                        - paragraph: Bottom sheets are an alternative to inline menus or simple dialogs on mobile devices.
+                      - generic [ref=f26e483]:
+                        - paragraph [ref=f26e484]: Bottom sheets are an alternative to inline menus or simple dialogs on mobile devices. They create space to display additional items, longer descriptions, and iconography.
+                        - figure "The bottom sheet can replace an inline menu on smaller screens." [ref=f26e487]:
+                          - generic [ref=f26e488]:
+                            - img "Bottom sheet in a mobile UI"
+                        - paragraph [ref=f26e490]: Bottom sheets containing a set of actions on mobile can become a context menu on larger screens in order to preserve the intent and context of the primary content.
+                        - figure "On larger screens, a context menu can be more appropriate." [ref=f26e493]:
+                          - generic [ref=f26e494]:
+                            - img "Context menu elevated above a tablet UI"
+              - separator [ref=f26e496]
+              - generic [ref=f26e497]:
+                - heading "Dropdown menu" [level=2] [ref=f26e498]:
+                  - text: Dropdown menu
+                  - button "Copy link to Dropdown menu section" [ref=f26e501] [cursor=pointer]:
+                    - generic [ref=f26e502]: link
+                - generic [ref=f26e503]:
+                  - generic [ref=f26e505]:
+                    - generic [ref=f26e506] [cursor=pointer]:
+                      - heading "Usage" [level=3] [ref=f26e507]
+                      - button "Collapse Usage Section" [ref=f26e508]: keyboard_arrow_up
+                    - generic [ref=f26e509]:
+                      - generic:
+                        - paragraph: A dropdown menu is a compact way of displaying multiple choices. It appears upon interaction with an element (such as an icon or button) or...
+                      - paragraph [ref=f26e513]: A dropdown menu is a compact way of displaying multiple choices. It appears upon interaction with an element (such as an icon or button) or when users perform a specific action.
+                  - separator [ref=f26e514]
+                  - generic [ref=f26e516]:
+                    - generic [ref=f26e517] [cursor=pointer]:
+                      - heading "Placement" [level=3] [ref=f26e518]
+                      - button "Collapse Placement Section" [ref=f26e519]: keyboard_arrow_up
+                    - generic [ref=f26e520]:
+                      - generic:
+                        - paragraph: Dropdown menus are positioned relative to both the element that generates them and the edges of the screen or browser. They can appear in front...
+                      - generic [ref=f26e523]:
+                        - paragraph [ref=f26e524]: Dropdown menus are positioned relative to both the element that generates them and the edges of the screen or browser. They can appear in front of, beside, above, or below the element that generates them.
+                        - heading "Default placement" [level=4] [ref=f26e525]
+                        - paragraph [ref=f26e526]: A dropdown menu is typically positioned below the element that generates it.
+                        - figure "A dropdown menu triggered by an icon on mobile." [ref=f26e529]:
+                          - generic [ref=f26e530]:
+                            - img "Dropdown menu below menu icon, displaying additional actions for a new contact app screen"
+                        - heading "Cascading menu (Desktop only)" [level=4] [ref=f26e532]
+                        - paragraph [ref=f26e533]: Cascading menus allow users to choose from a large variety of choices, by displaying menus with multiple levels of hierarchy.
+                        - paragraph [ref=f26e534]: They are organized into menus of parent list items that contain child list items. Child list items appear to the right or left of parent list items, depending on where there is room to expand child list items.
+                        - figure "A parent list item can trigger a cascading menu containing child actions." [ref=f26e537]:
+                          - generic [ref=f26e538]:
+                            - img "Menu of child items cascading from a parent list item"
+                        - heading "Contextual menu" [level=4] [ref=f26e540]
+                        - paragraph [ref=f26e541]: Contextual menus aren’t triggered by a consistent UI element. They appear next to where a user taps, and their actions can vary based on the tap target.
+                        - figure "To reveal a contextual menu, tap and hold, or right click (desktop), selected text." [ref=f26e544]:
+                          - generic [ref=f26e545]:
+                            - img "Menu appearing below a held mouse arrow"
+                        - figure "A contextual menu appears next to selected text." [ref=f26e549]:
+                          - generic [ref=f26e550]:
+                            - img "Diagram of a menu appearing on tap and hold, after selecting text"
+                  - separator [ref=f26e552]
+                  - generic [ref=f26e554]:
+                    - generic [ref=f26e555] [cursor=pointer]:
+                      - heading "Behavior" [level=3] [ref=f26e556]
+                      - button "Collapse Behavior Section" [ref=f26e557]: keyboard_arrow_up
+                    - generic [ref=f26e558]:
+                      - generic:
+                        - paragraph: When an option is chosen from a dropdown menu, the element that generates it remains the same.
+                      - generic [ref=f26e561]:
+                        - paragraph [ref=f26e562]: When an option is chosen from a dropdown menu, the element that generates it remains the same.
+                        - figure "1. Tapping the icon triggers a dropdown menu. 2. Choosing a menu option doesn’t change the icon of the element generating the menu." [ref=f26e565]:
+                          - generic [ref=f26e566]:
+                            - img "Diagram of a menu appearing after icon press"
+              - separator [ref=f26e569]
+              - generic [ref=f26e570]:
+                - heading "Exposed dropdown menu" [level=2] [ref=f26e571]:
+                  - text: Exposed dropdown menu
+                  - button "Copy link to Exposed dropdown menu section" [ref=f26e574] [cursor=pointer]:
+                    - generic [ref=f26e575]: link
+                - generic [ref=f26e576]:
+                  - generic [ref=f26e578]:
+                    - generic [ref=f26e579] [cursor=pointer]:
+                      - heading "Usage" [level=3] [ref=f26e580]
+                      - button "Collapse Usage Section" [ref=f26e581]: keyboard_arrow_up
+                    - generic [ref=f26e582]:
+                      - generic:
+                        - paragraph: Exposed dropdown menus display the currently selected menu item above the menu. They can be used only when a single menu item can be chosen...
+                      - generic [ref=f26e585]:
+                        - paragraph [ref=f26e586]: Exposed dropdown menus display the currently selected menu item above the menu.
+                        - paragraph [ref=f26e587]: They can be used only when a single menu item can be chosen at a time.
+                        - figure [ref=f26e590]:
+                          - generic [ref=f26e591]:
+                            - img "Exposed dropdown menu displays the currently selected font above the menu"
+                        - figure "Exposed dropdown menu in a form" [ref=f26e594]:
+                          - generic [ref=f26e595]:
+                            - img "On desktop, a filled exposed dropdown menu displays the selected item above the menu"
+                  - separator [ref=f26e597]
+                  - generic [ref=f26e599]:
+                    - generic [ref=f26e600] [cursor=pointer]:
+                      - heading "Behavior" [level=3] [ref=f26e601]
+                      - button "Collapse Behavior Section" [ref=f26e602]: keyboard_arrow_up
+                    - generic [ref=f26e603]:
+                      - generic:
+                        - paragraph: Upon selecting an item, an exposed dropdown menu updates to display that item. In some cases, it can accept and display user input (whether or...
+                      - generic [ref=f26e606]:
+                        - paragraph [ref=f26e607]: Upon selecting an item, an exposed dropdown menu updates to display that item. In some cases, it can accept and display user input (whether or not it’s listed as a menu choice).
+                        - figure "Filled exposed dropdown menu states 1. Inactive 2. Activated 3. Inactive and populated" [ref=f26e610]:
+                          - generic [ref=f26e611]:
+                            - 'img "3 menu states in the filled style: 1. Inactive, with no menu exposed. 2. Activated, with menu exposed and a selection activated. 3. Inactive and populated, with the menu displaying the selected item"'
+                        - figure "Outlined exposed dropdown menu states 1. Inactive 2. Activated 3. Inactive and populated" [ref=f26e616]:
+                          - generic [ref=f26e617]:
+                            - 'img "3 menu states in the outlined style: 1. Inactive, with no menu exposed. 2. Activated, with menu exposed and a selection activated. 3. Inactive and populated, with the menu displaying the selected item"'
+                  - separator [ref=f26e620]
+                  - generic [ref=f26e622]:
+                    - generic [ref=f26e623] [cursor=pointer]:
+                      - heading "Placement" [level=3] [ref=f26e624]
+                      - button "Collapse Placement Section" [ref=f26e625]: keyboard_arrow_up
+                    - generic [ref=f26e626]:
+                      - generic:
+                        - paragraph: An exposed dropdown menu is positioned below the element that generates the dropdown. Alternatively the filled and outlined variations can open a native picker.
+                      - generic [ref=f26e629]:
+                        - paragraph [ref=f26e630]: An exposed dropdown menu is positioned below the element that generates the dropdown. Alternatively the filled and outlined variations can open a native picker.
+                        - figure "The menu appears below the text field on desktop and mobile. On mobile, a native picker can instead be used." [ref=f26e633]:
+                          - generic [ref=f26e635] [cursor=pointer]:
+                            - generic:
+                              - button "Play" [ref=f26e637]
+                              - button "Unmute" [ref=f26e638]:
+                                - generic [ref=f26e639]: volume_off
+                  - separator [ref=f26e641]
+                  - generic [ref=f26e643]:
+                    - generic [ref=f26e644] [cursor=pointer]:
+                      - heading "Variations" [level=3] [ref=f26e645]
+                      - button "Collapse Variations Section" [ref=f26e646]: keyboard_arrow_up
+                    - generic [ref=f26e647]:
+                      - generic:
+                        - paragraph: An exposed dropdown menu can be customized to have a different appearance or behavior. An editable dropdown menu displays the currently selected menu item above...
+                      - generic [ref=f26e650]:
+                        - paragraph [ref=f26e651]: An exposed dropdown menu can be customized to have a different appearance or behavior.
+                        - heading "Editable dropdown menu" [level=4] [ref=f26e652]
+                        - paragraph [ref=f26e653]: An editable dropdown menu displays the currently selected menu item above the menu. A user can enter a value that’s not listed in the menu. You can restrict the types of values that users can enter to certain types. For example, you can set the menu to only accept positive numbers.
+                        - figure "A user can also enter a value not listed in the menu, such as seven." [ref=f26e656]:
+                          - generic [ref=f26e657]:
+                            - img "Editable dropdown menu displaying the currently selected font size"
+                        - heading "Filled dropdown menu" [level=4] [ref=f26e659]
+                        - paragraph [ref=f26e660]: A filled dropdown menu looks like a filled text field. It displays the currently selected menu item above the menu.
+                        - figure "Filled dropdown menu" [ref=f26e663]:
+                          - generic [ref=f26e664]:
+                            - img "Dropdown menu in the filled style, the menu shows 4 items for users to select from"
+                        - paragraph [ref=f26e666]: The menu container corners furthest from the menu control have a 4dp radius.
+                        - 'figure "Filled dropdown menu Top corners: 0dp radius Bottom corners (shaped): 4dp radius" [ref=f26e669]':
+                          - generic [ref=f26e670]:
+                            - img "Menu container has two rounded, 4dp radius corners"
+                        - paragraph [ref=f26e673]: When using a leading icon with a filled dropdown menu, the floating label and the menu items must be aligned with one another.
+                        - figure "Filled dropdown menu with a leading icon" [ref=f26e676]:
+                          - generic [ref=f26e677]:
+                            - img "Menu label aligned with item labels"
+                        - heading "Outlined dropdown menu" [level=4] [ref=f26e679]
+                        - paragraph [ref=f26e680]: An outlined dropdown menu looks like an outlined text field. It displays the currently selected menu item above the menu.
+                        - figure "Outlined dropdown menu" [ref=f26e683]:
+                          - generic [ref=f26e684]:
+                            - img "Dropdown menu in the outlined style, showing 4 items for users to select from"
+                        - paragraph [ref=f26e686]: For outlined dropdown menus, all corners of the menu container have a 4dp radius.
+                        - 'figure "Outlined dropdown menu All corners: 4dp radius" [ref=f26e689]':
+                          - generic [ref=f26e690]:
+                            - img "All 4 corners on the menu container are rounded with a 4dp radius"
+                        - paragraph [ref=f26e693]: Forms with outlined dropdown menus should align the menu label with the icon.
+                        - figure "Outlined dropdown menu with a leading icon" [ref=f26e696]:
+                          - generic [ref=f26e697]:
+                            - img "Outlined dropdown menu with label left-aligned with the icon"
+                  - separator [ref=f26e699]
+                  - generic [ref=f26e701]:
+                    - generic [ref=f26e702] [cursor=pointer]:
+                      - heading "States" [level=3] [ref=f26e703]
+                      - button "Collapse States Section" [ref=f26e704]: keyboard_arrow_up
+                    - generic [ref=f26e705]:
+                      - generic:
+                        - paragraph
+                      - generic [ref=f26e708]:
+                        - paragraph
+                        - figure "Filled exposed dropdown menu states" [ref=f26e711]:
+                          - generic [ref=f26e712]:
+                            - img "3 by 3 grid summarizing the 9 states of the filled exposed dropdown menus"
+                        - figure "Outlined exposed dropdown menu states" [ref=f26e716]:
+                          - generic [ref=f26e717]:
+                            - img "3 by 3 grid summarizing the 9 states of the outlined exposed dropdown menus"
+              - separator [ref=f26e719]
+              - generic [ref=f26e720]:
+                - heading [level=2] [ref=f26e721]:
+                  - text: Theming
+                  - button "Copy link to Theming section" [ref=f26e724] [cursor=pointer]:
+                    - generic [ref=f26e725]: link
+                - generic [ref=f26e727]:
+                  - generic [ref=f26e728] [cursor=pointer]:
+                    - heading "Basil Material theme" [level=3] [ref=f26e729]
+                    - button "Collapse Basil Material theme Section" [ref=f26e730]: keyboard_arrow_up
+                  - generic [ref=f26e731]:
+                    - generic:
+                      - paragraph: This recipe app’s menus have been customized using Material Theming. Areas of customization include color and typography. Basil is a recipe app that uses Material...
+                      - button "Read more"
+                    - generic [ref=f26e732]:
+                      - generic [ref=f26e733]:
+                        - paragraph [ref=f26e734]: This recipe app’s menus have been customized using Material Theming. Areas of customization include color and typography.
+                        - figure "Basil’s customized menu" [ref=f26e737]:
+                          - generic [ref=f26e738]:
+                            - img "Dropdown menu in the Basil app with four items"
+                        - generic [ref=f26e741]:
+                          - link "Related link - Basil" [ref=f26e744] [cursor=pointer]:
+                            - /url: /design/material-studies/basil.html
+                            - generic [ref=f26e746]:
+                              - generic [ref=f26e747]: Basil
+                              - paragraph [ref=f26e748]: Basil is a recipe app that uses Material Design components and Material Theming to create an on-brand experience that is exciting and easy to explore.
+                            - paragraph [ref=f26e749]:
+                              - text: Related link
+                              - generic [ref=f26e750]: arrow_downward
+                          - link "Related article - The color system" [ref=f26e753] [cursor=pointer]:
+                            - /url: /design/color/the-color-system.html
+                            - generic [ref=f26e755]:
+                              - generic [ref=f26e756]: The color system
+                              - paragraph [ref=f26e757]: Create a color theme that reflects your brand or style
+                            - paragraph [ref=f26e758]:
+                              - text: Related article
+                              - generic [ref=f26e759]: arrow_downward
+                          - link "Related article - Applying color to UI" [ref=f26e762] [cursor=pointer]:
+                            - /url: /design/color/applying-color-to-ui.html
+                            - generic [ref=f26e764]:
+                              - generic [ref=f26e765]: Applying color to UI
+                              - paragraph [ref=f26e766]: "In a UI, color has a variety of roles: from containing meaning, to expressing a look and feel."
+                            - paragraph [ref=f26e767]:
+                              - text: Related article
+                              - generic [ref=f26e768]: arrow_downward
+                      - generic [ref=f26e769]:
+                        - heading "Color" [level=4] [ref=f26e770]
+                        - paragraph [ref=f26e771]: "Basil’s menus use custom color on four elements: the menu container, text, icon, and hover overlay."
+                        - figure [ref=f26e774]:
+                          - generic [ref=f26e775]:
+                            - 'img "Diagram of the Basil app’s menu colors: 1. Background color is Surface (#FFFFFF), 2. Text is On Surface (#29302E), 3. Icons are Primary (#356859 at 54%), 4. Hover selection is Primary (#356859 at 4%)"'
+                        - table [ref=f26e779]:
+                          - rowgroup [ref=f26e780]:
+                            - row [ref=f26e781]:
+                              - columnheader "Element" [ref=f26e782]
+                              - columnheader "Category" [ref=f26e783]
+                              - columnheader "Attribute" [ref=f26e784]
+                              - columnheader "Value" [ref=f26e785]
+                          - rowgroup [ref=f26e786]:
+                            - row [ref=f26e787]:
+                              - cell "Container" [ref=f26e788]
+                              - cell "Surface" [ref=f26e789]
+                              - cell "Color Opacity" [ref=f26e790]: ColorOpacity
+                              - cell "#FFFFFF 100%" [ref=f26e791]: "#FFFFFF100%"
+                            - row [ref=f26e792]:
+                              - cell "Text" [ref=f26e793]
+                              - cell "On Surface" [ref=f26e794]
+                              - cell "Color Opacity" [ref=f26e795]: ColorOpacity
+                              - cell "#29302E 100%" [ref=f26e796]: "#29302E100%"
+                            - row [ref=f26e797]:
+                              - cell "Icon" [ref=f26e798]
+                              - cell "Primary" [ref=f26e799]
+                              - cell "Color Opacity" [ref=f26e800]: ColorOpacity
+                              - cell "#356859 54%" [ref=f26e801]: "#35685954%"
+                            - row [ref=f26e802]:
+                              - cell "Hover overlay" [ref=f26e803]
+                              - cell "Primary" [ref=f26e804]
+                              - cell "Color Opacity" [ref=f26e805]: ColorOpacity
+                              - cell "#356859 4%" [ref=f26e806]: "#3568594%"
+                      - generic [ref=f26e807]:
+                        - heading "Typography" [level=4] [ref=f26e808]
+                        - paragraph [ref=f26e809]: Basil’s menu text uses custom typography.
+                        - figure [ref=f26e812]:
+                          - generic [ref=f26e813]:
+                            - img "Sample text written in Montserrat Medium in Body 1"
+                        - table [ref=f26e817]:
+                          - rowgroup [ref=f26e818]:
+                            - row [ref=f26e819]:
+                              - columnheader "Element" [ref=f26e820]
+                              - columnheader "Category" [ref=f26e821]
+                              - columnheader "Attribute" [ref=f26e822]
+                              - columnheader "Value" [ref=f26e823]
+                          - rowgroup [ref=f26e824]:
+                            - row [ref=f26e825]:
+                              - cell "Text" [ref=f26e826]
+                              - cell "Body 1" [ref=f26e827]
+                              - cell "Typeface Font Size Case" [ref=f26e828]: TypefaceFontSizeCase
+                              - cell "Montserrat Medium 16 Title case" [ref=f26e829]: MontserratMedium16Title case
+                        - generic [ref=f26e831]:
+                          - link "Related article - Understanding typography" [ref=f26e834] [cursor=pointer]:
+                            - /url: /design/typography/understanding-typography.html
+                            - generic [ref=f26e836]:
+                              - generic [ref=f26e837]: Understanding typography
+                              - paragraph [ref=f26e838]: Typography is critical in establishing hierarchy and expressing brand presence that supports an effective digital experience.
+                            - paragraph [ref=f26e839]:
+                              - text: Related article
+                              - generic [ref=f26e840]: arrow_downward
+                          - link "Related link - About shape" [ref=f26e843] [cursor=pointer]:
+                            - /url: /design/shape/about-shape.html
+                            - generic [ref=f26e845]:
+                              - generic [ref=f26e846]: About shape
+                              - paragraph [ref=f26e847]: Direct attention, identify components, communicate state, and express brand
+                            - paragraph [ref=f26e848]:
+                              - text: Related link
+                              - generic [ref=f26e849]: arrow_downward
+                      - generic [ref=f26e850]:
+                        - heading "Shape" [level=4] [ref=f26e851]
+                        - paragraph [ref=f26e852]: Basil’s menu containers have custom corners, with 0dp corner radiuses.
+                        - figure [ref=f26e855]:
+                          - generic [ref=f26e856]:
+                            - img "Square menu corner"
+                        - table [ref=f26e860]:
+                          - rowgroup [ref=f26e861]:
+                            - row [ref=f26e862]:
+                              - columnheader "Element" [ref=f26e863]
+                              - columnheader "Category" [ref=f26e864]
+                              - columnheader "Attribute" [ref=f26e865]
+                              - columnheader "Value" [ref=f26e866]
+                          - rowgroup [ref=f26e867]:
+                            - row [ref=f26e868]:
+                              - cell "Container" [ref=f26e869]
+                              - cell "Medium component" [ref=f26e870]
+                              - cell "Family Size" [ref=f26e871]: FamilySize
+                              - cell "Rounded 0dp; 0dp; 0dp; 0dp" [ref=f26e872]: Rounded0dp; 0dp; 0dp; 0dp
+                - separator [ref=f26e873]
+                - generic [ref=f26e875]:
+                  - generic [ref=f26e876] [cursor=pointer]:
+                    - heading "Shrine Material theme" [level=3] [ref=f26e877]
+                    - button "Collapse Shrine Material theme Section" [ref=f26e878]: keyboard_arrow_up
+                  - generic [ref=f26e879]:
+                    - generic:
+                      - paragraph: This retail app’s menus have been customized using Material Theming. Areas of customization include color and typography. Shrine is a lifestyle and fashion brand that...
+                      - button "Read more"
+                    - generic [ref=f26e880]:
+                      - generic [ref=f26e881]:
+                        - paragraph [ref=f26e882]: This retail app’s menus have been customized using Material Theming. Areas of customization include color and typography.
+                        - figure "Shrine’s customized menu" [ref=f26e885]:
+                          - generic [ref=f26e886]:
+                            - img "Shrine’s menu has 4 cut corners"
+                        - generic [ref=f26e889]:
+                          - link "Related article - Shrine" [ref=f26e892] [cursor=pointer]:
+                            - /url: /design/material-studies/shrine.html
+                            - generic [ref=f26e894]:
+                              - generic [ref=f26e895]: Shrine
+                              - paragraph [ref=f26e896]: Shrine is a lifestyle and fashion brand that demonstrates how Material Design can be used in e-commerce.
+                            - paragraph [ref=f26e897]:
+                              - text: Related article
+                              - generic [ref=f26e898]: arrow_downward
+                          - link "Related article - The color system" [ref=f26e901] [cursor=pointer]:
+                            - /url: /design/color/the-color-system.html
+                            - generic [ref=f26e903]:
+                              - generic [ref=f26e904]: The color system
+                              - paragraph [ref=f26e905]: Create a color theme that reflects your brand or style
+                            - paragraph [ref=f26e906]:
+                              - text: Related article
+                              - generic [ref=f26e907]: arrow_downward
+                          - link "Related article - Applying color to UI" [ref=f26e910] [cursor=pointer]:
+                            - /url: /design/color/applying-color-to-ui.html
+                            - generic [ref=f26e912]:
+                              - generic [ref=f26e913]: Applying color to UI
+                              - paragraph [ref=f26e914]: "In a UI, color has a variety of roles: from containing meaning, to expressing a look and feel."
+                            - paragraph [ref=f26e915]:
+                              - text: Related article
+                              - generic [ref=f26e916]: arrow_downward
+                      - generic [ref=f26e917]:
+                        - heading "Color" [level=4] [ref=f26e918]
+                        - paragraph [ref=f26e919]: "Shrine’s menus use custom color on two elements: the menu container and text."
+                        - figure [ref=f26e922]:
+                          - generic [ref=f26e923]:
+                            - img "Diagram of 1. Container color and 2. Text color"
+                        - table [ref=f26e927]:
+                          - rowgroup [ref=f26e928]:
+                            - row [ref=f26e929]:
+                              - columnheader "Element" [ref=f26e930]
+                              - columnheader "Category" [ref=f26e931]
+                              - columnheader "Attribute" [ref=f26e932]
+                              - columnheader "Value" [ref=f26e933]
+                          - rowgroup [ref=f26e934]:
+                            - row [ref=f26e935]:
+                              - cell "Container" [ref=f26e936]
+                              - cell "Surface" [ref=f26e937]
+                              - cell "Color Opacity" [ref=f26e938]: ColorOpacity
+                              - cell "#FFFBFA 100%" [ref=f26e939]: "#FFFBFA100%"
+                            - row [ref=f26e940]:
+                              - cell "Text" [ref=f26e941]
+                              - cell "On Surface" [ref=f26e942]
+                              - cell "Color Opacity" [ref=f26e943]: ColorOpacity
+                              - cell "#442C2E 100%" [ref=f26e944]: "#442C2E100%"
+                      - generic [ref=f26e945]:
+                        - heading "Typography" [level=4] [ref=f26e946]
+                        - paragraph [ref=f26e947]: Shrine’s menu text uses custom typography.
+                        - figure [ref=f26e950]:
+                          - generic [ref=f26e951]:
+                            - img "Sample text displayed with Rubik Regular in Body 1"
+                        - table [ref=f26e955]:
+                          - rowgroup [ref=f26e956]:
+                            - row [ref=f26e957]:
+                              - columnheader "Element" [ref=f26e958]
+                              - columnheader "Category" [ref=f26e959]
+                              - columnheader "Attribute" [ref=f26e960]
+                              - columnheader "Value" [ref=f26e961]
+                          - rowgroup [ref=f26e962]:
+                            - row [ref=f26e963]:
+                              - cell "Text" [ref=f26e964]
+                              - cell "Body 1" [ref=f26e965]
+                              - cell "Typeface Font Size Case" [ref=f26e966]: TypefaceFontSizeCase
+                              - cell "Rubik Regular 16 Title case" [ref=f26e967]: RubikRegular16Title case
+                        - generic [ref=f26e969]:
+                          - link "Related article - Understanding typography" [ref=f26e972] [cursor=pointer]:
+                            - /url: /design/typography/understanding-typography.html
+                            - generic [ref=f26e974]:
+                              - generic [ref=f26e975]: Understanding typography
+                              - paragraph [ref=f26e976]: Typography is critical in establishing hierarchy and expressing brand presence that supports an effective digital experience.
+                            - paragraph [ref=f26e977]:
+                              - text: Related article
+                              - generic [ref=f26e978]: arrow_downward
+                          - link "Related link - About shape" [ref=f26e981] [cursor=pointer]:
+                            - /url: /design/shape/about-shape.html
+                            - generic [ref=f26e983]:
+                              - generic [ref=f26e984]: About shape
+                              - paragraph [ref=f26e985]: Direct attention, identify components, communicate state, and express brand
+                            - paragraph [ref=f26e986]:
+                              - text: Related link
+                              - generic [ref=f26e987]: arrow_downward
+                      - generic [ref=f26e988]:
+                        - heading "Shape" [level=4] [ref=f26e989]
+                        - paragraph [ref=f26e990]: Shrine’s menu containers have custom corner shapes, with 8dp long cut corners.
+                        - figure [ref=f26e993]:
+                          - generic [ref=f26e994]:
+                            - img "Diagram of cut corners"
+                        - table [ref=f26e998]:
+                          - rowgroup [ref=f26e999]:
+                            - row [ref=f26e1000]:
+                              - columnheader "Element" [ref=f26e1001]
+                              - columnheader "Category" [ref=f26e1002]
+                              - columnheader "Attribute" [ref=f26e1003]
+                              - columnheader "Value" [ref=f26e1004]
+                          - rowgroup [ref=f26e1005]:
+                            - row [ref=f26e1006]:
+                              - cell "Container" [ref=f26e1007]
+                              - cell "Medium component" [ref=f26e1008]
+                              - cell "Family Size" [ref=f26e1009]: FamilySize
+                              - cell "Cut 8dp; 8dp; 8dp; 8dp" [ref=f26e1010]: Cut8dp; 8dp; 8dp; 8dp
+                - separator [ref=f26e1011]
+              - generic [ref=f26e1012]:
+                - heading [level=2] [ref=f26e1013]:
+                  - text: Specs
+                  - button "Copy link to Specs section" [ref=f26e1016] [cursor=pointer]:
+                    - generic [ref=f26e1017]: link
+                - generic [ref=f26e1018]:
+                  - generic [ref=f26e1020]:
+                    - generic [ref=f26e1021] [cursor=pointer]:
+                      - heading "Minimum and maximum width" [level=3] [ref=f26e1022]
+                      - button "Collapse Minimum and maximum width Section" [ref=f26e1023]: keyboard_arrow_up
+                    - generic [ref=f26e1024]:
+                      - generic:
+                        - paragraph
+                      - generic [ref=f26e1027]:
+                        - generic [ref=f26e1031]:
+                          - list:
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem:
+                              - generic: "56"
+                              - generic: Measurement 56
+                            - listitem:
+                              - generic: "56"
+                              - generic: Measurement 56
+                            - listitem:
+                              - generic: "112"
+                              - generic: Measurement 112
+                            - listitem:
+                              - generic: "8"
+                              - generic: Measurement 8
+                            - listitem:
+                              - generic: "8"
+                              - generic: Measurement 8
+                            - listitem:
+                              - generic: "16"
+                              - generic: Measurement 16
+                            - listitem:
+                              - generic: "16"
+                              - generic: Measurement 16
+                            - listitem:
+                              - generic: "48"
+                              - generic: Measurement 48
+                            - listitem:
+                              - generic: C
+                              - generic: Measurement C
+                            - listitem:
+                              - generic: "48"
+                              - generic: Measurement 48
+                        - generic [ref=f26e1036]:
+                          - list:
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem:
+                              - generic: "56"
+                              - generic: Measurement 56
+                            - listitem:
+                              - generic: "56"
+                              - generic: Measurement 56
+                            - listitem:
+                              - generic: "56"
+                              - generic: Measurement 56
+                            - listitem:
+                              - generic: "56"
+                              - generic: Measurement 56
+                            - listitem:
+                              - generic: "56"
+                              - generic: Measurement 56
+                            - listitem:
+                              - generic: "280"
+                              - generic: Measurement 280
+                            - listitem:
+                              - generic: "8"
+                              - generic: Measurement 8
+                            - listitem:
+                              - generic: "8"
+                              - generic: Measurement 8
+                            - listitem:
+                              - generic: "48"
+                              - generic: Measurement 48
+                            - listitem:
+                              - generic: "48"
+                              - generic: Measurement 48
+                            - listitem:
+                              - generic: C
+                              - generic: Measurement C
+                            - listitem:
+                              - generic: C
+                              - generic: Measurement C
+                            - listitem:
+                              - generic: "16"
+                              - generic: Measurement 16
+                            - listitem:
+                              - generic: "16"
+                              - generic: Measurement 16
+                  - separator [ref=f26e1038]
+                  - generic [ref=f26e1040]:
+                    - generic [ref=f26e1041] [cursor=pointer]:
+                      - heading "Dropdown" [level=3] [ref=f26e1042]
+                      - button "Collapse Dropdown Section" [ref=f26e1043]: keyboard_arrow_up
+                    - generic [ref=f26e1044]:
+                      - generic:
+                        - paragraph
+                      - generic [ref=f26e1047]:
+                        - generic [ref=f26e1048]:
+                          - heading "Mobile" [level=4] [ref=f26e1049]
+                          - generic [ref=f26e1052]:
+                            - list:
+                              - listitem
+                              - listitem
+                              - listitem
+                              - listitem:
+                                - generic: "44"
+                                - generic: Measurement 44
+                              - listitem:
+                                - generic: "144"
+                                - generic: Measurement 144
+                              - listitem:
+                                - generic: "128"
+                                - generic: Measurement 128
+                              - listitem:
+                                - generic: "40"
+                                - generic: Measurement 40
+                              - listitem:
+                                - generic: "16"
+                                - generic: Measurement 16
+                              - listitem:
+                                - generic: "8"
+                                - generic: Measurement 8
+                              - listitem:
+                                - generic: "8"
+                                - generic: Measurement 8
+                              - listitem:
+                                - generic: "4"
+                                - generic: Measurement 4
+                              - listitem:
+                                - generic: "24"
+                                - generic: Measurement 24
+                              - listitem:
+                                - generic: "32"
+                                - generic: Measurement 32
+                              - listitem:
+                                - generic: "8"
+                                - generic: Measurement 8
+                              - listitem:
+                                - generic: "8"
+                                - generic: Measurement 8
+                              - listitem:
+                                - generic: "1"
+                                - generic: Measurement 1
+                              - listitem
+                              - listitem
+                              - listitem
+                        - generic [ref=f26e1057]:
+                          - list:
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem:
+                              - generic: "32"
+                              - generic: Measurement 32
+                            - listitem:
+                              - generic: "8"
+                              - generic: Measurement 8
+                            - listitem:
+                              - generic: "48"
+                              - generic: Measurement 48
+                            - listitem:
+                              - generic: "144"
+                              - generic: Measurement 144
+                            - listitem:
+                              - generic: "8"
+                              - generic: Measurement 8
+                            - listitem:
+                              - generic: "12"
+                              - generic: Measurement 12
+                            - listitem:
+                              - generic: "4"
+                              - generic: Measurement 4
+                            - listitem:
+                              - generic: "16"
+                              - generic: Measurement 16
+                            - listitem:
+                              - generic: "8"
+                              - generic: Measurement 8
+                            - listitem:
+                              - generic: C
+                              - generic: Measurement C
+                            - listitem:
+                              - generic: C
+                              - generic: Measurement C
+                            - listitem:
+                              - generic: "24"
+                              - generic: Measurement 24
+                            - listitem
+                        - generic [ref=f26e1059]:
+                          - heading "Desktop" [level=4] [ref=f26e1060]
+                          - generic [ref=f26e1063]:
+                            - list:
+                              - listitem
+                              - listitem
+                              - listitem
+                              - listitem
+                              - listitem
+                              - listitem
+                              - listitem
+                              - listitem
+                              - listitem
+                              - listitem:
+                                - generic: "48"
+                                - generic: Measurement 48
+                              - listitem:
+                                - generic: "48"
+                                - generic: Measurement 48
+                              - listitem:
+                                - generic: "8"
+                                - generic: Measurement 8
+                              - listitem:
+                                - generic: "8"
+                                - generic: Measurement 8
+                              - listitem:
+                                - generic: "8"
+                                - generic: Measurement 8
+                              - listitem:
+                                - generic: "8"
+                                - generic: Measurement 8
+                              - listitem:
+                                - generic: C
+                                - generic: Measurement C
+                              - listitem:
+                                - generic: "24"
+                                - generic: Measurement 24
+                              - listitem:
+                                - generic: "24"
+                                - generic: Measurement 24
+                              - listitem:
+                                - generic: "1"
+                                - generic: Measurement 1
+                              - listitem:
+                                - generic: "20"
+                                - generic: Measurement 20
+                              - listitem:
+                                - generic: "24"
+                                - generic: Measurement 24
+                              - listitem
+                  - separator [ref=f26e1065]
+                  - generic [ref=f26e1067]:
+                    - generic [ref=f26e1068] [cursor=pointer]:
+                      - heading "Dropdown (Desktop)" [level=3] [ref=f26e1069]
+                      - button "Collapse Dropdown (Desktop) Section" [ref=f26e1070]: keyboard_arrow_up
+                    - generic [ref=f26e1071]:
+                      - generic:
+                        - paragraph
+                      - generic [ref=f26e1075]:
+                        - heading "Dense" [level=4] [ref=f26e1076]
+                        - generic [ref=f26e1079]:
+                          - list:
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem
+                            - listitem:
+                              - generic: "32"
+                              - generic: Measurement 32
+                            - listitem:
+                              - generic: "320"
+                              - generic: Measurement 320
+                            - listitem:
+                              - generic: "8"
+                              - generic: Measurement 8
+                            - listitem:
+                              - generic: "8"
+                              - generic: Measurement 8
+                            - listitem:
+                              - generic: "1"
+                              - generic: Measurement 1
+                            - listitem:
+                              - generic: "8"
+                              - generic: Measurement 8
+                            - listitem:
+                              - generic: "24"
+                              - generic: Measurement 24
+                            - listitem:
+                              - generic: "16"
+                              - generic: Measurement 16
+                            - listitem:
+                              - generic: "15"
+                              - generic: Measurement 15
+                            - listitem:
+                              - generic: "56"
+                              - generic: Measurement 56
+                            - listitem:
+                              - generic: "32"
+                              - generic: Measurement 32
+                            - listitem:
+                              - generic: "8"
+                              - generic: Measurement 8
+                            - listitem:
+                              - generic: "8"
+                              - generic: Measurement 8
+                            - listitem:
+                              - generic: "8"
+                              - generic: Measurement 8
+                            - listitem
+                            - listitem
+                            - listitem
+        - generic [ref=f26e1081]:
+          - heading "Up next" [level=2] [ref=f26e1082]
+          - generic [ref=f26e1083]:
+            - link "Components Navigation drawer" [ref=f26e1085] [cursor=pointer]:
+              - /url: /components/navigation-drawer
+              - heading "Components" [level=3] [ref=f26e1087]
+              - heading "Navigation drawer" [level=4] [ref=f26e1088]
+            - 'link "Components Sheets: Bottom" [ref=f26e1090] [cursor=pointer]':
+              - /url: /components/sheets-bottom
+              - heading "Components" [level=3] [ref=f26e1092]
+              - 'heading "Sheets: Bottom" [level=4] [ref=f26e1093]'
+            - link "Components Lists" [ref=f26e1095] [cursor=pointer]:
+              - /url: /components/lists
+              - heading "Components" [level=3] [ref=f26e1097]
+              - heading "Lists" [level=4] [ref=f26e1098]
+      - contentinfo [ref=f26e1100]:
+        - generic [ref=f26e1101]:
+          - link [ref=f26e1102] [cursor=pointer]:
+            - /url: /
+            - img "Material Design" [ref=f26e1103]
+          - generic [ref=f26e1104]:
+            - paragraph [ref=f26e1105]: Material is an adaptable system of guidelines, components, and tools that support the best practices of user interface design. Backed by open-source code, Material streamlines collaboration between designers and developers, and helps teams quickly build beautiful products.
+            - list [ref=f26e1106]:
+              - listitem [ref=f26e1107]:
+                - link "Find us on Github" [ref=f26e1108] [cursor=pointer]:
+                  - /url: https://www.github.com/material-components
+                  - text: GitHub
+                - text: /
+              - listitem [ref=f26e1109]:
+                - link "Find us on Twitter" [ref=f26e1110] [cursor=pointer]:
+                  - /url: https://www.twitter.com/materialdesign
+                  - text: Twitter
+                - text: /
+              - listitem [ref=f26e1111]:
+                - link "Find us on Youtube" [ref=f26e1112] [cursor=pointer]:
+                  - /url: https://www.youtube.com/materialdesign
+                  - text: YouTube
+                - text: /
+              - listitem [ref=f26e1113]:
+                - link "Blog RSS" [ref=f26e1114] [cursor=pointer]:
+                  - /url: /feed.xml
+                - text: /
+              - listitem [ref=f26e1115]:
+                - link "Material 3" [ref=f26e1116] [cursor=pointer]:
+                  - /url: https://m3.material.io/
+        - generic [ref=f26e1117]:
+          - link [ref=f26e1118] [cursor=pointer]:
+            - /url: https://www.google.com
+            - img "Google" [ref=f26e1119]
+          - list [ref=f26e1121]:
+            - listitem [ref=f26e1122]:
+              - link "Privacy Policy" [ref=f26e1123] [cursor=pointer]:
+                - /url: https://policies.google.com/privacy
+            - listitem [ref=f26e1124]:
+              - link "Terms of Service" [ref=f26e1125] [cursor=pointer]:
+                - /url: https://policies.google.com/terms
+            - listitem [ref=f26e1126]:
+              - link "License" [ref=f26e1127] [cursor=pointer]:
+                - /url: https://www.apache.org/licenses/LICENSE-2.0.html
+            - listitem [ref=f26e1128]:
+              - link "Feedback" [ref=f26e1129] [cursor=pointer]:
+                - /url: javascript:void(0)

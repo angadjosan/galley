@@ -148,15 +148,47 @@ const nodes = {
         group: 'block',
         atom: true,
         selectable: true,
-        attrs: { ...blockAttrs },
+        // `raw` holds the content; `source` is the round-trip cache every block
+        // carries. They are separate on purpose: `source` is cleared whenever a
+        // block is considered changed, and clearing a raw block's *content* along
+        // with it would delete what it holds.
+        attrs: { raw: { default: '' }, ...blockAttrs },
         parseDOM: [{ tag: 'div[data-raw]' }],
         toDOM: (node) => [
             'div',
             { 'data-raw': '', class: 'raw-block', 'data-block-id': node.attrs.blockId ?? undefined },
-            String(node.attrs.source ?? ''),
+            String(node.attrs.raw ?? ''),
         ],
     },
     text: { group: 'inline' },
+    /**
+     * An inline construct the editor has no rich representation for — a reference
+     * link, a footnote reference, an image reference, a span of raw HTML.
+     *
+     * Held as an atom carrying its exact source and re-emitted verbatim. Without
+     * it, editing a paragraph that contained `[the spec][spec]` silently turned it
+     * into the words "the spec" and left the definition dangling; `[^1]` vanished;
+     * `![alt][img]` lost its alt text; and `<span class="x">` came back escaped.
+     * Editing one word of a paragraph must not delete something else in it.
+     */
+    inline_raw: {
+        inline: true,
+        group: 'inline',
+        atom: true,
+        selectable: true,
+        attrs: { source: {}, label: { default: '' } },
+        parseDOM: [
+            {
+                tag: 'span[data-raw-inline]',
+                getAttrs: (dom) => ({ source: dom.dataset.rawInline ?? '' }),
+            },
+        ],
+        toDOM: (node) => [
+            'span',
+            { 'data-raw-inline': String(node.attrs.source ?? ''), class: 'raw-inline' },
+            String(node.attrs.label || node.attrs.source),
+        ],
+    },
     hard_break: {
         inline: true,
         group: 'inline',

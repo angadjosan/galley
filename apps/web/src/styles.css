@@ -95,13 +95,28 @@
      Everything here scales with the window rather than snapping between two
      fixed sizes: a document should look deliberate on a laptop and on a 27"
      display, and the only thing that must not scale freely is the measure. */
-  --chrome-h: 56px;
+  --chrome-h: 44px;
+  --menubar-h: 30px;
+  --toolbar-h: 44px;
   --library-w: clamp(208px, 17vw, 288px);
-  /* The widest the sheet of paper gets. Beyond this the desk grows instead —
-     a wider page would only buy a longer line, which is the one dimension
-     readability does not want. */
-  --page-max: clamp(880px, 62vw, 1060px);
-  --page-px: clamp(20px, 7%, 84px);
+
+  /**
+   * The page.
+   *
+   * Real dimensions, not a proportion of the window: 816px is US Letter at
+   * 96dpi and 96px is a one-inch margin. This is the single change that does
+   * the most to make the surface read as a document rather than as a web app,
+   * and the reason is not nostalgia — a fixed page is a shared coordinate
+   * system. "Halfway down page 3" means the same thing to two people on
+   * different monitors, which is the whole basis of talking about a document
+   * with someone else. A fluid column has no such vocabulary.
+   *
+   * It is also the reason Google shipped its pageless mode as an option rather
+   * than a replacement: going pageless costs page numbers, headers, footers
+   * and columns, and the team could only offer it as a subset.
+   */
+  --page-w: 816px;
+  --page-px: 96px;
   --lane-w: clamp(232px, 21vw, 320px);
   --lane-gap: clamp(16px, 1.6vw, 28px);
 }
@@ -371,16 +386,338 @@ kbd {
 
 /* ----------------------------------------------------------------- chrome */
 
+/**
+ * The chrome, as three stacked rows.
+ *
+ * Title, then menus, then toolbar. Each row answers a different question --
+ * where am I, what can this program do, what can I do to this word -- and the
+ * stacking is what lets a reader find the answer they want without reading the
+ * other two. Compressing them into one row is the change that makes a toolbar
+ * feel like a puzzle.
+ */
 .chrome {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+  z-index: 20;
+}
+
+.chrome-top {
   display: flex;
   align-items: center;
   gap: 10px;
   height: var(--chrome-h);
   padding: 0 16px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
+}
+
+.chrome-share {
+  border: 1px solid var(--line-strong);
+}
+
+/* ---------------------------------------------------------------- menubar */
+
+.menubar {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: var(--menubar-h);
+  padding: 0 12px;
+}
+
+.menubar-item {
+  position: relative;
+}
+
+.menubar-trigger {
+  padding: 3px 9px;
+  border: none;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-ui);
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.menubar-trigger:hover,
+.menubar-trigger.is-open {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.menubar-menu {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  min-width: 248px;
+  padding: 6px 0;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  box-shadow: var(--sh-float);
+  z-index: 60;
+}
+
+.menubar-entry {
+  display: grid;
+  /* A fixed gutter for the tick, so every label starts on the same vertical
+     line whether or not it is checked -- a menu whose text shifts sideways as
+     state changes is a menu that reads as jittery. */
+  grid-template-columns: 24px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 14px 6px 4px;
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: var(--fs-ui);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.menubar-entry:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.menubar-entry:disabled {
+  color: var(--text-4);
+  cursor: default;
+}
+
+.menubar-entry kbd {
+  background: none;
+  color: var(--text-3);
+  padding: 0;
+}
+
+.menubar-check {
+  display: inline-flex;
+  justify-content: center;
+  color: var(--accent);
+}
+
+.menubar-sep {
+  display: block;
+  height: 1px;
+  margin: 6px 0;
+  background: var(--line-2);
+}
+
+/* ---------------------------------------------------------------- toolbar */
+
+/**
+ * The formatting toolbar.
+ *
+ * Always visible, never moves, same order every time -- and that constancy is
+ * the feature, not the layout being lazy. A control that is not applicable is
+ * greyed rather than removed, because a row whose buttons come and go is a row
+ * you cannot build muscle memory against.
+ *
+ * The greying is honest: every disabled state here comes from asking the
+ * ProseMirror command itself whether it could run.
+ */
+.toolbar-rail {
+  padding: 0 12px 6px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  height: var(--toolbar-h);
+  padding: 0 8px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.tb-group {
+  display: flex;
+  align-items: center;
+  gap: 1px;
   flex: none;
 }
+
+.tb-sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 7px;
+  background: var(--line-strong);
+  opacity: 0.6;
+  flex: none;
+}
+
+.tb-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+  flex: none;
+}
+
+.tb-button:hover:not(:disabled) {
+  background: var(--line-2);
+  color: var(--text);
+}
+
+.tb-button.is-active {
+  background: var(--accent-tint);
+  color: var(--accent-text);
+}
+
+.tb-button:disabled {
+  color: var(--text-4);
+  cursor: default;
+}
+
+.tb-icon {
+  display: block;
+}
+
+/* Letters rather than glyphs, where a letter is unambiguous. It is why the
+   character-formatting group needs no tooltip to be read. */
+.tb-letter {
+  font-size: 15px;
+  line-height: 1;
+  font-family: var(--serif);
+}
+
+.tb-letter-bold { font-weight: 800; }
+.tb-letter-italic { font-style: italic; }
+.tb-letter-underline { text-decoration: underline; text-underline-offset: 2px; }
+.tb-letter-strike { text-decoration: line-through; }
+
+.tb-ellipsis {
+  font-size: 17px;
+  line-height: 1;
+}
+
+.tb-overflow-anchor {
+  position: relative;
+  margin-left: auto;
+}
+
+.tb-overflow {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 320px;
+  padding: 6px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--sh-float);
+  z-index: 60;
+}
+
+/* ------------------------------------------------------ the style dropdown */
+
+.tb-style {
+  position: relative;
+}
+
+.tb-style-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  min-width: 128px;
+  padding: 0 6px 0 10px;
+  border: none;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--text);
+  font-size: var(--fs-ui);
+  cursor: pointer;
+}
+
+.tb-style-trigger:hover:not(:disabled) {
+  background: var(--line-2);
+}
+
+.tb-style-trigger:disabled {
+  color: var(--text-4);
+  cursor: default;
+}
+
+.tb-style-label {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tb-chevron {
+  flex: none;
+  color: var(--text-3);
+}
+
+.tb-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 268px;
+  padding: 6px 0;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  box-shadow: var(--sh-float);
+  z-index: 60;
+}
+
+.tb-menu-item {
+  display: grid;
+  grid-template-columns: 26px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 14px 7px 4px;
+  border: none;
+  background: none;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.tb-menu-item:hover {
+  background: var(--surface-2);
+}
+
+.tb-menu-check {
+  display: inline-flex;
+  justify-content: center;
+  color: var(--accent);
+}
+
+.tb-menu-item kbd {
+  background: none;
+  color: var(--text-3);
+  padding: 0;
+}
+
+/* Each entry is drawn in the style it applies. This is the whole explanation
+   the menu needs, and it is why Google Docs' style menu carries no help text. */
+.tb-style-sample {
+  font-family: var(--serif);
+}
+
+.tb-style-normal .tb-style-sample { font-size: 15px; }
+.tb-style-title .tb-style-sample { font-size: 24px; font-weight: 600; letter-spacing: -0.018em; }
+.tb-style-h2 .tb-style-sample { font-size: 20px; font-weight: 600; letter-spacing: -0.014em; }
+.tb-style-h3 .tb-style-sample { font-size: 17px; font-weight: 600; }
+.tb-style-h4 .tb-style-sample { font-size: 15px; font-weight: 600; }
 
 .chrome-menu {
   display: none;
@@ -621,16 +958,31 @@ kbd {
   width: 100%;
 }
 
+/**
+ * The sheet of paper.
+ *
+ * A fixed width, and square corners rather than rounded ones. Both are the
+ * difference between "a card in an app" and "a page": paper does not have a
+ * 16px radius, and the moment it does the metaphor stops carrying anything.
+ * Below the page's own width the sheet shrinks rather than scrolling
+ * horizontally, because a document you have to pan sideways to read is worse
+ * than one whose margins are temporarily narrow.
+ */
 .page {
-  width: 100%;
-  max-width: var(--page-max);
+  width: min(var(--page-w), 100%);
   flex: none;
   min-width: 0;
   background: var(--page);
-  border-radius: var(--r-lg) var(--r-lg) 0 0;
   box-shadow: var(--sh-page);
-  padding: clamp(36px, 5vw, 72px) var(--page-px) clamp(64px, 12vw, 160px);
-  min-height: 60vh;
+  padding: var(--page-px) var(--page-px) calc(var(--page-px) * 1.6);
+  min-height: 1056px;
+}
+
+@media (max-width: 900px) {
+  .page {
+    padding-left: clamp(20px, 6vw, var(--page-px));
+    padding-right: clamp(20px, 6vw, var(--page-px));
+  }
 }
 
 .page-loading {
@@ -1047,7 +1399,7 @@ kbd {
 .lane {
   position: static;
   width: 100%;
-  max-width: var(--page-max);
+  max-width: var(--page-w);
   flex: none;
   display: flex;
   flex-direction: column;
@@ -1345,86 +1697,6 @@ kbd {
 .link-editor input:focus {
   outline: none;
   border-color: var(--accent-line);
-}
-
-/* --------------------------------------------------------- the slash menu */
-
-.slash-menu {
-  position: fixed;
-  z-index: 60;
-  width: 306px;
-  max-height: 340px;
-  overflow-y: auto;
-  padding: 6px;
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  box-shadow: var(--sh-float);
-}
-
-.slash-menu.is-empty {
-  width: auto;
-  padding: 10px 14px;
-  font-size: var(--fs-small);
-  color: var(--text-3);
-}
-
-.slash-menu ul {
-  list-style: none;
-  margin: 0;
-}
-
-.slash-group {
-  list-style: none;
-  padding: 8px 8px 4px;
-  font-size: var(--fs-micro);
-  font-weight: 600;
-  color: var(--text-3);
-}
-
-.slash-item {
-  list-style: none;
-  display: flex;
-  align-items: baseline;
-  gap: 9px;
-  padding: 7px 9px;
-  border-radius: var(--r-sm);
-  cursor: pointer;
-}
-
-.slash-item.is-active {
-  background: var(--surface-2);
-}
-
-.slash-label {
-  font-weight: 500;
-  color: var(--text);
-  white-space: nowrap;
-}
-
-.slash-hint {
-  font-size: var(--fs-small);
-  color: var(--text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.slash-item kbd {
-  margin-left: auto;
-}
-
-.slash-dismiss {
-  display: block;
-  width: 100%;
-  margin-top: 4px;
-  padding: 5px;
-  border: none;
-  border-top: 1px solid var(--line-2);
-  background: none;
-  font-size: var(--fs-micro);
-  color: var(--text-4);
-  cursor: pointer;
 }
 
 /* ------------------------------------------------------------- overlays */
@@ -1750,7 +2022,7 @@ kbd {
   }
 
   .page {
-    flex: 0 1 var(--page-max);
+    flex: 0 0 auto;
   }
 
   .lane {
@@ -1848,4 +2120,327 @@ kbd {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* --------------------------------------------------------------- diagrams */
+
+/**
+ * A diagram on the page.
+ *
+ * Centred, with room around it, and no frame. A border would make it read as
+ * an embed -- something the document contains -- when the point is that it is
+ * part of the document the way a paragraph is.
+ */
+.diagram {
+  position: relative;
+  margin: 1.6em 0;
+  padding: 8px 0;
+  text-align: center;
+  border-radius: var(--r-sm);
+}
+
+/**
+ * A diagram is capped, not shrunk to fit.
+ *
+ * Mermaid sizes its output to the graph, which for a tall flowchart is a
+ * picture several screens high. Capping the height and letting the width
+ * follow keeps a diagram readable as an *illustration in a document* rather
+ * than as a poster the prose has to be scrolled past.
+ */
+.diagram-canvas svg {
+  max-width: 100%;
+  max-height: 420px;
+  height: auto;
+}
+
+.diagram-panel-preview .diagram-canvas svg {
+  max-height: 100%;
+}
+
+.diagram.is-drawing .diagram-canvas {
+  opacity: 0.45;
+  transition: opacity 120ms var(--ease);
+}
+
+.diagram.is-selected {
+  box-shadow: 0 0 0 2px var(--accent-line);
+}
+
+/* The control appears on hover or selection, not permanently: a button parked
+   over every diagram in a long document is visual noise proportional to how
+   much work went into the document. */
+.diagram-edit {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  box-shadow: var(--sh-card);
+  color: var(--text-2);
+  font-family: var(--sans);
+  font-size: var(--fs-small);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms var(--ease);
+}
+
+.diagram:hover .diagram-edit,
+.diagram.is-selected .diagram-edit,
+.diagram-edit:focus-visible {
+  opacity: 1;
+}
+
+.diagram-note {
+  margin-top: 8px;
+  font-family: var(--sans);
+  font-size: var(--fs-small);
+  color: var(--text-3);
+}
+
+/* A diagram that cannot be drawn shows its own source rather than an error
+   box. The document is never wrong; only the picture is unavailable. */
+.diagram-source {
+  display: block;
+  padding: 14px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: var(--fs-small);
+  line-height: 1.6;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.diagram-panel {
+  width: min(980px, 94vw);
+}
+
+.diagram-panel-head h2 {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.diagram-panel-head p {
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.diagram-panel-body {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: 16px;
+  margin: 16px 0;
+  min-height: 340px;
+}
+
+@media (max-width: 780px) {
+  .diagram-panel-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.diagram-panel-source textarea {
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: var(--fs-small);
+  line-height: 1.65;
+  resize: none;
+}
+
+.diagram-panel-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--page);
+  overflow: auto;
+}
+
+.diagram-panel-pending {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  text-align: center;
+}
+
+.diagram-panel-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* The gallery: finished diagrams to start from, never an empty box. */
+.diagram-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.diagram-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--card);
+  text-align: left;
+  cursor: pointer;
+}
+
+.diagram-card:hover {
+  border-color: var(--accent-line);
+  background: var(--accent-tint);
+}
+
+.diagram-card-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.diagram-card-hint {
+  font-size: var(--fs-small);
+  color: var(--text-3);
+}
+
+/* ------------------------------------------------- selection affordances */
+
+/**
+ * The margin comment button.
+ *
+ * In the gutter, aligned with the selection, offering exactly one thing --
+ * which is what Google Docs does and why its selection behaviour feels calm.
+ * A popup over the words you just selected covers the thing you are looking
+ * at, and one that chases a growing selection is the loudest tell that a
+ * writing surface was not finished.
+ */
+.margin-comment {
+  position: fixed;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: var(--sh-card);
+  color: var(--text-2);
+  cursor: pointer;
+  z-index: 45;
+}
+
+.margin-comment:hover {
+  background: var(--accent-tint);
+  border-color: var(--accent-line);
+  color: var(--accent-text);
+}
+
+.link-popup {
+  position: fixed;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--sh-float);
+  z-index: 60;
+}
+
+.link-popup input {
+  width: 264px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+
+.link-apply,
+.link-remove {
+  padding: 6px 11px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.link-apply {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.link-apply:hover,
+.link-remove:hover {
+  background: var(--surface-2);
+}
+
+/* ------------------------------------------------------------ insert forms */
+
+.overlay-lead {
+  color: var(--text-2);
+  font-size: var(--fs-card);
+}
+
+.image-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.image-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.image-form label > span {
+  font-weight: 600;
+}
+
+.image-form input {
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+
+.image-form small {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.overlay-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }

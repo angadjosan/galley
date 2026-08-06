@@ -33,6 +33,20 @@ export interface DocumentSummary {
   updatedAt: string;
 }
 
+/**
+ * Someone who can appear as an author.
+ *
+ * `sponsorId` is what lets an agent be shown as "set up by priya" — the pair
+ * `idea.md` insists on, where the agent is the actor and a named human is
+ * accountable for it.
+ */
+export interface Person {
+  id: string;
+  kind: 'human' | 'agent' | 'system';
+  name: string;
+  sponsorId: string | null;
+}
+
 export interface SearchHit {
   ref: string;
   docId: string;
@@ -164,7 +178,7 @@ export class GalleyClient {
     ref: string,
     ops: readonly BlockOp[],
     requestId?: string,
-  ): Promise<{ ticket: number; content: string }> {
+  ): Promise<{ ticket: number; content: string; source: string }> {
     return this.call('PATCH', `/v1/docs/${encodeURIComponent(ref)}`, { ops, requestId });
   }
 
@@ -184,14 +198,37 @@ export class GalleyClient {
     return results;
   }
 
+  /** The directory, so authorship can be rendered as a name rather than an id. */
+  async people(): Promise<Person[]> {
+    const { people } = await this.call<{ people: Person[] }>('GET', '/v1/people');
+    return people;
+  }
+
   async comment(
     ref: string,
-    input: { blockId: string; body: string; threadId?: string; runId?: string; requestId?: string },
+    input: {
+      blockId: string;
+      body: string;
+      threadId?: string;
+      runId?: string;
+      requestId?: string;
+      /** The selected character range within the block, if a range was selected. */
+      spanStart?: number;
+      spanEnd?: number;
+    },
   ): Promise<Comment> {
     const { comment } = await this.call<{ comment: Comment }>(
       'POST',
       `/v1/docs/${encodeURIComponent(ref)}/comments`,
       input,
+    );
+    return comment;
+  }
+
+  async resolveComment(ref: string, commentId: string): Promise<Comment> {
+    const { comment } = await this.call<{ comment: Comment }>(
+      'POST',
+      `/v1/docs/${encodeURIComponent(ref)}/comments/${encodeURIComponent(commentId)}/resolve`,
     );
     return comment;
   }

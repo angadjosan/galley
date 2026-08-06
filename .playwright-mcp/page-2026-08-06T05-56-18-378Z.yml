@@ -1,0 +1,137 @@
+- generic [ref=f18e2]:
+  - navigation "skip link":
+    - link "Skip to main content." [active] [ref=f18e3] [cursor=pointer]:
+      - /url: /components/menus#main_content
+  - generic [ref=f18e4]:
+    - generic [ref=f18e7]:
+      - generic [ref=f18e9]:
+        - generic [ref=f18e10]: Material 2 is no longer maintained. Upgrade to Material 3, the latest version of Material Design.
+        - generic [ref=f18e11]: Learn about Material 3's Expressive components, dynamic color, adaptive design, and more
+      - link "Read the new Material Design 3 guidelines" [ref=f18e13] [cursor=pointer]:
+        - /url: https://m3.material.io
+        - generic:
+          - button "arrow_right_alt" [disabled]:
+            - generic: Use Material 3
+    - banner [ref=f18e14]:
+      - link "Navigate to the material design homepage." [ref=f18e15] [cursor=pointer]:
+        - /url: /
+        - generic [ref=f18e17]: Material Design
+      - navigation "tool bar" [ref=f18e18]:
+        - list [ref=f18e19]:
+          - listitem [ref=f18e20]:
+            - link "Design" [ref=f18e22] [cursor=pointer]:
+              - /url: /design
+          - listitem [ref=f18e23]:
+            - link "Components" [ref=f18e25] [cursor=pointer]:
+              - /url: /components
+          - listitem [ref=f18e27]:
+            - link "Develop" [ref=f18e29] [cursor=pointer]:
+              - /url: /develop
+          - listitem [ref=f18e30]:
+            - link "Resources" [ref=f18e32] [cursor=pointer]:
+              - /url: /resources
+          - listitem [ref=f18e33]:
+            - link "Material Design Blog" [ref=f18e35] [cursor=pointer]:
+              - /url: https://material.io/blog
+              - text: Blog
+      - button "Search Material Design" [ref=f18e36] [cursor=pointer]:
+        - generic "Search Material Design" [ref=f18e38]: search
+  - generic:
+    - complementary "navigation drawer" [ref=f18e39]:
+      - link "logo" [ref=f18e41] [cursor=pointer]:
+        - /url: /
+        - generic [ref=f18e43]: Material Design
+      - generic [ref=f18e44]:
+        - generic [ref=f18e45]: Components
+        - list [ref=f18e46]:
+          - listitem [ref=f18e47]:
+            - 'link "App bars: bottom" [ref=f18e50] [cursor=pointer]':
+              - /url: /components/app-bars-bottom
+          - listitem [ref=f18e51]:
+            - 'link "App bars: top" [ref=f18e54] [cursor=pointer]':
+              - /url: /components/app-bars-top
+          - listitem [ref=f18e55]:
+            - link "Backdrop" [ref=f18e58] [cursor=pointer]:
+              - /url: /components/backdrop
+          - listitem [ref=f18e59]:
+            - link "Banners" [ref=f18e62] [cursor=pointer]:
+              - /url: /components/banners
+          - listitem [ref=f18e63]:
+            - link "Bottom navigation" [ref=f18e66] [cursor=pointer]:
+              - /url: /components/bottom-navigation
+          - listitem [ref=f18e67]:
+            - link "Buttons" [ref=f18e70] [cursor=pointer]:
+              - /url: /components/buttons
+          - listitem [ref=f18e71]:
+            - 'link "Buttons: floating action button" [ref=f18e74] [cursor=pointer]':
+              - /url: /components/buttons-floating-action-button
+          - listitem [ref=f18e75]:
+            - link "Cards" [ref=f18e78] [cursor=pointer]:
+              - /url: /components/cards
+          - listitem [ref=f18e79]:
+            - link "Checkboxes" [ref=f18e82] [cursor=pointer]:
+              - /url: /components/checkboxes
+          - listitem [ref=f18e83]:
+            - link "Chips" [ref=f18e86] [cursor=pointer]:
+              - /url: /components/chips
+          - listitem [ref=f18e87]:
+            - link "Data tables" [ref=f18e90] [cursor=pointer]:
+              - /url: /components/data-tables
+          - listitem [ref=f18e91]:
+            - link "Date pickers" [ref=f18e94] [cursor=pointer]:
+              - /url: /components/date-pickers
+          - listitem [ref=f18e95]:
+            - link "Dialogs" [ref=f18e98] [cursor=pointer]:
+              - /url: /components/dialogs
+          - listitem [ref=f18e99]:
+            - link "Dividers" [ref=f18e102] [cursor=pointer]:
+              - /url: /components/dividers
+          - listitem [ref=f18e103]:
+            - link "Image lists" [ref=f18e106] [cursor=pointer]:
+              - /url: /components/image-lists
+          - listitem [ref=f18e107]:
+            - link "Lists" [ref=f18e110] [cursor=pointer]:
+              - /url: /components/lists
+          - listitem [ref=f18e111]:
+            - link "Menus" [ref=f18e114] [cursor=pointer]:
+              - /url: /components/menus
+          - listitem [ref=f18e115]:
+            - link "Navigation drawer" [ref=f18e118] [cursor=pointer]:
+              - /url: /components/navigation-drawer
+          - listitem [ref=f18e119]:
+            - link "Navigation rail" [ref=f18e122] [cursor=pointer]:
+              - /url: /components/navigation-rail
+          - listitem [ref=f18e123]:
+            - link "Progress indicators" [ref=f18e126] [cursor=pointer]:
+              - /url: /components/progress-indicators
+          - listitem [ref=f18e127]:
+            - link "Radio buttons" [ref=f18e130] [cursor=pointer]:
+              - /url: /components/radio-buttons
+          - listitem [ref=f18e131]:
+            - 'link "Sheets: bottom" [ref=f18e134] [cursor=pointer]':
+              - /url: /components/sheets-bottom
+          - listitem [ref=f18e135]:
+            - 'link "Sheets: side" [ref=f18e138] [cursor=pointer]':
+              - /url: /components/sheets-side
+          - listitem [ref=f18e139]:
+            - link "Sliders" [ref=f18e142] [cursor=pointer]:
+              - /url: /components/sliders
+          - listitem [ref=f18e143]:
+            - link "Snackbars" [ref=f18e146] [cursor=pointer]:
+              - /url: /components/snackbars
+          - listitem [ref=f18e147]:
+            - link "Switches" [ref=f18e150] [cursor=pointer]:
+              - /url: /components/switches
+          - listitem [ref=f18e151]:
+            - link "Tabs" [ref=f18e154] [cursor=pointer]:
+              - /url: /components/tabs
+          - listitem [ref=f18e155]:
+            - link "Text fields" [ref=f18e158] [cursor=pointer]:
+              - /url: /components/text-fields
+          - listitem [ref=f18e159]:
+            - link "Time pickers" [ref=f18e162] [cursor=pointer]:
+              - /url: /components/time-pickers
+          - listitem [ref=f18e163]:
+            - link "Tooltips" [ref=f18e166] [cursor=pointer]:
+              - /url: /components/tooltips
+    - generic: / / / /

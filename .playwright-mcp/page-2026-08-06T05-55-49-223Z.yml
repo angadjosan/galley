@@ -1,0 +1,77 @@
+- generic [active] [ref=f11e1]:
+  - generic [ref=f11e3]:
+    - banner [ref=f11e4]:
+      - generic [ref=f11e5]:
+        - generic [ref=f11e6]:
+          - link [ref=f11e7] [cursor=pointer]:
+            - /url: /
+          - generic [ref=f11e11]:
+            - button "v2.0.3" [ref=f11e12] [cursor=pointer]
+            - menu:
+              - menuitem "Release Notes"
+              - menuitem "Contributing"
+              - generic: Previous Versions
+              - menuitem "v1.3.7"
+        - navigation [ref=f11e15]:
+          - link "Documentation" [ref=f11e16] [cursor=pointer]:
+            - /url: /docs/quickstart
+          - link "Playground" [ref=f11e17] [cursor=pointer]:
+            - /url: /playground/snow
+        - navigation [ref=f11e18]:
+          - link "Edit on GitHub" [ref=f11e19] [cursor=pointer]:
+            - /url: https://github.com/slab/quill
+          - button "Search" [ref=f11e22] [cursor=pointer]:
+            - generic [ref=f11e27]:
+              - generic [ref=f11e28]: ⌘
+              - generic [ref=f11e29]: K
+    - generic [ref=f11e30]:
+      - heading "Playground" [level=1] [ref=f11e31]
+      - generic [ref=f11e32]:
+        - generic: URL copied to clipboard
+        - generic [ref=f11e33]:
+          - generic [ref=f11e34]:
+            - generic [ref=f11e35]: "Example:"
+            - combobox [ref=f11e36]:
+              - generic [ref=f11e37]: Basic setup with snow theme
+          - button "Share Your Edits" [ref=f11e41]
+        - generic [ref=f11e44]:
+          - generic [ref=f11e46]:
+            - tablist "Select active file" [ref=f11e48]:
+              - tab "index.html" [ref=f11e49] [cursor=pointer]
+              - tab "index.js" [selected] [ref=f11e50] [cursor=pointer]
+            - textbox "Code Editor for index.js" [ref=f11e52]:
+              - textbox "Code Editor for index.js" [ref=f11e55]:
+                - generic [ref=f11e56]: "const quill = new Quill('#editor', {"
+                - generic [ref=f11e57]: "modules: {"
+                - generic [ref=f11e58]: "toolbar: ["
+                - generic [ref=f11e59]: "[{ header: [1, 2, false] }],"
+                - generic [ref=f11e60]: "['bold', 'italic', 'underline'],"
+                - generic [ref=f11e61]: "['image', 'code-block'],"
+                - generic [ref=f11e62]: "],"
+                - generic [ref=f11e63]: "},"
+                - generic [ref=f11e64]: "placeholder: 'Compose an epic...',"
+                - generic [ref=f11e65]: "theme: 'snow', // or 'bubble'"
+                - generic [ref=f11e66]: "});"
+          - iframe [ref=f11e70]:
+            
+      - generic [ref=f11e72]:
+        - heading "An Open Source Project" [level=2] [ref=f11e73]
+        - generic [ref=f11e74]:
+          - text: Quill is developed and maintained by
+          - link "Slab" [ref=f11e75] [cursor=pointer]:
+            - /url: https://slab.com
+          - text: . It is permissively licensed under BSD. Use it freely in personal or commercial projects!
+        - generic [ref=f11e77]:
+          - link "Star" [ref=f11e78] [cursor=pointer]:
+            - /url: https://github.com/slab/quill/
+          - link "37,622" [ref=f11e81] [cursor=pointer]:
+            - /url: https://github.com/slab/quill/stargazers
+    - contentinfo [ref=f11e97]:
+      - generic [ref=f11e98]:
+        - heading "Your powerful rich text editor." [level=1] [ref=f11e103]
+        - generic [ref=f11e104]:
+          - link "Documentation" [ref=f11e105] [cursor=pointer]:
+            - /url: /docs/quickstart
+          - link "Playground" [ref=f11e106] [cursor=pointer]:
+            - /url: /playground/snow
+  - alert [ref=f11e107]

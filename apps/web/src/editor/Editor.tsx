@@ -8,32 +8,21 @@ import {
   useState,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { setBlockType, toggleMark } from 'prosemirror-commands';
-import { wrapInList } from 'prosemirror-schema-list';
+import { toggleMark } from 'prosemirror-commands';
 import { EditorState, Selection, TextSelection, type Command, type Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { schema } from './schema.js';
 import {
   activeBlock,
   activeBlockId,
-  blockActive,
-  clearFormatting,
   commentHighlightKey,
   corePlugins,
-  markActive,
   selectionIsFormattable,
-  wrapInType,
   type CommentHighlightState,
   type SurfaceState,
 } from './plugins.js';
-import {
-  closeSlash,
-  openSlashAt,
-  runSlashItem,
-  slashKey,
-  slashPlugin,
-  type SlashItem,
-} from './slash.js';
+import { DiagramView } from './DiagramView.js';
+import { renderDiagram } from './diagram.js';
 import {
   suggestionKey,
   suggestionReview,
@@ -56,7 +45,14 @@ export interface EditorHandle {
   blockRects(): Map<string, BlockRect>;
   /** Put the caret in a block, so a note can be attached to it. */
   selectBlock(blockId: string): void;
-  openInsertMenu(): void;
+  /** Run a command from the toolbar or a menu, against the live selection. */
+  run(command: Command): void;
+  /** Open the link editor on the current selection. */
+  openLink(): void;
+  /** Start a comment on the current selection. */
+  openComment(): void;
+  /** The diagram the caret is in, for "Edit diagram" in a menu. */
+  editDiagramAtSelection(): void;
   focus(): void;
 }
 
@@ -75,6 +71,15 @@ export interface EditorProps {
   suggestions: readonly PendingSuggestion[];
   suggestionHandlers: SuggestionHandlers;
   onChange?(markdown: string): void;
+  /**
+   * The editor's state, whenever it changes.
+   *
+   * The toolbar and the menus live outside this component but are defined
+   * entirely in terms of the selection — which button is pressed, which command
+   * is applicable. Pushing the state out is what lets them be pure functions of
+   * it instead of reaching into the view and guessing when to re-read.
+   */
+  onStateChange?(state: EditorState | null): void;
   onSelectBlock?(blockId: string | null): void;
   onHoverThread?(threadId: string | null): void;
   onOpenThread?(threadId: string): void;
@@ -92,11 +97,11 @@ interface BubbleState {
   formattable: boolean;
 }
 
-interface SlashOpen {
-  query: string;
-  index: number;
-  items: SlashItem[];
-  coords: DOMRect;
+/** The diagram whose source panel is open, and where it sits. */
+export interface DiagramEdit {
+  readonly pos: number;
+  readonly code: string;
+  readonly lang: string;
 }
 
 /**
@@ -106,10 +111,21 @@ interface SlashOpen {
  * no Markdown visible anywhere in this component — the syntax exists only as
  * *input rules*, for people who already type it out of habit.
  *
- * There is also no formatting toolbar. Every control it held is now either on
- * the selection it applies to, or in the menu the `/` key opens; a row of
- * buttons that is inert whenever the caret is collapsed — which is almost
- * always — was spending permanent attention on rare actions.
+ * The formatting controls are *not* here. They live in the toolbar and the menu
+ * bar above, which never move and never disappear. That is a deliberate
+ * reversal of an earlier design in which everything hung off the selection or
+ * off a `/` menu, and the reason is documented rather than assumed: the
+ * designer who shipped Dropbox Paper's slash commands published a teardown of
+ * them finding both an *awareness* problem (people did not know the commands
+ * existed) and a *usability* problem (people who knew did not know how to use
+ * them) — and the inline hint added to fix the first made writers feel the
+ * editor was interrupting them. Hidden controls are efficient for the person
+ * who already knows the tool and a wall for everyone else, and this product is
+ * explicitly for everyone else.
+ *
+ * What remains anchored to the selection is one button, in the margin, offering
+ * the one action that is *about* the selected words rather than about the
+ * document: leaving a comment.
  */
 export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(props, ref) {
   const host = useRef<HTMLDivElement>(null);
@@ -122,8 +138,8 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
   const lastCaret = useRef<Caret | null>(null);
   const [surface, setSurface] = useState<SurfaceState>({ dragging: false, composing: false });
   const [bubble, setBubble] = useState<BubbleState | null>(null);
-  const [slash, setSlash] = useState<SlashOpen | null>(null);
   const [linking, setLinking] = useState(false);
+  const [diagramEdit, setDiagramEdit] = useState<DiagramEdit | null>(null);
 
   // Callbacks reach the plugins through a ref so that the view is built once
   // per document rather than once per render.
@@ -163,8 +179,6 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
     const initial = markdownToDoc(callbacks.current.markdown);
     loaded.current = initial;
 
-    const slashPluginInstance = slashPlugin({ onChange: setSlash });
-
     const state = EditorState.create({
       doc: initial.doc,
       plugins: [
@@ -175,7 +189,6 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
           onOpenThread: (id) => callbacks.current.onOpenThread?.(id),
           onComment: requestComment,
           onLink: () => setLinking(true),
-          slash: slashPluginInstance,
         }),
         suggestionReview(callbacks.current.suggestions, suggestionRef),
       ],
@@ -194,6 +207,18 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
       // "in view" and practically unreadable.
       scrollMargin: { top: 96, bottom: 120, left: 0, right: 0 },
       scrollThreshold: { top: 96, bottom: 120, left: 0, right: 0 },
+      nodeViews: {
+        diagram: (node, editorView, getPos) =>
+          new DiagramView(node, editorView, getPos, (pos) => {
+            const target = editorView.state.doc.nodeAt(pos);
+            if (!target) return;
+            setDiagramEdit({
+              pos,
+              code: String(target.attrs.code ?? ''),
+              lang: String(target.attrs.lang ?? 'mermaid'),
+            });
+          }),
+      },
       dispatchTransaction(transaction: Transaction) {
         const next = editor.state.apply(transaction);
         editor.updateState(next);
@@ -205,16 +230,22 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
           lastCaret.current = caretOf(next, editor.hasFocus());
           setLinking(false);
         }
+        // The chrome is a pure function of this, so it has to be told about
+        // every transaction — including the ones that only moved the caret,
+        // which is what most of the toolbar's pressed states depend on.
+        callbacks.current.onStateChange?.(next);
         forceRender((n) => n + 1);
       },
     });
     view.current = editor;
     restoreCaret(editor, lastCaret.current);
+    callbacks.current.onStateChange?.(editor.state);
     forceRender((n) => n + 1);
 
     return () => {
       editor.destroy();
       view.current = null;
+      callbacks.current.onStateChange?.(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.revision, requestComment]);
@@ -323,9 +354,42 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
           // Nothing to put a caret in is not worth throwing over.
         }
       },
-      openInsertMenu: () => {
+      run: (command: Command) => {
         const editor = view.current;
-        if (editor) openSlashAt(editor);
+        if (!editor) return;
+        command(editor.state, editor.dispatch, editor);
+        editor.focus();
+      },
+      openLink: () => {
+        view.current?.focus();
+        setLinking(true);
+      },
+      openComment: () => {
+        view.current?.focus();
+        requestComment();
+      },
+      editDiagramAtSelection: () => {
+        const editor = view.current;
+        if (!editor) return;
+        const diagramType = schema.nodes.diagram;
+        if (!diagramType) return;
+        const { $from } = editor.state.selection;
+        // A diagram is an atom, so the selection is either *on* it — a node
+        // selection, where it is the node just after the anchor — or nowhere
+        // near it. There is no "inside".
+        const candidates: { node: ReturnType<typeof editor.state.doc.nodeAt>; pos: number }[] = [
+          { node: $from.nodeAfter, pos: $from.pos },
+          { node: $from.depth > 0 ? $from.node($from.depth) : null, pos: $from.depth > 0 ? $from.before($from.depth) : 0 },
+        ];
+        for (const candidate of candidates) {
+          if (!candidate.node || candidate.node.type !== diagramType) continue;
+          setDiagramEdit({
+            pos: candidate.pos,
+            code: String(candidate.node.attrs.code ?? ''),
+            lang: String(candidate.node.attrs.lang ?? 'mermaid'),
+          });
+          return;
+        }
       },
       focus: () => view.current?.focus(),
     }),
@@ -343,27 +407,56 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
   return (
     <div className="editor-shell">
       <div className="editor-surface" ref={host} data-testid="editor" />
-      {bubble && !slash && (
-        <SelectionBubble
-          state={bubble}
+      {/* Selecting words offers one thing, in the margin, the way Google Docs
+          does. Formatting is not offered here: it is on the toolbar, in the
+          same place it was before the selection and will be after it. */}
+      {bubble && !linking && (
+        <MarginCommentButton rect={bubble.rect} host={host.current} onComment={requestComment} />
+      )}
+      {linking && (
+        <LinkPopup
+          rect={bubble?.rect ?? null}
           view={view.current}
-          linking={linking}
-          onLink={() => setLinking(true)}
-          onCloseLink={() => setLinking(false)}
-          onComment={requestComment}
-          run={run}
+          onCancel={() => setLinking(false)}
+          onSubmit={(href) => {
+            setLinking(false);
+            if (!href) {
+              run((s, dispatch) => {
+                const { from, to } = s.selection;
+                dispatch?.(s.tr.removeMark(from, to, schema.marks.link!));
+                return true;
+              });
+              return;
+            }
+            run(toggleMark(schema.marks.link!, { href }));
+          }}
         />
       )}
-      {slash && (
-        <SlashMenu
-          open={slash}
-          onChoose={(item) => {
-            const editor = view.current;
-            if (editor) runSlashItem(editor, item);
+      {diagramEdit && (
+        <DiagramEditor
+          edit={diagramEdit}
+          onCancel={() => {
+            setDiagramEdit(null);
+            view.current?.focus();
           }}
-          onDismiss={() => {
+          onApply={(code) => {
             const editor = view.current;
-            if (editor) closeSlash(editor);
+            setDiagramEdit(null);
+            if (!editor) return;
+            const node = editor.state.doc.nodeAt(diagramEdit.pos);
+            if (!node || node.type !== schema.nodes.diagram) return;
+            if (String(node.attrs.code ?? '') === code) return;
+            editor.dispatch(
+              editor.state.tr.setNodeMarkup(diagramEdit.pos, undefined, {
+                ...node.attrs,
+                code,
+                // The cached bytes describe the diagram as it was. Clearing it
+                // is what tells the save path this block must be re-serialized
+                // rather than copied.
+                source: null,
+              }),
+            );
+            editor.focus();
           }}
         />
       )}
@@ -450,100 +543,103 @@ function selectionRect(view: EditorView): DOMRect | null {
   }
 }
 
-const BLOCK_CHOICES: { label: string; shortcut: string; command: Command; isActive(state: EditorState): boolean }[] = [
-  {
-    label: 'Text',
-    shortcut: '⌘⌥0',
-    command: setBlockType(schema.nodes.paragraph!),
-    isActive: (state) => blockActive(state, 'paragraph'),
-  },
-  {
-    label: 'Heading 1',
-    shortcut: '⌘⌥1',
-    command: setBlockType(schema.nodes.heading!, { level: 1 }),
-    isActive: (state) => blockActive(state, 'heading', { level: 1 }),
-  },
-  {
-    label: 'Heading 2',
-    shortcut: '⌘⌥2',
-    command: setBlockType(schema.nodes.heading!, { level: 2 }),
-    isActive: (state) => blockActive(state, 'heading', { level: 2 }),
-  },
-  {
-    label: 'Heading 3',
-    shortcut: '⌘⌥3',
-    command: setBlockType(schema.nodes.heading!, { level: 3 }),
-    isActive: (state) => blockActive(state, 'heading', { level: 3 }),
-  },
-  {
-    label: 'Bulleted list',
-    shortcut: '⌘⇧8',
-    command: wrapInList(schema.nodes.bullet_list!),
-    isActive: (state) => blockActive(state, 'bullet_list'),
-  },
-  {
-    label: 'Numbered list',
-    shortcut: '⌘⇧7',
-    command: wrapInList(schema.nodes.ordered_list!),
-    isActive: (state) => blockActive(state, 'ordered_list'),
-  },
-  {
-    label: 'Quote',
-    shortcut: '⌘⇧9',
-    command: wrapInType('blockquote'),
-    isActive: (state) => blockActive(state, 'blockquote'),
-  },
-  {
-    label: 'Callout',
-    shortcut: '',
-    command: wrapInType('callout', { kind: 'NOTE' }),
-    isActive: (state) => blockActive(state, 'callout'),
-  },
-];
 
-function SelectionBubble({
-  state,
-  view,
-  linking,
-  onLink,
-  onCloseLink,
+/**
+ * The one thing a text selection offers.
+ *
+ * Google Docs puts a single comment button in the right margin when you select
+ * words, and offers nothing else — every formatting control stays where it was.
+ * That restraint is the point: a popup that appears over the text you just
+ * selected covers the thing you are looking at, and one that follows a growing
+ * selection is the loudest tell that a writing surface was not finished.
+ *
+ * It hangs in the gutter, vertically aligned with the selection, so it never
+ * overlaps a word.
+ */
+function MarginCommentButton({
+  rect,
+  host,
   onComment,
-  run,
 }: {
-  state: BubbleState;
-  view: EditorView | null;
-  linking: boolean;
-  onLink(): void;
-  onCloseLink(): void;
+  rect: DOMRect;
+  host: HTMLElement | null;
   onComment(): void;
-  run(command: Command): void;
 }): JSX.Element | null {
-  const element = useRef<HTMLDivElement>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [flipped, setFlipped] = useState(true);
+  const page = host?.closest('.page');
+  if (!page) return null;
+  const box = page.getBoundingClientRect();
+  return createPortal(
+    <button
+      type="button"
+      className="margin-comment"
+      data-testid="margin-comment"
+      aria-label="Add a comment"
+      title="Add a comment (⌘⌥M)"
+      style={{ top: rect.top + rect.height / 2 - 18, left: box.right + 12 }}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onComment}
+    >
+      <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+        <path
+          d="M3.5 4.5h13v9h-7l-3.5 3v-3h-2.5z"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinejoin="round"
+        />
+        <path d="M10 7v4M8 9h4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    </button>,
+    document.body,
+  );
+}
+
+/**
+ * The link editor, anchored to the words it will link.
+ *
+ * A popup rather than a dialog, because the selection has to stay visible —
+ * "what am I linking?" is the question the writer is holding in their head, and
+ * a modal answers it by covering the answer.
+ */
+function LinkPopup({
+  rect,
+  view,
+  onSubmit,
+  onCancel,
+}: {
+  rect: DOMRect | null;
+  view: EditorView | null;
+  onSubmit(href: string): void;
+  onCancel(): void;
+}): JSX.Element | null {
+  const [href, setHref] = useState('');
+  const element = useRef<HTMLFormElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
 
-  useEffect(() => setMenuOpen(false), [state.rect.top, state.rect.left]);
+  // Where the caret is, when nothing is selected — ⌘K on a collapsed cursor is
+  // how you insert a link with its own text.
+  const anchorRect = useMemo((): DOMRect | null => {
+    if (rect) return rect;
+    if (!view) return null;
+    try {
+      const coords = view.coordsAtPos(view.state.selection.from, 1);
+      return new DOMRect(coords.left, coords.top, 0, coords.bottom - coords.top);
+    } catch {
+      return null;
+    }
+  }, [rect, view]);
 
-  // Measure, then place. Positioning against an unmeasured box puts the bubble
-  // half a width off on its first frame, which reads as a flicker.
   useEffect(() => {
     const node = element.current;
-    if (!node) return;
+    if (!node || !anchorRect) return;
     const place = (): void => {
       const box = node.getBoundingClientRect();
-      const gap = 10;
-      const above = state.rect.top - box.height - gap;
-      const fitsAbove = above > 8;
-      const top = fitsAbove ? above : state.rect.bottom + gap;
-      // When the bubble sits above the selection its menu has to open upward
-      // too, or it drops straight over the text being restyled.
-      setFlipped(fitsAbove);
-      const left = Math.min(
-        Math.max(8, state.rect.left + state.rect.width / 2 - box.width / 2),
-        window.innerWidth - box.width - 8,
-      );
-      setPosition({ top, left });
+      const below = anchorRect.bottom + 8;
+      const fitsBelow = below + box.height < window.innerHeight - 8;
+      setPosition({
+        top: fitsBelow ? below : Math.max(8, anchorRect.top - box.height - 8),
+        left: Math.min(Math.max(8, anchorRect.left), window.innerWidth - box.width - 8),
+      });
     };
     place();
     window.addEventListener('scroll', place, true);
@@ -552,173 +648,21 @@ function SelectionBubble({
       window.removeEventListener('scroll', place, true);
       window.removeEventListener('resize', place);
     };
-  }, [state.rect, menuOpen, linking]);
+  }, [anchorRect]);
 
-  if (!view) return null;
-  const editorState = view.state;
-  const current = BLOCK_CHOICES.find((choice) => choice.isActive(editorState))?.label ?? 'Text';
+  if (!anchorRect) return null;
 
   return createPortal(
-    <div
+    <form
       ref={element}
-      className="bubble"
-      role="toolbar"
-      aria-label="Formatting"
-      data-testid="format-bubble"
+      className="link-popup"
+      data-testid="link-popup"
       style={{
         top: position?.top ?? -9999,
         left: position?.left ?? -9999,
         visibility: position ? 'visible' : 'hidden',
       }}
-      onMouseDown={(event) => event.preventDefault()}
-    >
-      {linking ? (
-        <LinkEditor
-          onCancel={onCloseLink}
-          onSubmit={(href) => {
-            onCloseLink();
-            if (!href) {
-              run((s, dispatch) => {
-                const { from, to } = s.selection;
-                dispatch?.(s.tr.removeMark(from, to, schema.marks.link!));
-                return true;
-              });
-              return;
-            }
-            run(toggleMark(schema.marks.link!, { href }));
-          }}
-        />
-      ) : (
-        <>
-          {state.formattable && (
-            <div className="bubble-turn">
-              <button
-                type="button"
-                className="bubble-button bubble-turn-trigger"
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-                onClick={() => setMenuOpen((open) => !open)}
-              >
-                {current}
-                <span className="caret" aria-hidden="true">
-                  ▾
-                </span>
-              </button>
-              {menuOpen && (
-                <div className={`bubble-menu ${flipped ? 'is-above' : ''}`} role="menu">
-                  {BLOCK_CHOICES.map((choice) => (
-                    <button
-                      key={choice.label}
-                      type="button"
-                      role="menuitem"
-                      className={choice.isActive(editorState) ? 'is-active' : ''}
-                      onClick={() => {
-                        setMenuOpen(false);
-                        run(choice.command);
-                      }}
-                    >
-                      <span>{choice.label}</span>
-                      {choice.shortcut && <kbd>{choice.shortcut}</kbd>}
-                    </button>
-                  ))}
-                  {/* Words, not a glyph. This is the escape hatch from text
-                      that has got stuck bold, and it has to be findable. */}
-                  <span className="bubble-menu-sep" />
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      run(clearFormatting);
-                    }}
-                  >
-                    <span>Clear formatting</span>
-                    <kbd>⌘\</kbd>
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-          {state.formattable && (
-            <>
-              <span className="bubble-sep" />
-              <BubbleButton
-                label="Bold"
-                active={markActive(editorState, 'strong')}
-                onClick={() => run(toggleMark(schema.marks.strong!))}
-              >
-                <strong>B</strong>
-              </BubbleButton>
-              <BubbleButton
-                label="Italic"
-                active={markActive(editorState, 'em')}
-                onClick={() => run(toggleMark(schema.marks.em!))}
-              >
-                <em>I</em>
-              </BubbleButton>
-              <BubbleButton
-                label="Strikethrough"
-                active={markActive(editorState, 'strike')}
-                onClick={() => run(toggleMark(schema.marks.strike!))}
-              >
-                <s>S</s>
-              </BubbleButton>
-              <BubbleButton
-                label="Link"
-                active={markActive(editorState, 'link')}
-                onClick={onLink}
-              >
-                <LinkIcon />
-              </BubbleButton>
-              <span className="bubble-sep" />
-            </>
-          )}
-          <BubbleButton label="Add a note" active={false} onClick={onComment}>
-            <CommentIcon />
-          </BubbleButton>
-        </>
-      )}
-    </div>,
-    document.body,
-  );
-}
-
-function BubbleButton({
-  label,
-  active,
-  onClick,
-  children,
-}: {
-  label: string;
-  active: boolean;
-  onClick(): void;
-  children: React.ReactNode;
-}): JSX.Element {
-  return (
-    <button
-      type="button"
-      className={`bubble-button ${active ? 'is-active' : ''}`}
-      aria-label={label}
-      aria-pressed={active}
-      title={label}
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  );
-}
-
-function LinkEditor({
-  onSubmit,
-  onCancel,
-}: {
-  onSubmit(href: string): void;
-  onCancel(): void;
-}): JSX.Element {
-  const [href, setHref] = useState('');
-  return (
-    <form
-      className="link-editor"
+      onMouseDown={(event) => event.stopPropagation()}
       onSubmit={(event) => {
         event.preventDefault();
         onSubmit(href.trim());
@@ -737,138 +681,116 @@ function LinkEditor({
           }
         }}
       />
-      <button type="submit" className="bubble-button">
+      <button type="submit" className="link-apply">
         Apply
       </button>
-    </form>
-  );
-}
-
-function SlashMenu({
-  open,
-  onChoose,
-  onDismiss,
-}: {
-  open: SlashOpen;
-  onChoose(item: SlashItem): void;
-  onDismiss(): void;
-}): JSX.Element | null {
-  const element = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
-
-  useEffect(() => {
-    const node = element.current;
-    if (!node) return;
-    const place = (): void => {
-      const box = node.getBoundingClientRect();
-      const below = open.coords.bottom + 8;
-      const roomBelow = window.innerHeight - below - 8;
-      const roomAbove = open.coords.top - 16;
-      const goesBelow = box.height <= roomBelow || roomBelow >= roomAbove;
-      node.style.maxHeight = `${Math.max(180, Math.floor(goesBelow ? roomBelow : roomAbove))}px`;
-      const height = Math.min(box.height, goesBelow ? roomBelow : roomAbove);
-      setPosition({
-        top: Math.max(8, goesBelow ? below : open.coords.top - height - 8),
-        left: Math.min(open.coords.left, window.innerWidth - box.width - 8),
-      });
-    };
-    place();
-    window.addEventListener('scroll', place, true);
-    window.addEventListener('resize', place);
-    return () => {
-      window.removeEventListener('scroll', place, true);
-      window.removeEventListener('resize', place);
-    };
-  }, [open.coords, open.items.length]);
-
-  // Browsers do not scroll `aria-activedescendant` into view; without this the
-  // keyboard highlight walks off the bottom of the list.
-  useEffect(() => {
-    element.current
-      ?.querySelector<HTMLElement>('[aria-selected="true"]')
-      ?.scrollIntoView({ block: 'nearest' });
-  }, [open.index]);
-
-  if (open.items.length === 0) {
-    return createPortal(
-      <div
-        ref={element}
-        className="slash-menu is-empty"
-        style={{ top: position?.top ?? -9999, left: position?.left ?? -9999 }}
-      >
-        <p>No blocks match “{open.query}”</p>
-      </div>,
-      document.body,
-    );
-  }
-
-  let lastGroup = '';
-  return createPortal(
-    <div
-      ref={element}
-      className="slash-menu"
-      data-testid="slash-menu"
-      style={{
-        top: position?.top ?? -9999,
-        left: position?.left ?? -9999,
-        visibility: position ? 'visible' : 'hidden',
-      }}
-      onMouseDown={(event) => event.preventDefault()}
-    >
-      {/* Options are direct children of the listbox. Wrapping them in another
-          element stops assistive technology enumerating them as options at
-          all, which is worse than having no roles. */}
-      <ul role="listbox" id="galley-slash-listbox" aria-label="Insert">
-        {open.items.flatMap((item, index) => {
-          const header = item.group !== lastGroup ? item.group : null;
-          lastGroup = item.group;
-          const option = (
-            <li
-              key={item.id}
-              role="option"
-              id={`galley-slash-option-${index}`}
-              aria-selected={index === open.index}
-              className={`slash-item ${index === open.index ? 'is-active' : ''}`}
-              onClick={() => onChoose(item)}
-            >
-              <span className="slash-label">{item.label}</span>
-              <span className="slash-hint">{item.hint}</span>
-              {item.shortcut && <kbd>{item.shortcut}</kbd>}
-            </li>
-          );
-          return header
-            ? [
-                <li key={`${item.id}-group`} role="presentation" className="slash-group">
-                  {header}
-                </li>,
-                option,
-              ]
-            : [option];
-        })}
-      </ul>
-      <button type="button" className="slash-dismiss" onClick={onDismiss} aria-label="Close">
-        Esc
+      {/* Present even when there is no link yet: a writer who opened this by
+          accident needs a way out that is not the Escape key. */}
+      <button type="button" className="link-remove" onClick={() => onSubmit('')}>
+        Remove
       </button>
-    </div>,
+    </form>,
     document.body,
   );
 }
 
-function LinkIcon(): JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" className="icon">
-      <path d="M6.5 9.5a2.5 2.5 0 0 0 3.54 0l2-2a2.5 2.5 0 0 0-3.54-3.54l-.9.9" />
-      <path d="M9.5 6.5a2.5 2.5 0 0 0-3.54 0l-2 2a2.5 2.5 0 0 0 3.54 3.54l.9-.9" />
-    </svg>
+/**
+ * The diagram source panel.
+ *
+ * A diagram is the one place this product shows a writer a syntax, and it is
+ * worth being honest about why that is not a contradiction. Markdown is a way
+ * of writing *prose*, and hiding it is the whole product. Mermaid is a way of
+ * describing *a picture*, and there is no direct-manipulation surface here that
+ * would describe one better — so the syntax is the feature, not a leak.
+ *
+ * What the panel owes the writer instead is that they never start from a blank
+ * box (the Insert menu offers finished diagrams to edit), that the drawing
+ * updates as they type, and that a mistake reads as "not finished yet" rather
+ * than as an error.
+ */
+function DiagramEditor({
+  edit,
+  onApply,
+  onCancel,
+}: {
+  edit: DiagramEdit;
+  onApply(code: string): void;
+  onCancel(): void;
+}): JSX.Element {
+  const [code, setCode] = useState(edit.code);
+  const [preview, setPreview] = useState<{ svg: string } | { error: string } | null>(null);
+  const panel = useRef<HTMLDivElement>(null);
+
+  // Debounced, because rendering is asynchronous and comparatively slow: a
+  // render per keystroke makes the preview strobe and the textarea stutter.
+  useEffect(() => {
+    let live = true;
+    const timer = window.setTimeout(() => {
+      void renderDiagram(edit.lang, code).then((result) => {
+        if (!live) return;
+        setPreview(result.ok ? { svg: result.svg } : { error: result.message });
+      });
+    }, 220);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [code, edit.lang]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCancel();
+      }
+      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        onApply(code);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [code, onApply, onCancel]);
+
+  return createPortal(
+    <div className="overlay" role="dialog" aria-modal="true" aria-label="Edit diagram">
+      <button className="overlay-scrim" aria-label="Close" onClick={onCancel} />
+      <div className="overlay-panel diagram-panel" ref={panel} tabIndex={-1}>
+        <div className="diagram-panel-head">
+          <h2>Diagram</h2>
+          <p>The picture updates as you type.</p>
+        </div>
+        <div className="diagram-panel-body">
+          <label className="diagram-panel-source">
+            <span className="visually-hidden">Diagram description</span>
+            <textarea
+              autoFocus
+              spellCheck={false}
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+            />
+          </label>
+          <div className="diagram-panel-preview" data-testid="diagram-preview">
+            {preview && 'svg' in preview ? (
+              // Mermaid's output, which it only hands back as a string. Safe
+              // here because `securityLevel: 'strict'` escapes every label it
+              // did not generate — see `diagram.ts`.
+              <div className="diagram-canvas" dangerouslySetInnerHTML={{ __html: preview.svg }} />
+            ) : (
+              <p className="diagram-panel-pending">{preview?.error ?? 'Drawing…'}</p>
+            )}
+          </div>
+        </div>
+        <div className="diagram-panel-foot">
+          <button type="button" className="ghost" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="primary" onClick={() => onApply(code)}>
+            Done
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
-
-function CommentIcon(): JSX.Element {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" className="icon">
-      <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" />
-    </svg>
-  );
-}
-
-export { slashKey };

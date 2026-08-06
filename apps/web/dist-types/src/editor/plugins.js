@@ -1,11 +1,11 @@
-import { baseKeymap, chainCommands, setBlockType, toggleMark } from 'prosemirror-commands';
+import { baseKeymap, chainCommands, exitCode, setBlockType, toggleMark } from 'prosemirror-commands';
 import { dropCursor } from 'prosemirror-dropcursor';
 import { gapCursor } from 'prosemirror-gapcursor';
-import { history, redo, undo } from 'prosemirror-history';
-import { inputRules, textblockTypeInputRule, wrappingInputRule, InputRule } from 'prosemirror-inputrules';
+import { closeHistory, history, redo, undo } from 'prosemirror-history';
+import { inputRules, textblockTypeInputRule, undoInputRule, wrappingInputRule, InputRule, } from 'prosemirror-inputrules';
 import { keymap } from 'prosemirror-keymap';
-import { liftListItem, splitListItem, sinkListItem } from 'prosemirror-schema-list';
-import { Plugin, PluginKey } from 'prosemirror-state';
+import { liftListItem, splitListItem, sinkListItem, wrapInList } from 'prosemirror-schema-list';
+import { Plugin, PluginKey, TextSelection } from 'prosemirror-state';
 import { Decoration, DecorationSet } from 'prosemirror-view';
 import { schema } from './schema.js';
 /**
@@ -15,6 +15,16 @@ import { schema } from './schema.js';
  * point of these is not to teach Markdown — it is that people who already know
  * it should not have to stop using it. Someone who types `## ` gets a heading;
  * someone who does not, never sees a `#`.
+ *
+ * Two properties every rule here has, both of which are load-bearing for the
+ * person who did *not* mean to trigger one:
+ *
+ * - `closeHistory` on the resulting transaction, so one Cmd-Z undoes the rule
+ *   and not the sentence that preceded it. Without it `prosemirror-history`
+ *   groups the rule in with the surrounding typing and undo overshoots.
+ * - `inCodeMark: false` on the mark rules, because the package defaults it to
+ *   *true* — meaning `` `**x**` `` typed inside a code span would come out
+ *   bold, silently changing what round-trips to Markdown.
  */
 export function markdownInputRules() {
     return inputRules({
@@ -23,20 +33,27 @@ export function markdownInputRules() {
                 level: match[1].length,
             })),
             wrappingInputRule(/^\s*([-+*])\s$/, schema.nodes.bullet_list),
-            wrappingInputRule(/^(\d+)\.\s$/, schema.nodes.ordered_list, (match) => ({ start: Number(match[1]) }), (match, node) => node.childCount + node.attrs.start === Number(match[1])),
+            // A single digit only. `/^(\d+)\.\s$/` turns "1975. A good year" into a
+            // list numbered from 1975, which is the classic autoformat complaint and
+            // lands on exactly the writer this product is for. Someone who genuinely
+            // wants a list starting at 27 can type `1.` and renumber.
+            wrappingInputRule(/^([1-9])\.\s$/, schema.nodes.ordered_list, (match) => ({ start: Number(match[1]) }), (match, node) => node.childCount + node.attrs.start === Number(match[1])),
             wrappingInputRule(/^\s*>\s$/, schema.nodes.blockquote),
             textblockTypeInputRule(/^```([a-zA-Z0-9+-]*)?\s$/, schema.nodes.code_block, (match) => ({
                 lang: match[1] || null,
             })),
-            new InputRule(/^(?:---|\*\*\*|___)\s$/, (state, _match, start, end) => state.tr.replaceWith(start - 1, end, schema.nodes.horizontal_rule.create())),
-            markInputRule(/(?:\*\*)([^*]+)(?:\*\*)$/, 'strong'),
-            markInputRule(/(?:^|[^*])(?:\*)([^*]+)(?:\*)$/, 'em'),
+            new InputRule(/^(?:---|\*\*\*|___)\s$/, (state, _match, start, end) => closeHistory(state.tr.replaceWith(start - 1, end, schema.nodes.horizontal_rule.create()))),
+            markInputRule(/(?:\*\*)([^\s*][^*]*[^\s*]|[^\s*])(?:\*\*)$/, 'strong'),
+            // The delimiters must hug non-whitespace, or `2 * 3 * 4` italicises " 3 ".
+            markInputRule(/(?:^|[\s([])\*([^\s*][^*]*[^\s*]|[^\s*])\*$/, 'em'),
             markInputRule(/(?:`)([^`]+)(?:`)$/, 'code'),
             markInputRule(/(?:~~)([^~]+)(?:~~)$/, 'strike'),
             // Smart quotes and dashes, matching what a word processor does — and what
             // the anchor layer normalizes away, so they cost nothing downstream.
-            new InputRule(/--$/, '—'),
-            new InputRule(/\.\.\.$/, '…'),
+            // `undoable: false`: backspace after an em dash should delete a
+            // character, not resurrect the two hyphens nobody wanted back.
+            new InputRule(/--$/, '—', { undoable: false }),
+            new InputRule(/\.\.\.$/, '…', { undoable: false }),
         ],
     });
 }
@@ -56,16 +73,58 @@ function markInputRule(pattern, markName) {
         tr.delete(start, from);
         tr.addMark(start, start + captured.length, mark.create());
         tr.removeStoredMark(mark);
-        return tr;
-    });
+        return closeHistory(tr);
+    }, { inCodeMark: false });
 }
-export function galleyKeymap() {
+/** Wrap the selection in a block type, without pulling in another dependency. */
+export function wrapInType(typeName, attrs) {
+    return (state, dispatch) => {
+        const type = schema.nodes[typeName];
+        if (!type)
+            return false;
+        const { $from, $to } = state.selection;
+        const range = $from.blockRange($to);
+        if (!range)
+            return false;
+        if (dispatch) {
+            const tr = state.tr;
+            tr.wrap(range, [{ type, attrs }]);
+            dispatch(tr.scrollIntoView());
+        }
+        return true;
+    };
+}
+/** Strip every mark from the selection — the escape hatch from stuck bold. */
+export const clearFormatting = (state, dispatch) => {
+    const { from, to, empty } = state.selection;
+    if (empty)
+        return false;
+    if (dispatch)
+        dispatch(state.tr.removeMark(from, to));
+    return true;
+};
+const insertHardBreak = (state, dispatch) => {
+    if (dispatch) {
+        dispatch(state.tr.replaceSelectionWith(schema.nodes.hard_break.create()).scrollIntoView());
+    }
+    return true;
+};
+export function galleyKeymap(onComment, onLink) {
     const listItem = schema.nodes.list_item;
     return keymap({
         'Mod-b': toggleMark(schema.marks.strong),
         'Mod-i': toggleMark(schema.marks.em),
         'Mod-e': toggleMark(schema.marks.code),
         'Mod-Shift-x': toggleMark(schema.marks.strike),
+        'Mod-k': () => {
+            onLink();
+            return true;
+        },
+        // There is no underline in the Markdown model. Left unbound, the browser
+        // inserts a `<u>` into the contenteditable that the editor then reconciles
+        // away, so the keystroke has to be actively swallowed rather than ignored.
+        'Mod-u': () => true,
+        'Mod-\\': clearFormatting,
         'Mod-z': undo,
         'Mod-y': redo,
         'Mod-Shift-z': redo,
@@ -73,18 +132,99 @@ export function galleyKeymap() {
         'Mod-Alt-1': setBlockType(schema.nodes.heading, { level: 1 }),
         'Mod-Alt-2': setBlockType(schema.nodes.heading, { level: 2 }),
         'Mod-Alt-3': setBlockType(schema.nodes.heading, { level: 3 }),
+        'Mod-Shift-7': wrapInList(schema.nodes.ordered_list),
+        'Mod-Shift-8': wrapInList(schema.nodes.bullet_list),
+        'Mod-Shift-9': wrapInType('blockquote'),
+        'Mod-Alt-m': () => {
+            onComment();
+            return true;
+        },
         Enter: chainCommands(splitListItem(listItem), baseKeymap.Enter),
+        // Without this a writer who lands in a code block cannot get out of it.
+        'Mod-Enter': exitCode,
+        'Shift-Enter': chainCommands(exitCode, insertHardBreak),
+        Backspace: undoInputRule,
         Tab: sinkListItem(listItem),
         'Shift-Tab': liftListItem(listItem),
     });
 }
-export const commentHighlightKey = new PluginKey('galley-comments');
+// ---------------------------------------------------------------------------
+// Placeholders
+// ---------------------------------------------------------------------------
 /**
- * Highlight blocks that carry annotation.
+ * The "type / for commands" affordance.
  *
- * Node decorations rather than marks: the highlight belongs to the *block*, not
- * to a span of its text, and a block-level decoration survives any edit inside
- * the block without needing to be remapped.
+ * Node decorations with a CSS `::before`, never widget decorations: a widget is
+ * a real DOM node, so it lands in `getSelection()`, is read aloud as document
+ * content, and can be copied out. A node decoration changes nothing about the
+ * document.
+ *
+ * Focus gating is done in CSS rather than here because focus and blur do not
+ * produce a transaction — `decorations()` would never re-run on them, and
+ * dispatching one on every focus change would pollute the change stream that
+ * autosave watches.
+ */
+export function placeholders() {
+    return new Plugin({
+        props: {
+            decorations(state) {
+                const { doc, selection } = state;
+                const only = doc.childCount === 1 ? doc.firstChild : null;
+                if (only && only.type === schema.nodes.paragraph && only.content.size === 0) {
+                    return DecorationSet.create(doc, [
+                        Decoration.node(0, only.nodeSize, {
+                            class: 'placeholder placeholder-doc',
+                            'data-placeholder': 'Write something, or press / for headings, lists and more',
+                        }),
+                    ]);
+                }
+                if (!(selection instanceof TextSelection) || !selection.empty)
+                    return null;
+                const { $from } = selection;
+                const parent = $from.parent;
+                if (parent.content.size !== 0)
+                    return null;
+                if (parent.type.spec.code)
+                    return null;
+                if (parent.type === schema.nodes.table_cell)
+                    return null;
+                const label = parent.type === schema.nodes.heading
+                    ? `Heading ${parent.attrs.level}`
+                    : parent.type === schema.nodes.blockquote
+                        ? 'Quote'
+                        : 'Type / for commands';
+                const pos = $from.before($from.depth);
+                return DecorationSet.create(doc, [
+                    Decoration.node(pos, pos + parent.nodeSize, {
+                        class: 'placeholder',
+                        'data-placeholder': label,
+                    }),
+                ]);
+            },
+        },
+    });
+}
+export const commentHighlightKey = new PluginKey('galley-comments');
+export const emptyHighlights = {
+    anchors: [],
+    activeBlockId: null,
+    hoveredThreadId: null,
+    activeThreadId: null,
+    draft: null,
+};
+/**
+ * Highlight the text a note is about — the span, not the whole paragraph.
+ *
+ * Inline decorations resolved by searching each block for its anchor's quoted
+ * text, rather than the `comment` mark the schema also defines. A mark would
+ * have to be stripped on serialize and rebuilt on load anyway, because it
+ * cannot be expressed in clean CommonMark, and a node the schema allows but the
+ * serializer cannot express is how a WYSIWYG loses someone's content. The
+ * anchor layer is the source of truth; this is only its picture.
+ *
+ * Resolving by search also means the highlight follows the sentence as the
+ * paragraph around it is edited, and degrades to the whole block — rather than
+ * to the wrong words — once the quoted text itself is gone.
  */
 export function commentHighlights(initial) {
     return new Plugin({
@@ -99,46 +239,235 @@ export function commentHighlights(initial) {
                 if (!value)
                     return DecorationSet.empty;
                 const decorations = [];
-                state.doc.forEach((node, offset) => {
+                // `descendants`, not `forEach`: a list item and a paragraph inside a
+                // callout both carry ids and can both be commented on, and walking
+                // only the top level meant those notes drew nothing at all.
+                state.doc.descendants((node, offset) => {
                     const blockId = node.attrs.blockId;
                     if (!blockId)
-                        return;
+                        return true;
                     const classes = [];
-                    if (value.anchored.has(blockId))
-                        classes.push('block-commented');
-                    if (value.orphaned.has(blockId))
-                        classes.push('block-orphaned');
                     if (value.activeBlockId === blockId)
                         classes.push('block-active');
                     if (classes.length > 0) {
                         decorations.push(Decoration.node(offset, offset + node.nodeSize, { class: classes.join(' ') }));
                     }
+                    const here = value.anchors.filter((anchor) => anchor.blockId === blockId);
+                    const draft = value.draft?.blockId === blockId ? value.draft : null;
+                    if (here.length === 0 && !draft)
+                        return true;
+                    // Character offsets only mean something inside a textblock. For a
+                    // container — a list item, a quote, a callout — the whole block is
+                    // marked instead of guessing a range inside it.
+                    const inline = node.isTextblock;
+                    const text = node.textContent;
+                    const mark = (classes, attrs, from, to) => {
+                        decorations.push(inline
+                            ? Decoration.inline(offset + 1 + from, offset + 1 + to, { class: classes.join(' '), ...attrs }, 
+                            // Otherwise typing at either edge extends the highlight
+                            // over words nobody commented on.
+                            { inclusiveStart: false, inclusiveEnd: false })
+                            : Decoration.node(offset, offset + node.nodeSize, {
+                                class: classes.join(' '),
+                                ...attrs,
+                            }));
+                    };
+                    // Widest first, so a narrower nested range paints on top of it.
+                    const ranges = here
+                        .map((anchor) => ({ anchor, ...locate(text, anchor.quotedText, anchor) }))
+                        .sort((a, b) => b.to - b.from - (a.to - a.from));
+                    for (const { anchor, from, to } of ranges) {
+                        const classes = ['has-comment'];
+                        if (anchor.orphaned)
+                            classes.push('has-comment-lost');
+                        if (value.hoveredThreadId === anchor.threadId)
+                            classes.push('is-hovered');
+                        if (value.activeThreadId === anchor.threadId)
+                            classes.push('is-active');
+                        mark(classes, { 'data-thread': anchor.threadId }, from, to);
+                    }
+                    if (draft) {
+                        const { from, to } = locate(text, draft.quotedText);
+                        mark(['has-comment', 'is-draft'], {}, from, to);
+                    }
+                    return true;
                 });
                 return DecorationSet.create(state.doc, decorations);
             },
         },
     });
 }
-export function corePlugins(highlights) {
+/**
+ * Where a note's text sits in a block now.
+ *
+ * A recorded span wins, then a search for the quoted text — which is what makes
+ * a highlight follow its sentence as the paragraph around it is edited — and
+ * failing both, the whole block. Degrading to the whole block rather than to a
+ * guessed range matters: a highlight over the wrong words claims someone
+ * commented on something they never saw.
+ */
+function locate(text, quoted, span) {
+    if (span &&
+        span.spanStart !== null &&
+        span.spanEnd !== null &&
+        span.spanEnd > span.spanStart &&
+        span.spanEnd <= text.length) {
+        return { from: span.spanStart, to: span.spanEnd };
+    }
+    const needle = quoted.trim();
+    if (needle) {
+        const at = text.indexOf(needle);
+        if (at >= 0)
+            return { from: at, to: at + needle.length };
+    }
+    return { from: 0, to: text.length };
+}
+/**
+ * Report drag and composition to React.
+ *
+ * The selection bubble must not appear mid-drag — a bubble that chases the
+ * pointer across a growing selection is the difference between a surface that
+ * feels finished and one that does not. A debounce is the wrong primitive
+ * (the bubble still lands under the pointer); gating on the pointer being down
+ * is the right one.
+ */
+export function surfacePlugin(onChange) {
+    const current = { dragging: false, composing: false };
+    const emit = () => onChange({ ...current });
+    return new Plugin({
+        props: {
+            handleDOMEvents: {
+                mousedown() {
+                    current.dragging = true;
+                    emit();
+                    const up = () => {
+                        window.removeEventListener('mouseup', up);
+                        current.dragging = false;
+                        emit();
+                    };
+                    window.addEventListener('mouseup', up);
+                    return false;
+                },
+                compositionstart() {
+                    current.composing = true;
+                    emit();
+                    return false;
+                },
+                compositionend() {
+                    // One frame of slack: the view flushes the DOM on compositionend, and
+                    // `view.composing` is unreliable if read inside the handler itself.
+                    requestAnimationFrame(() => {
+                        current.composing = false;
+                        emit();
+                    });
+                    return false;
+                },
+            },
+        },
+    });
+}
+/** Hovering a highlight lights its margin card, and the other way round. */
+export function commentPointerPlugin(onHover, onOpen) {
+    return new Plugin({
+        props: {
+            handleDOMEvents: {
+                mouseover(_view, event) {
+                    const target = event.target;
+                    onHover(target?.closest?.('[data-thread]')?.getAttribute('data-thread') ?? null);
+                    return false;
+                },
+                mouseout(_view, event) {
+                    if (!event.target?.closest?.('[data-thread]'))
+                        onHover(null);
+                    return false;
+                },
+                click(_view, event) {
+                    const thread = event.target
+                        ?.closest?.('[data-thread]')
+                        ?.getAttribute('data-thread');
+                    // Deliberately not handled: the caret should still land where the
+                    // person clicked.
+                    if (thread)
+                        onOpen(thread);
+                    return false;
+                },
+            },
+        },
+    });
+}
+export function corePlugins(options) {
     return [
+        // Before the keymaps: plugins see keydown in array order, and the slash
+        // menu has to claim Enter and the arrow keys before the base keymap
+        // splits the paragraph.
+        options.slash,
         markdownInputRules(),
-        galleyKeymap(),
+        galleyKeymap(options.onComment, options.onLink),
         keymap(baseKeymap),
         history(),
         dropCursor({ class: 'drop-cursor' }),
         gapCursor(),
-        commentHighlights(highlights),
+        placeholders(),
+        commentHighlights(options.highlights),
+        commentPointerPlugin(options.onHoverThread, options.onOpenThread),
+        surfacePlugin(options.onSurface),
     ];
 }
-/** The block the selection is currently inside, for the comment rail. */
-export function activeBlockId(state) {
+/**
+ * The block the selection is inside, and how deep it sits.
+ *
+ * The depth matters as much as the id: a note's character offsets have to be
+ * measured from the start of *the node that carries the id*. Measuring from
+ * depth 1 instead means a caret inside a list item is measured from the start
+ * of the whole list, and the offsets stored against that note point at the
+ * wrong words.
+ */
+export function activeBlock(state) {
     const { $from } = state.selection;
     for (let depth = $from.depth; depth >= 0; depth--) {
         const node = $from.node(depth);
         const id = node.attrs?.blockId;
         if (id)
-            return id;
+            return { id, depth };
     }
     return null;
+}
+/** The block the selection is currently inside, for the margin rail. */
+export function activeBlockId(state) {
+    return activeBlock(state)?.id ?? null;
+}
+/** Whether a mark is on, for the bubble's pressed states. */
+export function markActive(state, name) {
+    const type = schema.marks[name];
+    if (!type)
+        return false;
+    const { from, $from, to, empty } = state.selection;
+    return empty
+        ? !!type.isInSet(state.storedMarks ?? $from.marks())
+        : state.doc.rangeHasMark(from, to, type);
+}
+export function blockActive(state, name, attrs) {
+    const { $from } = state.selection;
+    for (let depth = $from.depth; depth >= 0; depth--) {
+        const node = $from.node(depth);
+        if (node.type.name !== name)
+            continue;
+        if (!attrs)
+            return true;
+        return Object.entries(attrs).every(([key, value]) => node.attrs[key] === value);
+    }
+    return false;
+}
+/** True where formatting cannot apply: code, atoms, read-only. */
+export function selectionIsFormattable(view) {
+    const { state } = view;
+    if (!view.editable)
+        return false;
+    const { $from } = state.selection;
+    if ($from.parent.type.spec.code)
+        return false;
+    if ($from.parent.isAtom)
+        return false;
+    return true;
 }
 //# sourceMappingURL=plugins.js.map

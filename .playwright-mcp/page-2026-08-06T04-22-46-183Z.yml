@@ -1,0 +1,102 @@
+- generic [ref=f25e3]:
+  - complementary [ref=f25e4]:
+    - generic [ref=f25e5]: Galley
+    - textbox "Search" [ref=f25e13]:
+      - /placeholder: Search everything
+    - navigation [ref=f25e14]:
+      - generic [ref=f25e15]:
+        - generic [ref=f25e16]: Design
+        - button "Galley" [ref=f25e17] [cursor=pointer]
+      - generic [ref=f25e19]:
+        - generic [ref=f25e20]: Policies
+        - button "Refund policy" [ref=f25e21] [cursor=pointer]
+      - generic [ref=f25e23]:
+        - generic [ref=f25e24]: Runbooks
+        - button "Deploy runbook" [ref=f25e25] [cursor=pointer]
+      - generic [ref=f25e27]:
+        - generic [ref=f25e28]: Specs
+        - button "Checkout v2" [ref=f25e29] [cursor=pointer]
+    - generic [ref=f25e31]:
+      - button "New document" [ref=f25e32] [cursor=pointer]: + New document
+      - button "Sign out" [ref=f25e33] [cursor=pointer]
+  - generic [ref=f25e34]:
+    - banner [ref=f25e461]:
+      - button "Documents" [ref=f25e462] [cursor=pointer]:
+        - generic [ref=f25e463]: ☰
+      - navigation "Location" [ref=f25e464]:
+        - generic [ref=f25e465]: Specs
+        - generic [ref=f25e466]: ›
+        - generic [ref=f25e467]: Checkout v2
+      - generic [ref=f25e468]:
+        - button "Insert" [ref=f25e469] [cursor=pointer]:
+          - generic [ref=f25e470]: +
+          - text: Insert
+        - generic "Saved" [ref=f25e471]
+        - generic "priya" [ref=f25e473]: P
+        - button "Share" [ref=f25e474] [cursor=pointer]
+        - generic [ref=f25e475]:
+          - button "More" [expanded] [active] [ref=f25e476] [cursor=pointer]:
+            - generic [ref=f25e477]: ⋯
+          - menu [ref=f25e540]:
+            - menuitem "Version history" [ref=f25e541] [cursor=pointer]
+            - menuitem "Copy as Markdown" [ref=f25e542] [cursor=pointer]
+    - generic [ref=f25e479]:
+      - main [ref=f25e480]:
+        - generic "Document" [ref=f25e483]:
+          - heading "Checkout v2" [level=1] [ref=f25e484]
+          - paragraph [ref=f25e485]: Th
+          - paragraph [ref=f25e486]: /or a charge request, and defaults to the account's settlement currency when it is left out.
+          - paragraph [ref=f25e487]: The amount field is required and is expressed in the minor units of the charge currency — cents for USD, yen for JPY.
+          - complementary [ref=f25e488]:
+            - generic [ref=f25e491]:
+              - generic [ref=f25e492]: galley-bot/ci
+              - generic [ref=f25e493]: set up by priya · suggested a change
+            - generic [ref=f25e494]: JPY has no minor unit; the implementation special-cases it.
+            - generic [ref=f25e495]: The amount field is required and is expressed in the minor units of the charge currency — cents for USD, and whole yen for JPY.JPY, which has no minor unit.
+            - generic [ref=f25e496]:
+              - generic [ref=f25e497]: Nothing changes until you accept it.
+              - generic [ref=f25e498]:
+                - button "Use this" [ref=f25e499] [cursor=pointer]
+                - button "Dismiss" [ref=f25e500] [cursor=pointer]
+                - button "Edit instead" [ref=f25e501] [cursor=pointer]
+          - heading "Validation" [level=2] [ref=f25e502]
+          - list [ref=f25e503]:
+            - listitem [ref=f25e504]:
+              - paragraph [ref=f25e505]:
+                - text: Reject a request with no
+                - code [ref=f25e506]: amount
+                - text: .
+            - listitem [ref=f25e507]:
+              - paragraph [ref=f25e508]:
+                - text: Reject a negative
+                - code [ref=f25e509]: amount
+                - text: .
+            - listitem [ref=f25e510]:
+              - paragraph [ref=f25e511]: Accept everything else.XX
+            - listitem [ref=f25e512]:
+              - paragraph [ref=f25e513]: YY
+          - complementary [ref=f25e514]:
+            - generic [ref=f25e515]: NOTE
+            - paragraph [ref=f25e517]: Support may override this policy for a customer with a documented exception.
+          - table [ref=f25e518]:
+            - rowgroup [ref=f25e519]:
+              - row [ref=f25e520]:
+                - columnheader "Field" [ref=f25e521]
+                - columnheader "Type" [ref=f25e522]
+                - columnheader "Required" [ref=f25e523]
+              - row [ref=f25e524]:
+                - cell "currency" [ref=f25e525]
+                - cell "string" [ref=f25e526]
+                - cell "no" [ref=f25e527]
+              - row [ref=f25e528]:
+                - cell "amount" [ref=f25e529]
+                - cell "integer" [ref=f25e530]
+                - cell "yes" [ref=f25e531]
+      - complementary [ref=f25e532]:
+        - article [ref=f25e533] [cursor=pointer]:
+          - generic [ref=f25e534]:
+            - generic [ref=f25e535]: S
+            - generic [ref=f25e536]:
+              - generic [ref=f25e537]: sam
+              - generic [ref=f25e538]: 9m ago
+          - paragraph [ref=f25e539]: Is this still true after the settlement change?

@@ -1,0 +1,739 @@
+- generic [active] [ref=f25e1]:
+  - generic [ref=f25e2]:
+    - banner [ref=f25e3]:
+      - generic [ref=f25e5]:
+        - link "Craft Logo" [ref=f25e7] [cursor=pointer]:
+          - /url: /
+        - navigation "Main navigation" [ref=f25e14]:
+          - list [ref=f25e15]:
+            - listitem [ref=f25e16]:
+              - button "Product" [ref=f25e17] [cursor=pointer]
+            - listitem [ref=f25e18]:
+              - link "Imagine" [ref=f25e19] [cursor=pointer]:
+                - /url: /imagine
+            - listitem [ref=f25e20]:
+              - button "Community" [ref=f25e21] [cursor=pointer]
+            - listitem [ref=f25e22]:
+              - link "Pricing" [ref=f25e23] [cursor=pointer]:
+                - /url: /pricing
+            - listitem [ref=f25e24]:
+              - link "Learn" [ref=f25e25] [cursor=pointer]:
+                - /url: /learn
+            - listitem [ref=f25e26]:
+              - link "Download" [ref=f25e27] [cursor=pointer]:
+                - /url: /download
+        - navigation "Main navigation" [ref=f25e28]:
+          - list [ref=f25e29]:
+            - listitem [ref=f25e30]:
+              - link "Log in" [ref=f25e31] [cursor=pointer]:
+                - /url: https://docs.craft.do/?ref=msite&ph_distinct_id=019fd5a5-43eb-7e99-b8f9-b39de6171f45
+            - listitem [ref=f25e32]:
+              - link "Try Craft Free" [ref=f25e33] [cursor=pointer]:
+                - /url: /download
+    - main [ref=f25e35]:
+      - generic [ref=f25e36]:
+        - generic [ref=f25e38]:
+          - img "Paper texture" [ref=f25e44]
+          - generic [ref=f25e82]:
+            - heading "Your space for notes, tasks, and big ideas" [level=1] [ref=f25e83]
+            - link "Try Craft Free" [ref=f25e84] [cursor=pointer]:
+              - /url: /download
+        - generic [ref=f25e89]:
+          - generic [ref=f25e90]:
+            - heading "Craft isn’t just for one thing, it’s for your things." [level=3] [ref=f25e92]
+            - generic [ref=f25e93]:
+              - paragraph [ref=f25e97]: Docs
+              - paragraph [ref=f25e101]: Tasks
+              - paragraph [ref=f25e105]: Calendar
+              - paragraph [ref=f25e109]: Whiteboards
+              - paragraph [ref=f25e113]: Daily Notes
+          - generic [ref=f25e114]:
+            - heading "How people use Craft" [level=2] [ref=f25e115]
+            - generic [ref=f25e118]:
+              - generic [ref=f25e120]:
+                - generic [ref=f25e121]:
+                  - img "Gagan" [ref=f25e122]
+                  - img "Gagan" [ref=f25e123]
+                - generic [ref=f25e124]:
+                  - paragraph [ref=f25e125]: Gagan, Product Manager
+                  - paragraph [ref=f25e126]: Notes, tasks, travel plans, blog drafts
+              - generic [ref=f25e128]:
+                - generic [ref=f25e129]:
+                  - img "Amity Sensei" [ref=f25e130]
+                  - img "Amity Sensei" [ref=f25e131]
+                - generic [ref=f25e132]:
+                  - paragraph [ref=f25e133]: Amity, Creator and Educator
+                  - paragraph [ref=f25e134]: Lessons, scripts, projects, daily sparks
+              - generic [ref=f25e136]:
+                - generic [ref=f25e137]:
+                  - img "Aaron" [ref=f25e138]
+                  - img "Aaron" [ref=f25e139]
+                - generic [ref=f25e140]:
+                  - paragraph [ref=f25e141]: Aaron, Writer and Podcaster
+                  - paragraph [ref=f25e142]: Show notes, book outlines, daily tasks
+              - generic [ref=f25e144]:
+                - img "Seoyoung" [ref=f25e146]
+                - generic [ref=f25e147]:
+                  - paragraph [ref=f25e148]: Seoyoung, Creator
+                  - paragraph [ref=f25e149]: Creative ideas, plans, projects, scripts
+              - generic [ref=f25e151]:
+                - generic [ref=f25e152]:
+                  - img "Gian" [ref=f25e153]
+                  - img "Gian" [ref=f25e154]
+                - generic [ref=f25e155]:
+                  - paragraph [ref=f25e156]: Gian, Site Manager
+                  - paragraph [ref=f25e157]: Work reports, project boards, personal wiki
+              - generic [ref=f25e159]:
+                - generic [ref=f25e160]:
+                  - img "Stephen" [ref=f25e161]
+                  - img "Stephen" [ref=f25e162]
+                - generic [ref=f25e163]:
+                  - paragraph [ref=f25e164]: Stephen, Dog dad and dream chaser
+                  - paragraph [ref=f25e165]: List of goals, progress tracker
+              - generic [ref=f25e167]:
+                - generic [ref=f25e168]:
+                  - img "Aaron" [ref=f25e169]
+                  - img "Aaron" [ref=f25e170]
+                - generic [ref=f25e171]:
+                  - paragraph [ref=f25e172]: Aaron, Student
+                  - paragraph [ref=f25e173]: Course notes, project outlines, daily tasks
+              - generic [ref=f25e175]:
+                - generic [ref=f25e176]:
+                  - img "Tom" [ref=f25e177]
+                  - img "Tom" [ref=f25e178]
+                - generic [ref=f25e179]:
+                  - paragraph [ref=f25e180]: Tom, Podcaster and newsletter writer
+                  - paragraph [ref=f25e181]: Meeting notes, social media posts
+              - generic [ref=f25e183]:
+                - generic [ref=f25e184]:
+                  - img "Ana" [ref=f25e185]
+                  - img "Ana" [ref=f25e186]
+                - generic [ref=f25e187]:
+                  - paragraph [ref=f25e188]: Ana, Producer and Photographer
+                  - paragraph [ref=f25e189]: Shoot plans, scripts, timelines, wardrobe notes
+          - generic [ref=f25e190]:
+            - img "Paper texture" [ref=f25e192]
+            - generic [ref=f25e193]:
+              - generic [ref=f25e194]:
+                - heading "Write" [level=4] [ref=f25e195]
+                - heading "From first thought to final form" [level=3] [ref=f25e196]
+                - paragraph [ref=f25e197]: In Craft, your writing moves with you — capture ideas instantly across all your devices, then refine them when you’re ready. Transform quick iPhone notes into documents you’re proud to share.
+              - link "Learn more" [ref=f25e198] [cursor=pointer]:
+                - /url: /write
+              - generic [ref=f25e201]:
+                - paragraph [ref=f25e205]: Templates
+                - paragraph [ref=f25e209]: Whiteboards
+                - paragraph [ref=f25e213]: Write with AI
+                - paragraph [ref=f25e217]: Publish & Share
+            - generic [ref=f25e219]:
+              - generic [ref=f25e220]:
+                - paragraph [ref=f25e230]: Todo
+                - generic [ref=f25e232]:
+                  - generic [ref=f25e235]:
+                    - paragraph [ref=f25e236]: Perfect Bread Recipe
+                    - paragraph [ref=f25e238]: Cooking
+                  - generic [ref=f25e241]:
+                    - paragraph [ref=f25e242]: Feed Starter
+                    - paragraph [ref=f25e244]: Inbox
+                  - generic [ref=f25e247]:
+                    - paragraph [ref=f25e248]: Book Tickets to Barcelona
+                    - paragraph [ref=f25e250]: Travel
+                  - generic [ref=f25e253]:
+                    - paragraph [ref=f25e254]: Find Restaurants to Try
+                    - paragraph [ref=f25e256]: Travel
+                  - paragraph [ref=f25e257]: Bourdain’s been on my mind again. Not just the food, the knives, the back-of-the-kitchen grit — but how he moved through the world. Curious. Sharp. Honest. Flawed in a way that made sense. I miss that kind of honesty.
+              - generic [ref=f25e259]:
+                - paragraph [ref=f25e269]: My Sourdough Bread
+                - generic [ref=f25e271]:
+                  - paragraph [ref=f25e272]: My Sourdough Bread
+                  - separator [ref=f25e273]
+                  - generic [ref=f25e274]:
+                    - paragraph [ref=f25e278]: 500g Bread Flour
+                    - paragraph [ref=f25e282]: 350g Lukewarm Water
+                    - paragraph [ref=f25e286]: 100g Active Sourdough Starter
+                    - paragraph [ref=f25e290]: 10g Of Salt
+                  - paragraph [ref=f25e291]: Start in the morning. Grab a big bowl and toss in 500g of bread flour (or all-purpose, don’t overthink it) with 350g of lukewarm water. Stir it into a shaggy mess. You’re not kneading, just mixing. Cover the bowl and walk away for 30–45 minutes. Let the flour and water get to know each other, this is the autolyse, where the magic begins.
+          - generic [ref=f25e294]:
+            - generic [ref=f25e295]:
+              - img "Tom avatar" [ref=f25e297]
+              - paragraph [ref=f25e298]: Tom
+            - blockquote [ref=f25e300]:
+              - generic [ref=f25e301]: “
+              - text: Publishing directly from Craft just feels natural — it’s where I write, so it makes sense to share from there too.”
+          - generic [ref=f25e303]:
+            - img "Paper texture" [ref=f25e305]
+            - generic [ref=f25e306]:
+              - generic [ref=f25e307]:
+                - heading "Imagine" [level=4] [ref=f25e308]
+                - heading "Imagine the possibilities when everything's connected to Craft" [level=3] [ref=f25e309]
+                - paragraph [ref=f25e310]: Make Craft yours — connect the tools you love, build what you need.
+              - link "Learn more" [ref=f25e311] [cursor=pointer]:
+                - /url: /imagine
+            - generic [ref=f25e316]:
+              - generic [ref=f25e317]:
+                - generic [ref=f25e318]:
+                  - generic [ref=f25e319]: MCP connections
+                  - generic [ref=f25e324]:
+                    - link [ref=f25e325] [cursor=pointer]:
+                      - /url: /imagine/guide/mcp/claude
+                      - img "Claude" [ref=f25e326]
+                      - generic: Claude
+                    - link [ref=f25e327] [cursor=pointer]:
+                      - /url: /imagine/guide/mcp/chatgpt
+                      - img "ChatGPT" [ref=f25e328]
+                      - generic: ChatGPT
+                    - link [ref=f25e329] [cursor=pointer]:
+                      - /url: /imagine/guide/mcp/claude-code
+                      - img "Claude Code" [ref=f25e330]
+                      - generic: Claude Code
+                    - link [ref=f25e331] [cursor=pointer]:
+                      - /url: /imagine/guide/mcp/windsurf
+                      - img "Windsurf" [ref=f25e332]
+                      - generic: Windsurf
+                    - link [ref=f25e333] [cursor=pointer]:
+                      - /url: /imagine/guide/mcp/cursor
+                      - img "Cursor" [ref=f25e334]
+                      - generic: Cursor
+                    - link [ref=f25e335] [cursor=pointer]:
+                      - /url: /imagine/guide/mcp/vscode
+                      - img "Visual Studio Code" [ref=f25e336]
+                      - generic: Visual Studio Code
+                    - link [ref=f25e337] [cursor=pointer]:
+                      - /url: /imagine/guide/mcp/raycast
+                      - img "Raycast" [ref=f25e338]
+                      - generic: Raycast
+                    - link [ref=f25e339] [cursor=pointer]:
+                      - /url: /imagine/guide/mcp
+                      - img "Other MCP Clients" [ref=f25e340]
+                      - generic: Other MCP Clients
+                - generic [ref=f25e341]:
+                  - generic [ref=f25e342]: API integrations
+                  - generic [ref=f25e349]:
+                    - link [ref=f25e350] [cursor=pointer]:
+                      - /url: /imagine/guide/api/lovable
+                      - img "Lovable" [ref=f25e351]
+                      - generic: Lovable
+                    - link [ref=f25e352] [cursor=pointer]:
+                      - /url: /imagine/guide/api/replit
+                      - img "Replit" [ref=f25e353]
+                      - generic: Replit
+                    - link [ref=f25e354] [cursor=pointer]:
+                      - /url: /imagine/guide/api/shortcuts
+                      - img "Apple Shortcuts" [ref=f25e355]
+                      - generic: Apple Shortcuts
+                    - link [ref=f25e356] [cursor=pointer]:
+                      - /url: /imagine/guide/api/bolt
+                      - img "Bolt" [ref=f25e357]
+                      - generic: Bolt
+                    - link [ref=f25e358] [cursor=pointer]:
+                      - /url: /imagine/guide/api/v0
+                      - img "v0" [ref=f25e359]
+                      - generic: v0
+                    - link [ref=f25e360] [cursor=pointer]:
+                      - /url: /imagine/guide/api/claude-code
+                      - img "Claude Code" [ref=f25e361]
+                      - generic: Claude Code
+                    - link [ref=f25e362] [cursor=pointer]:
+                      - /url: /imagine/guide/api/codex_cli
+                      - img "Codex CLI" [ref=f25e363]
+                      - generic: Codex CLI
+                    - link [ref=f25e364] [cursor=pointer]:
+                      - /url: /imagine/guide/api
+                      - img "Other Tools" [ref=f25e365]
+                      - generic: Other Tools
+              - generic [ref=f25e366]:
+                - generic [ref=f25e367]: Start Building
+                - generic [ref=f25e372]:
+                  - link "Blog Publisher" [ref=f25e373] [cursor=pointer]:
+                    - /url: /imagine/personal-blog
+                  - link "Reading Tracker" [ref=f25e374] [cursor=pointer]:
+                    - /url: /imagine/reading-log
+                  - link "Plant Dashboard" [ref=f25e375] [cursor=pointer]:
+                    - /url: /imagine/plant-dashboard
+                  - link "Dream Journal" [ref=f25e376] [cursor=pointer]:
+                    - /url: /imagine/dream-journal
+              - link "Community 200+ builders Explore community templates" [ref=f25e377] [cursor=pointer]:
+                - /url: /imagine#community
+                - generic [ref=f25e378]: Community
+                - generic [ref=f25e392]:
+                  - paragraph [ref=f25e393]: 200+ builders
+                  - paragraph [ref=f25e394]: Explore community templates
+          - generic [ref=f25e396]:
+            - generic [ref=f25e397]:
+              - img "App Store Award" [ref=f25e398]
+              - generic [ref=f25e399]:
+                - generic [ref=f25e400]: App Store Award
+                - generic [ref=f25e401]: Mac App of the Year
+            - generic [ref=f25e402]:
+              - img "Apple Design Awards" [ref=f25e403]
+              - generic [ref=f25e404]:
+                - generic [ref=f25e405]: Apple Design Awards
+                - generic [ref=f25e406]: Finalist
+            - generic [ref=f25e407]:
+              - img "Webby" [ref=f25e408]
+              - generic [ref=f25e409]:
+                - generic [ref=f25e410]: Webby
+                - generic [ref=f25e411]: Awarded three times in various categories
+            - generic [ref=f25e412]:
+              - img "German Design Award" [ref=f25e413]
+              - generic [ref=f25e414]:
+                - generic [ref=f25e415]: German Design Award
+                - generic [ref=f25e416]: Excellent Communications Design Interactive UX
+          - generic [ref=f25e418]:
+            - generic [ref=f25e419]:
+              - img "Amity Sensei avatar" [ref=f25e421]
+              - paragraph [ref=f25e422]: Amity Sensei
+            - blockquote [ref=f25e424]:
+              - generic [ref=f25e425]: “
+              - text: I can make my notes not only functional but visually pleasing — which really motivates me to stay organized.”
+          - generic [ref=f25e427]:
+            - img "Paper texture" [ref=f25e429]
+            - generic [ref=f25e430]:
+              - generic [ref=f25e431]:
+                - heading "Plan" [level=4] [ref=f25e432]
+                - heading "Planning that doesn't feel like work" [level=3] [ref=f25e433]
+                - paragraph [ref=f25e434]: Keep your ideas and tasks together where they belong. Craft embeds tasks directly in your documents, keeping your best thinking connected to what needs to get done.
+              - link "Learn more" [ref=f25e435] [cursor=pointer]:
+                - /url: /plan
+            - generic [ref=f25e440]:
+              - generic [ref=f25e441]:
+                - paragraph [ref=f25e445]: Calendar
+                - generic [ref=f25e446]:
+                  - paragraph [ref=f25e447]: 5 Aug
+                  - paragraph [ref=f25e448]: Today
+                  - paragraph [ref=f25e449]: Wednesday
+              - generic [ref=f25e450]:
+                - paragraph [ref=f25e454]: Tasks
+                - generic [ref=f25e455]:
+                  - generic [ref=f25e456]:
+                    - generic [ref=f25e457]:
+                      - generic [ref=f25e458]: ✓
+                      - paragraph [ref=f25e461]: Pack bags
+                    - generic [ref=f25e464]:
+                      - paragraph [ref=f25e465]: Print tickets
+                      - generic [ref=f25e466]:
+                        - paragraph [ref=f25e467]: Inbox
+                        - paragraph [ref=f25e468]: Today
+                    - generic [ref=f25e473]:
+                      - paragraph [ref=f25e474]: Set vacation auto-reply email
+                      - paragraph [ref=f25e476]: Inbox
+                  - paragraph [ref=f25e480]: Add Task
+              - generic [ref=f25e481]:
+                - paragraph [ref=f25e485]: Journal
+                - generic [ref=f25e486]:
+                  - paragraph [ref=f25e488]: Today
+                  - separator [ref=f25e489]
+                  - paragraph [ref=f25e516]: This note isn’t urgent. It’s observational. Its job is to hold fragments of the day — thoughts
+              - generic [ref=f25e517]:
+                - paragraph [ref=f25e521]: Reminders
+                - generic [ref=f25e522]:
+                  - generic [ref=f25e523]:
+                    - generic [ref=f25e524]: 12:30
+                    - generic [ref=f25e525]: ・
+                    - generic [ref=f25e526]: "Zoom with Lena: final trip details"
+                  - generic [ref=f25e527]:
+                    - generic [ref=f25e528]: 17:10
+                    - generic [ref=f25e529]: ・
+                    - generic [ref=f25e530]: Check this Craft page
+          - generic [ref=f25e531]:
+            - generic [ref=f25e534]:
+              - generic [ref=f25e535]: Organize
+              - heading "Structure That Adapts to Your Thinking" [level=2] [ref=f25e536]: Structure That Adaptsto Your Thinking
+              - paragraph [ref=f25e537]: "Choose any approach that fits your mind: organize with spaces, folders and tags, or build rich databases with collections"
+            - generic [ref=f25e538]:
+              - generic [ref=f25e539]:
+                - img "background image" [ref=f25e540]
+                - generic [ref=f25e541]:
+                  - heading "Spaces" [level=5] [ref=f25e542]
+                  - paragraph [ref=f25e543]: Switch between work mode and personal mode
+                - generic [ref=f25e544]:
+                  - generic [ref=f25e545]:
+                    - generic [ref=f25e546]: Personal Space
+                    - generic [ref=f25e557]:
+                      - generic [ref=f25e558]:
+                        - generic [ref=f25e559]: Starred
+                        - generic [ref=f25e560]:
+                          - generic [ref=f25e561]: Workout Routine
+                          - generic [ref=f25e573]: Lily Schedule
+                      - generic [ref=f25e583]:
+                        - generic [ref=f25e584]: Folders
+                        - generic [ref=f25e585]:
+                          - generic [ref=f25e586]: Notes
+                          - generic [ref=f25e592]:
+                            - generic [ref=f25e595]: ❤️‍🔥
+                            - generic [ref=f25e596]: Idea
+                          - generic [ref=f25e597]:
+                            - generic [ref=f25e600]: 🧘‍♂️
+                            - generic [ref=f25e601]: Thinking
+                          - generic [ref=f25e602]:
+                            - generic [ref=f25e605]: 🌍
+                            - generic [ref=f25e606]: Travel
+                  - generic [ref=f25e607]:
+                    - generic [ref=f25e609]:
+                      - img "space icon" [ref=f25e610]
+                      - generic [ref=f25e611]: Hard Work Space
+                    - generic [ref=f25e614]:
+                      - generic [ref=f25e615]:
+                        - generic [ref=f25e616]: Starred
+                        - generic [ref=f25e617]: Brand Identity
+                      - generic [ref=f25e629]:
+                        - generic [ref=f25e630]: Tags
+                        - generic [ref=f25e631]:
+                          - generic [ref=f25e632]:
+                            - generic [ref=f25e633]: "#"
+                            - generic [ref=f25e634]: Idea
+                          - generic [ref=f25e635]:
+                            - generic [ref=f25e636]: "#"
+                            - generic [ref=f25e637]: Design
+                      - generic [ref=f25e638]:
+                        - generic [ref=f25e639]: Folders
+                        - generic [ref=f25e640]:
+                          - generic [ref=f25e641]: Notes
+                          - generic [ref=f25e647]:
+                            - generic [ref=f25e650]: 🌐
+                            - generic [ref=f25e651]: Website
+                          - generic [ref=f25e652]:
+                            - generic [ref=f25e655]: 🍎
+                            - generic [ref=f25e656]: App
+                          - generic [ref=f25e657]:
+                            - generic [ref=f25e660]: 🖋️
+                            - generic [ref=f25e661]: Visualization
+              - generic [ref=f25e662]:
+                - img "background image" [ref=f25e663]
+                - generic [ref=f25e664]:
+                  - heading "Folders & Tags" [level=5] [ref=f25e665]
+                  - paragraph [ref=f25e666]: Classic structure for clearhierarchies
+                - generic [ref=f25e668]:
+                  - generic [ref=f25e671]:
+                    - generic [ref=f25e672]: Folders
+                    - generic [ref=f25e673]:
+                      - generic [ref=f25e674]: Notes
+                      - generic [ref=f25e680]: Idea
+                      - generic [ref=f25e686]:
+                        - generic [ref=f25e689]: 🧘‍♂️
+                        - generic [ref=f25e690]: Thinking
+                      - generic [ref=f25e691]:
+                        - generic [ref=f25e694]: 🌍
+                        - generic [ref=f25e695]: Travel
+                  - generic [ref=f25e698]:
+                    - generic [ref=f25e699]: Tags
+                    - generic [ref=f25e700]:
+                      - generic [ref=f25e701]:
+                        - generic [ref=f25e702]: "#"
+                        - generic [ref=f25e703]: idea
+                      - generic [ref=f25e704]:
+                        - generic [ref=f25e705]: "#"
+                        - generic [ref=f25e706]: design
+              - generic [ref=f25e707]:
+                - img "background image" [ref=f25e708]
+                - generic [ref=f25e709]:
+                  - heading "Collections" [level=5] [ref=f25e710]
+                  - paragraph [ref=f25e711]: For structured trackingand rich data
+                - generic [ref=f25e714]:
+                  - generic [ref=f25e715]:
+                    - generic [ref=f25e716]: "#"
+                    - generic [ref=f25e717]: Aa Title
+                    - generic [ref=f25e718]: Author
+                    - generic [ref=f25e722]: Type
+                  - generic [ref=f25e723]:
+                    - generic [ref=f25e724]: Essentials
+                    - generic [ref=f25e733]:
+                      - generic [ref=f25e734]: "1"
+                      - generic [ref=f25e735]: Ada’s Algorithm
+                      - generic [ref=f25e743]: James Essinger
+                      - generic [ref=f25e747]: Essentials
+                    - generic [ref=f25e751]:
+                      - generic [ref=f25e752]: "2"
+                      - generic [ref=f25e753]: Dream Machine
+                      - generic [ref=f25e761]: Mitchell Waldrop
+                      - generic [ref=f25e765]: Essentials
+                    - generic [ref=f25e769]:
+                      - generic [ref=f25e770]: "3"
+                      - generic [ref=f25e771]: User Friendly
+                      - generic [ref=f25e779]: John Harwood
+                      - generic [ref=f25e783]: Essentials
+                    - generic [ref=f25e787]:
+                      - generic [ref=f25e788]: "4"
+                      - generic [ref=f25e789]: Broad Band
+                      - generic [ref=f25e797]: Claire L. Evans
+                      - generic [ref=f25e801]: Essentials
+                    - generic [ref=f25e805]:
+                      - generic [ref=f25e806]: "5"
+                      - generic [ref=f25e807]: Bringing Design t...
+                      - generic [ref=f25e815]: Terry Winograd
+                      - generic [ref=f25e819]: Essentials
+                    - generic [ref=f25e823]: +
+          - generic [ref=f25e826]:
+            - generic [ref=f25e827]:
+              - paragraph [ref=f25e829]: D
+              - paragraph [ref=f25e830]: Deanna
+            - blockquote [ref=f25e832]:
+              - generic [ref=f25e833]: “
+              - text: Craft is the one tool you need for everything — effortless organization, smooth navigation, and a workspace that adapts to your needs.”
+          - generic [ref=f25e834]:
+            - img "Papers Combined" [ref=f25e836]
+            - generic [ref=f25e837]:
+              - generic [ref=f25e838]:
+                - generic [ref=f25e839]: Customization
+                - heading "Make it unmistakably yours" [level=2] [ref=f25e840]
+                - link "Learn more" [ref=f25e841] [cursor=pointer]:
+                  - /url: /customize
+              - region [ref=f25e846]:
+                - generic [ref=f25e847]:
+                  - group [ref=f25e848]
+                  - group [ref=f25e851]
+                  - group [ref=f25e854]
+                  - group [ref=f25e857]
+                  - group [ref=f25e860]
+                  - group [ref=f25e863]
+                  - group [ref=f25e866]
+                  - group "1 of 18" [ref=f25e869]:
+                    - img "Crimson Coil" [ref=f25e871]
+                  - group "2 of 18" [ref=f25e872]:
+                    - img "Writer" [ref=f25e874]
+                  - group "3 of 18" [ref=f25e875]:
+                    - img "Shape Shift" [ref=f25e877]
+                  - group "4 of 18" [ref=f25e878]:
+                    - img "Hopefully Sweet" [ref=f25e880]
+                  - group "5 of 18" [ref=f25e881]:
+                    - img "Little World" [ref=f25e883]
+                  - group "6 of 18" [ref=f25e884]:
+                    - img "Blurry Bloom" [ref=f25e886]
+                  - group [ref=f25e887]
+                  - group [ref=f25e890]
+                  - group [ref=f25e893]
+                  - group [ref=f25e896]
+                  - group [ref=f25e899]
+                  - group [ref=f25e902]
+                  - group [ref=f25e905]
+                  - group [ref=f25e908]
+                  - group [ref=f25e911]
+                  - group [ref=f25e914]
+                  - group [ref=f25e917]
+                  - group [ref=f25e920]
+                  - group [ref=f25e923]
+                  - group [ref=f25e926]
+                  - group [ref=f25e929]
+                  - group [ref=f25e932]
+                  - group [ref=f25e935]
+                  - group [ref=f25e938]
+                  - group [ref=f25e941]
+          - generic [ref=f25e945]:
+            - generic [ref=f25e946]:
+              - img "Leo avatar" [ref=f25e948]
+              - paragraph [ref=f25e949]: Leo
+            - blockquote [ref=f25e951]:
+              - generic [ref=f25e952]: “
+              - text: Craft is way more functional than Apple or Google Notes while being much easier to use than Notion.”
+          - generic [ref=f25e953]:
+            - generic [ref=f25e954]:
+              - heading "Stay in the loop" [level=2] [ref=f25e955]
+              - paragraph [ref=f25e956]: Join the community and learn how other people get the most out of Craft.
+            - generic [ref=f25e960]:
+              - link [ref=f25e961] [cursor=pointer]:
+                - /url: https://www.reddit.com/r/CraftDocs
+                - generic [ref=f25e982]:
+                  - heading "r/craftdocs" [level=4] [ref=f25e983]
+                  - paragraph [ref=f25e984]: Discuss, share, and explore
+              - link [ref=f25e985] [cursor=pointer]:
+                - /url: https://craft.do/community
+                - generic [ref=f25e994]:
+                  - heading "Slack" [level=4] [ref=f25e995]
+                  - paragraph [ref=f25e996]: Get the inside track on new features
+              - link [ref=f25e997] [cursor=pointer]:
+                - /url: https://x.com/craftdocsapp
+                - generic [ref=f25e1003]:
+                  - heading "@craftdocsapp" [level=4] [ref=f25e1004]
+                  - paragraph [ref=f25e1005]: Stay up to date on our latest releases
+              - link [ref=f25e1006] [cursor=pointer]:
+                - /url: https://www.youtube.com/@CraftDocs
+                - generic [ref=f25e1016]:
+                  - heading "@craftdocs" [level=4] [ref=f25e1017]
+                  - paragraph [ref=f25e1018]: Tips, tutorials, and feature deep dives
+          - generic [ref=f25e1021]:
+            - generic [ref=f25e1022]:
+              - generic [ref=f25e1023]: Pricing
+              - heading "Your pace, your plan" [level=2] [ref=f25e1024]
+              - paragraph [ref=f25e1025]: Use it now and then, or integrate it into your daily flow.
+            - generic [ref=f25e1026]:
+              - generic [ref=f25e1027]:
+                - img "Paper texture" [ref=f25e1030]
+                - generic [ref=f25e1031]:
+                  - generic [ref=f25e1032]:
+                    - heading "Free" [level=3] [ref=f25e1033]
+                    - heading "Full access, great if you use it occasionally each week." [level=3] [ref=f25e1034]
+                  - generic [ref=f25e1035]:
+                    - paragraph [ref=f25e1037]:
+                      - generic [ref=f25e1038]: $0
+                      - generic [ref=f25e1039]: /month
+                    - link "Get Started" [ref=f25e1040] [cursor=pointer]:
+                      - /url: /download
+              - generic [ref=f25e1042]:
+                - img "Paper texture" [ref=f25e1045]
+                - generic [ref=f25e1046]:
+                  - generic [ref=f25e1047]:
+                    - generic [ref=f25e1048]: Plus
+                    - heading "Designed to effortlessly fit into your everyday flow." [level=3] [ref=f25e1056]
+                  - generic [ref=f25e1057]:
+                    - paragraph [ref=f25e1059]:
+                      - generic [ref=f25e1060]: $8.0
+                      - generic [ref=f25e1061]: /month
+                    - link "Upgrade to Plus" [ref=f25e1062] [cursor=pointer]:
+                      - /url: https://docs.craft.do/?ref=msite&go=subscription-checkout&tier=plus
+            - link "Learn more about group discounts" [ref=f25e1065] [cursor=pointer]:
+              - /url: /pricing
+          - generic [ref=f25e1069]:
+            - generic [ref=f25e1070]:
+              - heading "Let’s get started" [level=2] [ref=f25e1071]
+              - paragraph [ref=f25e1072]: Start for free. No credit card required.
+            - generic [ref=f25e1073]:
+              - link "Continue on web" [ref=f25e1074] [cursor=pointer]:
+                - /url: https://docs.craft.do/?ref=msite
+              - link "Download on the App Store" [ref=f25e1077] [cursor=pointer]:
+                - /url: https://apps.apple.com/us/app/craft-docs/id1487937127
+    - contentinfo [ref=f25e1082]:
+      - heading "Footer" [level=2] [ref=f25e1084]
+      - generic [ref=f25e1085]:
+        - generic [ref=f25e1086]:
+          - generic [ref=f25e1087]:
+            - heading "Product" [level=4] [ref=f25e1088]
+            - list [ref=f25e1091]:
+              - listitem [ref=f25e1092]:
+                - link "Product Releases" [ref=f25e1094] [cursor=pointer]:
+                  - /url: https://www.craft.do/whats-new
+              - listitem [ref=f25e1095]:
+                - generic [ref=f25e1096]: Features
+              - list [ref=f25e1098]:
+                - listitem [ref=f25e1099]:
+                  - link "Write" [ref=f25e1101] [cursor=pointer]:
+                    - /url: /write
+                - listitem [ref=f25e1102]:
+                  - link "Plan" [ref=f25e1104] [cursor=pointer]:
+                    - /url: /plan
+                - listitem [ref=f25e1105]:
+                  - link "Organize" [ref=f25e1107] [cursor=pointer]:
+                    - /url: /organize
+                - listitem [ref=f25e1108]:
+                  - link "Customize" [ref=f25e1110] [cursor=pointer]:
+                    - /url: /customize
+              - listitem [ref=f25e1111]:
+                - link "Imagine With Craft" [ref=f25e1113] [cursor=pointer]:
+                  - /url: /imagine
+              - listitem [ref=f25e1115]:
+                - link "Pricing" [ref=f25e1117] [cursor=pointer]:
+                  - /url: /pricing
+              - list [ref=f25e1118]:
+                - listitem [ref=f25e1119]:
+                  - link "Education Plan" [ref=f25e1121] [cursor=pointer]:
+                    - /url: /education
+          - generic [ref=f25e1122]:
+            - heading "Community" [level=4] [ref=f25e1123]
+            - list [ref=f25e1126]:
+              - listitem [ref=f25e1127]:
+                - link "Slack" [ref=f25e1129] [cursor=pointer]:
+                  - /url: https://craft.do/community
+              - listitem [ref=f25e1130]:
+                - link "Reddit Community" [ref=f25e1132] [cursor=pointer]:
+                  - /url: https://www.reddit.com/r/CraftDocs
+              - listitem [ref=f25e1133]:
+                - link "X / Twitter" [ref=f25e1135] [cursor=pointer]:
+                  - /url: https://x.com/craftdocsapp
+              - listitem [ref=f25e1137]:
+                - link "Learn" [ref=f25e1139] [cursor=pointer]:
+                  - /url: /learn
+              - listitem [ref=f25e1140]:
+                - link "Compare Craft" [ref=f25e1142] [cursor=pointer]:
+                  - /url: /compare
+              - listitem [ref=f25e1143]:
+                - link "Getting Started Guide" [ref=f25e1145] [cursor=pointer]:
+                  - /url: https://www.craft.do/getting-started
+              - listitem [ref=f25e1146]:
+                - link "Template Gallery" [ref=f25e1148] [cursor=pointer]:
+                  - /url: /templates
+          - generic [ref=f25e1149]:
+            - heading "Support" [level=4] [ref=f25e1150]
+            - list [ref=f25e1153]:
+              - listitem [ref=f25e1154]:
+                - link "Help Center" [ref=f25e1156] [cursor=pointer]:
+                  - /url: https://support.craft.do
+              - listitem [ref=f25e1157]:
+                - link "Contact Support" [ref=f25e1159] [cursor=pointer]:
+                  - /url: mailto:feedback@craft.do
+          - generic [ref=f25e1160]:
+            - heading "Company" [level=4] [ref=f25e1161]
+            - list [ref=f25e1164]:
+              - listitem [ref=f25e1165]:
+                - link "About us" [ref=f25e1167] [cursor=pointer]:
+                  - /url: /about
+              - listitem [ref=f25e1168]:
+                - link "Blog" [ref=f25e1170] [cursor=pointer]:
+                  - /url: /blog
+              - listitem [ref=f25e1171]:
+                - link "Careers" [ref=f25e1173] [cursor=pointer]:
+                  - /url: https://www.craft.do/careers
+              - listitem [ref=f25e1174]:
+                - link "Affiliate Program" [ref=f25e1176] [cursor=pointer]:
+                  - /url: /affiliates
+              - listitem [ref=f25e1177]:
+                - link "Media" [ref=f25e1179] [cursor=pointer]:
+                  - /url: /media
+              - listitem [ref=f25e1181]:
+                - generic [ref=f25e1182]: Legal
+              - list [ref=f25e1184]:
+                - listitem [ref=f25e1185]:
+                  - link "Terms" [ref=f25e1187] [cursor=pointer]:
+                    - /url: https://www.craft.do/terms
+                - listitem [ref=f25e1188]:
+                  - link "Privacy Policy" [ref=f25e1190] [cursor=pointer]:
+                    - /url: https://www.craft.do/privacy
+                - listitem [ref=f25e1191]:
+                  - link "Security" [ref=f25e1193] [cursor=pointer]:
+                    - /url: /security
+                - listitem [ref=f25e1194]:
+                  - link "ESG" [ref=f25e1196] [cursor=pointer]:
+                    - /url: https://www.craft.do/esg
+                - listitem [ref=f25e1197]:
+                  - link "Responsible Disclosure" [ref=f25e1199] [cursor=pointer]:
+                    - /url: https://www.craft.do/security/responsible-disclosure
+          - generic [ref=f25e1202]:
+            - heading "Download" [level=4] [ref=f25e1203]
+            - list [ref=f25e1206]:
+              - listitem [ref=f25e1207]:
+                - link "Craft for iPhone" [ref=f25e1209] [cursor=pointer]:
+                  - /url: https://apps.apple.com/us/app/craft-docs/id1487937127
+              - listitem [ref=f25e1210]:
+                - link "Craft for iPad" [ref=f25e1212] [cursor=pointer]:
+                  - /url: https://apps.apple.com/us/app/craft-docs/id1487937127
+              - listitem [ref=f25e1213]:
+                - link "Craft for Mac" [ref=f25e1215] [cursor=pointer]:
+                  - /url: https://res.craft.do/native/sparkle/Craft.dmg
+              - listitem [ref=f25e1216]:
+                - generic [ref=f25e1217]: Craft for Windows
+              - list [ref=f25e1219]:
+                - listitem [ref=f25e1220]:
+                  - link "Windows x64" [ref=f25e1222] [cursor=pointer]:
+                    - /url: https://www.craft.do/download/desktop/Craft Installer.exe
+                - listitem [ref=f25e1223]:
+                  - link "Windows ARM64" [ref=f25e1225] [cursor=pointer]:
+                    - /url: https://www.craft.do/download/desktop/Craft Installer arm64.exe
+              - listitem [ref=f25e1226]:
+                - link "Craft for Vision Pro" [ref=f25e1228] [cursor=pointer]:
+                  - /url: https://apps.apple.com/us/app/craft-docs/id1487937127?platform=vision
+              - listitem [ref=f25e1229]:
+                - link "Craft for Android" [ref=f25e1231] [cursor=pointer]:
+                  - /url: https://play.google.com/store/apps/details?id=com.craft.docs
+        - generic [ref=f25e1234]:
+          - generic [ref=f25e1235]:
+            - button [ref=f25e1236] [cursor=pointer]:
+              - paragraph [ref=f25e1239]: English
+            - generic [ref=f25e1240]:
+              - link "Instagram" [ref=f25e1241] [cursor=pointer]:
+                - /url: https://www.instagram.com/craftdocs
+              - link "YouTube" [ref=f25e1245] [cursor=pointer]:
+                - /url: https://www.youtube.com/@CraftDocs
+              - link "X" [ref=f25e1249] [cursor=pointer]:
+                - /url: https://x.com/craftdocsapp
+              - link "LinkedIn" [ref=f25e1253] [cursor=pointer]:
+                - /url: https://www.linkedin.com/company/craftdocs
+          - paragraph [ref=f25e1257]: © 2026 Craft Docs Limited, Inc. All rights reserved.
+  - alert [ref=f25e1258]

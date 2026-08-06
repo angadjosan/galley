@@ -70,7 +70,14 @@ export interface BlockAttribution {
   readonly ticket: number;
 }
 
-/** A human-readable one-liner for a revision, from its operations. */
+/**
+ * A human-readable one-liner for a revision, from its operations.
+ *
+ * "Paragraph", not "block": this string is read by the person who wrote the
+ * document, and "block" is the vocabulary of the storage layer. It is the
+ * generic a writer already has for "one of the things this document is made
+ * of", and it is the word the timeline has to speak.
+ */
 export function summarize(ops: readonly BlockOp[]): string {
   if (ops.length === 0) return 'no change';
   const counts = new Map<string, number>();
@@ -81,20 +88,20 @@ export function summarize(ops: readonly BlockOp[]): string {
     if (kind === 'materialize' || kind === 'dematerialize') continue;
     parts.push(count === 1 ? oneOf(kind) : `${count} ${manyOf(kind)}`);
   }
-  if (parts.length === 0) return 'anchored a block';
+  if (parts.length === 0) return 'anchored a paragraph';
   return parts.join(', ');
 }
 
 function oneOf(kind: string): string {
   switch (kind) {
     case 'replace':
-      return 'edited a block';
+      return 'edited a paragraph';
     case 'insert':
-      return 'added a block';
+      return 'added a paragraph';
     case 'delete':
-      return 'removed a block';
+      return 'removed a paragraph';
     case 'move':
-      return 'moved a block';
+      return 'moved a paragraph';
     default:
       return kind;
   }
@@ -103,13 +110,13 @@ function oneOf(kind: string): string {
 function manyOf(kind: string): string {
   switch (kind) {
     case 'replace':
-      return 'blocks edited';
+      return 'paragraphs edited';
     case 'insert':
-      return 'blocks added';
+      return 'paragraphs added';
     case 'delete':
-      return 'blocks removed';
+      return 'paragraphs removed';
     case 'move':
-      return 'blocks moved';
+      return 'paragraphs moved';
     default:
       return `${kind} ops`;
   }

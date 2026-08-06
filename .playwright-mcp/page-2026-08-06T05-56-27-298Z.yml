@@ -1,0 +1,572 @@
+- generic [active] [ref=f20e1]:
+  - list [ref=f20e3]:
+    - listitem [ref=f20e4]:
+      - generic [ref=f20e6]:
+        - generic [ref=f20e7]: 🎁 100 free AI Toolkit licenses – apply by August 15.
+        - link "Learn more" [ref=f20e10] [cursor=pointer]:
+          - /url: https://tiptap.dev/blog/release-notes/ai-toolkit-now-in-beta
+  - banner [ref=f20e21]:
+    - banner [ref=f20e22]:
+      - link "home" [ref=f20e23] [cursor=pointer]:
+        - /url: /
+      - navigation [ref=f20e37]:
+        - button "Platform" [ref=f20e39] [cursor=pointer]
+        - button "Solutions" [ref=f20e42] [cursor=pointer]
+        - button "Resources" [ref=f20e45] [cursor=pointer]
+        - link "Enterprise" [ref=f20e47] [cursor=pointer]:
+          - /url: /enterprise
+        - link "Docs" [ref=f20e48] [cursor=pointer]:
+          - /url: https://tiptap.dev/docs
+        - link "Pricing" [ref=f20e49] [cursor=pointer]:
+          - /url: /pricing
+      - navigation [ref=f20e50]:
+        - generic [ref=f20e51]:
+          - link [ref=f20e52] [cursor=pointer]:
+            - /url: https://tiptap.dev/discord
+          - link "32k" [ref=f20e57] [cursor=pointer]:
+            - /url: https://tiptap.dev/github
+          - separator [ref=f20e63]
+        - link "Contact sales" [ref=f20e64] [cursor=pointer]:
+          - /url: /contact-sales
+        - link "Log in" [ref=f20e65] [cursor=pointer]:
+          - /url: https://cloud.tiptap.dev/login
+        - link "Sign up" [ref=f20e66] [cursor=pointer]:
+          - /url: https://cloud.tiptap.dev/register
+  - main [ref=f20e68]:
+    - generic [ref=f20e69]:
+      - generic [ref=f20e70]:
+        - generic [ref=f20e73]:
+          - generic [ref=f20e74]:
+            - generic [ref=f20e75]:
+              - generic [ref=f20e76]: Editor
+              - generic [ref=f20e77]: Open source
+            - heading [level=1] [ref=f20e79]:
+              - text: The open-source
+              - strong [ref=f20e80]: rich text editor
+          - generic [ref=f20e81]:
+            - link "Get started" [ref=f20e82] [cursor=pointer]:
+              - /url: https://tiptap.dev/docs/editor/introduction
+            - link "GitHub" [ref=f20e87] [cursor=pointer]:
+              - /url: https://github.com/ueberdosis/tiptap
+        - generic [ref=f20e90]:
+          - tablist [ref=f20e91]:
+            - tab "Tiptap UI" [selected] [ref=f20e92] [cursor=pointer]
+            - tab "Headless" [ref=f20e94] [cursor=pointer]
+          - tabpanel "Tiptap UI" [ref=f20e97]:
+            - iframe [ref=f20e99]:
+              - generic [ref=f21e1]:
+                - generic [ref=f21e2]:
+                  - toolbar "toolbar" [ref=f21e3]:
+                    - group [ref=f21e4]:
+                      - button "Undo" [disabled] [ref=f21e5]
+                      - button "Redo" [disabled] [ref=f21e8]
+                    - group [ref=f21e11]:
+                      - button "Format text as heading" [disabled] [ref=f21e12]
+                      - button "List options" [disabled] [ref=f21e17]
+                      - button "Blockquote" [disabled] [ref=f21e27]
+                      - button "Code Block" [disabled] [ref=f21e33]
+                    - group [ref=f21e38]:
+                      - button "Bold" [disabled] [ref=f21e39]
+                      - button "Italic" [disabled] [ref=f21e42]
+                      - button "Strike" [disabled] [ref=f21e45]
+                      - button "Code" [disabled] [ref=f21e49]
+                      - button "Underline" [disabled] [ref=f21e54]
+                      - button "Highlight" [disabled] [ref=f21e57]
+                      - button "Link" [disabled] [ref=f21e60]
+                    - group [ref=f21e64]:
+                      - button "Superscript" [disabled] [ref=f21e65]
+                      - button "Subscript" [disabled] [ref=f21e70]
+                    - group [ref=f21e75]:
+                      - button "Align left" [disabled] [ref=f21e76]
+                      - button "Align center" [disabled] [ref=f21e81]
+                      - button "Align right" [disabled] [ref=f21e86]
+                      - button "Align justify" [disabled] [ref=f21e91]
+                    - group [ref=f21e96]:
+                      - button "Add image" [disabled] [ref=f21e97]:
+                        - generic [ref=f21e100]: Add
+                    - group [ref=f21e101]:
+                      - button "Search and replace" [ref=f21e102] [cursor=pointer]
+                      - button "Switch to light mode" [ref=f21e105] [cursor=pointer]
+                  - generic "Main content area, start typing to enter text." [ref=f21e109]:
+                    - heading "Getting started" [level=1] [ref=f21e110]
+                    - paragraph [ref=f21e111]:
+                      - text: Welcome to the
+                      - emphasis [ref=f21e112]:
+                        - mark [ref=f21e113]: Simple Editor
+                      - text: template! This template integrates
+                      - strong [ref=f21e114]: open source
+                      - text: UI components and Tiptap extensions licensed under
+                      - strong [ref=f21e115]: MIT
+                      - text: .
+                    - paragraph [ref=f21e116]:
+                      - text: Integrate it by following the
+                      - link "Tiptap UI Components docs" [ref=f21e117]:
+                        - /url: https://tiptap.dev/docs/ui-components/templates/simple-editor
+                      - text: or using our CLI tool.
+                    - code [ref=f21e119]: npx @tiptap/cli init
+                    - heading "Features" [level=2] [ref=f21e120]
+                    - blockquote [ref=f21e121]:
+                      - paragraph [ref=f21e122]:
+                        - emphasis [ref=f21e123]: A fully responsive rich text editor with built-in support for common formatting and layout tools. Type markdown
+                        - code [ref=f21e124]: "**"
+                        - emphasis [ref=f21e125]: or use keyboard shortcuts
+                        - code [ref=f21e126]: ⌘+B
+                        - text: for most all common markdown marks. 🪄
+                    - paragraph [ref=f21e127]:
+                      - text: Add images, customize alignment, and apply
+                      - mark [ref=f21e128]: advanced formatting
+                      - text: to make your writing more engaging and professional.
+                    - img "placeholder-image" [ref=f21e129]
+                    - list [ref=f21e130]:
+                      - listitem [ref=f21e131]:
+                        - paragraph [ref=f21e132]:
+                          - strong [ref=f21e133]: Superscript
+                          - text: (x
+                          - superscript [ref=f21e134]: "2"
+                          - text: ) and
+                          - strong [ref=f21e135]: Subscript
+                          - text: (H
+                          - subscript [ref=f21e136]: "2"
+                          - text: O) for precision.
+                      - listitem [ref=f21e137]:
+                        - paragraph [ref=f21e138]:
+                          - strong [ref=f21e139]: Typographic conversion
+                          - text: ": automatically convert to"
+                          - code [ref=f21e140]: "->"
+                          - text: an arrow
+                          - strong [ref=f21e141]: →
+                          - text: .
+                    - paragraph [ref=f21e142]:
+                      - emphasis [ref=f21e143]: →
+                      - link "Learn more" [ref=f21e144]:
+                        - /url: https://tiptap.dev/docs/ui-components/templates/simple-editor#features
+                    - separator [ref=f21e146]
+                    - heading "Make it your own" [level=2] [ref=f21e147]
+                    - paragraph [ref=f21e148]: Switch between light and dark modes, and tailor the editor's appearance with customizable CSS to match your style.
+                    - list [ref=f21e149]:
+                      - listitem [ref=f21e150]:
+                        - generic [ref=f21e151]:
+                          - checkbox "Task item checkbox for Test template" [checked]
+                          - generic [ref=f21e152] [cursor=pointer]
+                        - paragraph [ref=f21e154]: Test template
+                      - listitem [ref=f21e155]:
+                        - generic [ref=f21e156]:
+                          - checkbox "Task item checkbox for Integrate the free template"
+                          - generic [ref=f21e157] [cursor=pointer]
+                        - paragraph [ref=f21e159]:
+                          - link "Integrate the free template" [ref=f21e160]:
+                            - /url: https://tiptap.dev/docs/ui-components/templates/simple-editor
+                    - paragraph [ref=f21e161]
+                - alert [ref=f21e162]
+      - list [ref=f20e102]:
+        - listitem [ref=f20e103]
+        - listitem [ref=f20e105]
+        - listitem [ref=f20e107]
+        - listitem [ref=f20e109]
+        - listitem [ref=f20e111]
+        - listitem [ref=f20e113]
+        - listitem [ref=f20e115]
+        - listitem [ref=f20e117]
+        - listitem [ref=f20e119]
+        - listitem [ref=f20e121]
+        - listitem [ref=f20e123]
+        - listitem [ref=f20e125]
+        - listitem [ref=f20e127]
+        - listitem [ref=f20e129]
+        - listitem [ref=f20e131]
+        - listitem [ref=f20e133]
+        - listitem [ref=f20e135]
+        - listitem [ref=f20e137]
+        - listitem
+        - listitem [ref=f20e139]
+        - listitem [ref=f20e141]
+        - listitem [ref=f20e143]
+        - listitem [ref=f20e145]
+        - listitem [ref=f20e147]
+        - listitem [ref=f20e149]
+        - listitem [ref=f20e151]
+        - listitem [ref=f20e153]
+        - listitem [ref=f20e155]
+        - listitem [ref=f20e157]
+        - listitem [ref=f20e159]
+        - listitem [ref=f20e161]
+        - listitem [ref=f20e163]
+        - listitem [ref=f20e165]
+        - listitem [ref=f20e167]
+        - listitem [ref=f20e169]
+        - listitem [ref=f20e171]
+        - listitem [ref=f20e173]
+      - generic [ref=f20e175]:
+        - paragraph [ref=f20e177]: Tiptap is the world's leading open-source rich text editor framework for creating content editing experiences like Notion or Google Docs insanely fast.
+        - generic [ref=f20e178]:
+          - generic [ref=f20e179]:
+            - heading "Requirements" [level=3] [ref=f20e180]
+            - generic [ref=f20e181]:
+              - link "Read the docs 😉 Learn with examples and guides" [ref=f20e182] [cursor=pointer]:
+                - /url: https://tiptap.dev/docs
+                - generic [ref=f20e187]:
+                  - generic [ref=f20e188]: Read the docs 😉
+                  - generic [ref=f20e189]: Learn with examples and guides
+              - link "Core packages Install to get started" [ref=f20e190] [cursor=pointer]:
+                - /url: https://tiptap.dev/docs/editor/getting-started/install
+                - generic [ref=f20e195]:
+                  - generic [ref=f20e196]: Core packages
+                  - generic [ref=f20e197]: Install to get started
+              - link "Extensions Add Core or Paid extensions" [ref=f20e198] [cursor=pointer]:
+                - /url: https://tiptap.dev/docs/editor/extensions/overview
+                - generic [ref=f20e203]:
+                  - generic [ref=f20e204]: Extensions
+                  - generic [ref=f20e205]: Add Core or Paid extensions
+          - generic [ref=f20e206]:
+            - heading "# Quick start" [level=3] [ref=f20e207]
+            - list [ref=f20e208]:
+              - listitem [ref=f20e209]: npm install @tiptap/core @tiptap/pm @tiptap/starter-kit
+              - listitem [ref=f20e210]: That's it.
+            - paragraph [ref=f20e211]:
+              - text: ‍
+              - code [ref=f20e212]: "[Read docs]("
+              - link "https://tiptap.dev/docs/editor/getting-started/overview" [ref=f20e213] [cursor=pointer]:
+                - /url: https://tiptap.dev/docs/editor/getting-started/overview
+              - code [ref=f20e214]: )
+    - generic [ref=f20e215]:
+      - generic [ref=f20e216]:
+        - heading "Flexible features with tons of extensions for your rich text editor" [level=2] [ref=f20e218]
+        - paragraph [ref=f20e220]: Tiptap's extension-based architecture lets you pick and choose the features for your rich text editor. Choose from a wide range of Core and Paid extensions, or build and integrate your own.
+        - generic [ref=f20e221]:
+          - generic [ref=f20e222]:
+            - generic [ref=f20e223]: 100+
+            - generic [ref=f20e224]: Core & Paid extensions
+          - generic [ref=f20e225]:
+            - generic [ref=f20e226]: Modular
+            - generic [ref=f20e227]: extension library
+          - generic [ref=f20e228]:
+            - generic [ref=f20e229]: Custom
+            - generic [ref=f20e230]: extensions
+      - region [ref=f20e231]:
+        - generic [ref=f20e232]:
+          - group [ref=f20e233]
+          - group "1 of 1" [ref=f20e329]
+          - group [ref=f20e425]
+      - generic [ref=f20e521]:
+        - generic [ref=f20e523]:
+          - heading "Integrate only the features you need for your rich text editor" [level=2] [ref=f20e525]
+          - paragraph [ref=f20e526]: Pick the extensions you need to create the rich text editor user experience your users want.
+          - link "Show docs" [ref=f20e527] [cursor=pointer]:
+            - /url: https://tiptap.dev/docs/editor/extensions/overview
+        - generic [ref=f20e533]:
+          - heading "Code custom features or add to existing extensions" [level=2] [ref=f20e535]
+          - paragraph [ref=f20e536]: Develop your own custom nodes or add functionality to already existing extensions.
+          - link "Show docs" [ref=f20e537] [cursor=pointer]:
+            - /url: https://tiptap.dev/docs/editor/extensions/custom-extensions
+    - generic [ref=f20e542]:
+      - generic [ref=f20e543]:
+        - heading "Add your own rich text editor front-end without !important" [level=2] [ref=f20e545]:
+          - text: Add your own rich text editor front-end
+          - generic [ref=f20e546]: without !important
+        - paragraph [ref=f20e548]: Our headless architecture gives you control over functionality, HTML markup, styling, and behavior. Take a look at our examples to get inspiration or integrate our rich text editor templates.
+      - generic [ref=f20e549]:
+        - region [ref=f20e550]:
+          - generic [ref=f20e551]:
+            - button "Go to slide 1" [ref=f20e552] [cursor=pointer]:
+              - generic [ref=f20e553]: Bubble menu
+            - button "Go to slide 2" [ref=f20e555] [cursor=pointer]:
+              - generic [ref=f20e556]: Floating menu
+            - button "Go to slide 3" [ref=f20e558] [cursor=pointer]:
+              - generic [ref=f20e559]: Fixed menu
+        - region [ref=f20e561]:
+          - generic [ref=f20e562]:
+            - group "1 of 3" [ref=f20e563]:
+              - generic [ref=f20e565]:
+                - generic [ref=f20e566]:
+                  - tablist [ref=f20e567]:
+                    - tab "React" [selected] [ref=f20e568] [cursor=pointer]
+                    - tab "Vue" [ref=f20e570] [cursor=pointer]
+                  - tabpanel "React" [ref=f20e573]:
+                    - code [ref=f20e575]:
+                      - generic [ref=f20e576]: "<BubbleMenu editor={editor} tippyOptions={{ duration: 100 }}>"
+                      - generic [ref=f20e577]: <div className="bubble-menu">
+                      - generic [ref=f20e578]: <button
+                      - generic [ref=f20e579]: "onClick={() => editor.chain().focus().toggleBold().run()}"
+                      - generic [ref=f20e580]: "className={editor.isActive('bold') ? 'is-active' : ''}"
+                      - generic [ref=f20e581]: ">"
+                      - generic [ref=f20e582]: <svg>Bold icon</svg>
+                      - generic [ref=f20e583]: </button>
+                      - generic [ref=f20e585]: "{/* ... */}"
+                      - generic [ref=f20e587]: <button
+                      - generic [ref=f20e588]: "onClick={() => editor.chain().focus().toggleCode().run()}"
+                      - generic [ref=f20e589]: "className={editor.isActive('code') ? 'is-active' : ''}"
+                      - generic [ref=f20e590]: ">"
+                      - generic [ref=f20e591]: <svg>Code icon</svg>
+                      - generic [ref=f20e592]: </button>
+                      - generic [ref=f20e593]: </div>
+                      - generic [ref=f20e594]: </BubbleMenu>
+                - link "Show docs" [ref=f20e595] [cursor=pointer]:
+                  - /url: https://tiptap.dev/docs/editor/extensions/functionality/bubble-menu
+            - group [ref=f20e596]:
+              - generic [ref=f20e598]:
+                - generic [ref=f20e599]:
+                  - tablist [ref=f20e600]:
+                    - tab [selected] [ref=f20e601] [cursor=pointer]:
+                      - generic [ref=f20e602]: React
+                    - tab [ref=f20e603] [cursor=pointer]:
+                      - generic [ref=f20e604]: Vue
+                  - tabpanel [ref=f20e606]:
+                    - code [ref=f20e608]:
+                      - generic [ref=f20e609]: "<FloatingMenu editor={editor} tippyOptions={{ duration: 100 }}>"
+                      - generic [ref=f20e610]: <div className="floating-menu">
+                      - generic [ref=f20e611]: <button
+                      - generic [ref=f20e612]: "onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}"
+                      - generic [ref=f20e613]: "className={editor.isActive('heading', { level: 1 }) ? 'is-active' : ''}"
+                      - generic [ref=f20e614]: ">"
+                      - generic [ref=f20e615]: <svg>Heading icon</svg>
+                      - generic [ref=f20e616]: </button>
+                      - generic [ref=f20e618]: "{/* ... */}"
+                      - generic [ref=f20e620]: </div>
+                      - generic [ref=f20e621]: </FloatingMenu>
+                - link [ref=f20e622] [cursor=pointer]:
+                  - /url: https://tiptap.dev/docs/editor/extensions/functionality/floatingmenu
+                  - text: Show docs
+            - group [ref=f20e623]:
+              - generic [ref=f20e625]:
+                - generic [ref=f20e626]:
+                  - tablist [ref=f20e627]:
+                    - tab [selected] [ref=f20e628] [cursor=pointer]:
+                      - generic [ref=f20e629]: React
+                    - tab [ref=f20e630] [cursor=pointer]:
+                      - generic [ref=f20e631]: Vue
+                  - tabpanel [ref=f20e633]:
+                    - code [ref=f20e635]:
+                      - generic [ref=f20e636]: <div className="button-group sticky">
+                      - generic [ref=f20e637]: <button
+                      - generic [ref=f20e638]: "onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}"
+                      - generic [ref=f20e639]: "className={editor.isActive('heading', { level: 1 }) ? 'is-active' : ''}"
+                      - generic [ref=f20e640]: ">"
+                      - generic [ref=f20e641]: <svg>Heading icon</svg>
+                      - generic [ref=f20e642]: </button>
+                      - generic [ref=f20e643]: <button
+                      - generic [ref=f20e644]: "onClick={() => editor.chain().focus().toggleBold().run()}"
+                      - generic [ref=f20e645]: "disabled={ !editor.can().chain().focus().toggleBold().run() }"
+                      - generic [ref=f20e646]: "className={editor.isActive('bold') ? 'is-active' : ''}"
+                      - generic [ref=f20e647]: ">"
+                      - generic [ref=f20e648]: <svg>Bold icon</svg>
+                      - generic [ref=f20e649]: </button>
+                      - generic [ref=f20e651]: "{/* ... */}"
+                      - generic [ref=f20e653]: </div>
+                - link [ref=f20e654] [cursor=pointer]:
+                  - /url: https://tiptap.dev/docs/editor/getting-started/style-editor/custom-menus
+                  - text: Show docs
+    - generic [ref=f20e655]:
+      - generic [ref=f20e656]:
+        - heading "Integrate the rich text editor with any framework" [level=2] [ref=f20e658]:
+          - text: Integrate the rich text editor
+          - generic [ref=f20e659]: with any framework
+        - paragraph [ref=f20e661]: Tiptap's rich text editor is framework-agnostic and will work with any JS framework you throw at it. Learn from our React and Vue examples in the documentation and make it work with Svelte, Vanilla JavaScript, and more.
+        - generic [ref=f20e662]:
+          - img "React"
+          - img "Vue.js"
+          - img "Svelte"
+          - img "Vanilla Javascript"
+          - link [ref=f20e663] [cursor=pointer]:
+            - /url: https://tiptap.dev/docs/editor/installation
+            - strong [ref=f20e664]: + more
+      - 'link "Developer Docs Code with clarity: Explore comprehensive documentation and examples to jumpstart your journey with Tiptap. Documentation" [ref=f20e665] [cursor=pointer]':
+        - /url: https://tiptap.dev/docs
+        - generic [ref=f20e666]:
+          - heading "Developer Docs" [level=2] [ref=f20e668]
+          - paragraph [ref=f20e669]: "Code with clarity: Explore comprehensive documentation and examples to jumpstart your journey with Tiptap."
+          - generic [ref=f20e670]: Documentation
+      - generic [ref=f20e676]:
+        - generic [ref=f20e679]:
+          - heading "Built for developers" [level=3] [ref=f20e680]
+          - paragraph [ref=f20e681]: Tiptap is made by developers for developers and is designed to be as DX friendly as possible.
+        - generic [ref=f20e684]:
+          - heading "Written in TypeScript" [level=3] [ref=f20e685]
+          - paragraph [ref=f20e686]: Tiptap rich text editor is written in TypeScript. That helps to find bugs early and gives a nice autocomplete for the API.
+        - generic [ref=f20e689]:
+          - heading "Powered by ProseMirror" [level=3] [ref=f20e690]
+          - paragraph [ref=f20e691]: Unparalleled reliability and advanced editing features with Tiptap, leveraging ProseMirror's proven stability.
+    - generic [ref=f20e693]:
+      - heading [level=2] [ref=f20e697]:
+        - text: Frequently asked
+        - strong [ref=f20e698]: questions
+      - list [ref=f20e702]:
+        - listitem [ref=f20e703]:
+          - heading [level=4] [ref=f20e705]:
+            - button "Is the Tiptap rich text editor free?" [ref=f20e706] [cursor=pointer]
+          - region "Is the Tiptap rich text editor free?":
+            - paragraph [ref=f20e708]:
+              - text: Yes! Tiptap is a versatile and powerful open-source rich text editor, available under the MIT license, which means you can use it free of charge. This makes it an accessible tool for developers looking to enhance their applications with advanced text editing features. For those who want to dive deeper and leverage the full potential of Tiptap, some of our more advanced extensions require a free Tiptap account. Most features, though, are readily available and can be easily integrated into your project with a simple
+              - strong [ref=f20e709]: npm install
+              - text: . This dual approach ensures that Tiptap remains an inclusive and flexible tool for a wide range of development needs, from basic text editing to more complex, collaborative functionalities.
+        - listitem [ref=f20e710]:
+          - heading [level=4] [ref=f20e712]:
+            - button "How do plain text, rich text, and WYSIWYG editors differ?" [ref=f20e713] [cursor=pointer]
+          - region "How do plain text, rich text, and WYSIWYG editors differ?":
+            - paragraph [ref=f20e715]: Plain text editors are the simplest form, allowing you to write and edit text without formatting – ideal for coding or simple note-taking. Rich text editors, on the other hand, offer more functionality, enabling formatting options like bold, italics, and lists, much like what you'd find in word processing software. WYSIWYG (What You See Is What You Get) editors take this a step further. They allow you to work with text, images, and other elements in a format that closely resembles the final output. This means you can see the styling and layout changes as you make them, providing a more intuitive and visually oriented editing experience. Each type serves different purposes, catering to various needs from basic text entry to complex content creation.
+        - listitem [ref=f20e716]:
+          - heading [level=4] [ref=f20e718]:
+            - button "How to use and implement the rich text editor of Tiptap?" [ref=f20e719] [cursor=pointer]
+          - region "How to use and implement the rich text editor of Tiptap?":
+            - paragraph [ref=f20e721]: To use and implement Tiptap's rich text editor, you need to integrate it into your application. This process starts with installing Tiptap via npm. Once installed, you can easily incorporate the rich text editor into your web application by following the documentation provided on the Tiptap website. The documentation guides you through various aspects of implementation, from basic setup to customizing the editor to suit your specific needs.
+        - listitem [ref=f20e722]:
+          - heading [level=4] [ref=f20e724]:
+            - button "Can I see the source code of the Tiptap rich text editor?" [ref=f20e725] [cursor=pointer]
+          - region "Can I see the source code of the Tiptap rich text editor?":
+            - paragraph [ref=f20e727]: Yes, the source code for Tiptap's rich text editor is openly available, as it is an open-source project. You can view, study, and even contribute to the source code by visiting the Tiptap repository on GitHub
+    - generic [ref=f20e730]:
+      - generic [ref=f20e731]:
+        - heading "Release notes" [level=2] [ref=f20e732]
+        - link "All" [ref=f20e734] [cursor=pointer]:
+          - /url: /blog/release-notes
+      - list [ref=f20e741]:
+        - listitem [ref=f20e742]:
+          - link "Jul 15, 2026 AI Toolkit, now in beta – plus 100 free licenses" [ref=f20e743] [cursor=pointer]:
+            - /url: /blog/release-notes/ai-toolkit-now-in-beta
+            - generic [ref=f20e745]:
+              - generic [ref=f20e746]: Jul 15, 2026
+              - heading "AI Toolkit, now in beta – plus 100 free licenses" [level=3] [ref=f20e747]
+        - listitem [ref=f20e749]:
+          - link "May 8, 2026 Hocuspocus 4 stable release" [ref=f20e750] [cursor=pointer]:
+            - /url: /blog/release-notes/hocuspocus-4-stable-release
+            - generic [ref=f20e752]:
+              - generic [ref=f20e753]: May 8, 2026
+              - heading "Hocuspocus 4 stable release" [level=3] [ref=f20e754]
+        - listitem [ref=f20e756]:
+          - link "Mar 10, 2026 Recap Q1 2026" [ref=f20e757] [cursor=pointer]:
+            - /url: /blog/release-notes/recap-q1-2026
+            - generic [ref=f20e759]:
+              - generic [ref=f20e760]: Mar 10, 2026
+              - heading "Recap Q1 2026" [level=3] [ref=f20e761]
+  - contentinfo [ref=f20e763]:
+    - generic [ref=f20e764]:
+      - heading [level=2] [ref=f20e766]:
+        - text: Ready to get
+        - strong [ref=f20e767]: started?
+      - link "Try Tiptap Platform" [ref=f20e769] [cursor=pointer]:
+        - /url: https://cloud.tiptap.dev/register
+    - generic [ref=f20e774]:
+      - generic [ref=f20e775]:
+        - list [ref=f20e776]:
+          - listitem [ref=f20e777]: Product
+          - listitem [ref=f20e778]:
+            - link "Editor" [ref=f20e779] [cursor=pointer]:
+              - /url: /product/editor
+          - listitem [ref=f20e780]:
+            - link "Collaboration" [ref=f20e781] [cursor=pointer]:
+              - /url: /product/collaboration
+          - listitem [ref=f20e782]:
+            - link "AI Toolkit" [ref=f20e783] [cursor=pointer]:
+              - /url: /product/ai-toolkit
+          - listitem [ref=f20e784]:
+            - link "Conversion" [ref=f20e785] [cursor=pointer]:
+              - /url: /product/conversion
+          - listitem [ref=f20e786]:
+            - link "Documents" [ref=f20e787] [cursor=pointer]:
+              - /url: /product/documents
+          - listitem [ref=f20e788]:
+            - link "Pricing" [ref=f20e789] [cursor=pointer]:
+              - /url: /pricing
+          - listitem [ref=f20e790]:
+            - link "Roadmap" [ref=f20e791] [cursor=pointer]:
+              - /url: /roadmap
+        - list [ref=f20e792]:
+          - listitem [ref=f20e793]: Company
+          - listitem [ref=f20e794]:
+            - link "Enterprise" [ref=f20e795] [cursor=pointer]:
+              - /url: /enterprise
+          - listitem [ref=f20e796]:
+            - link "Blog" [ref=f20e797] [cursor=pointer]:
+              - /url: /blog
+          - listitem [ref=f20e798]:
+            - link "Contact us" [ref=f20e799] [cursor=pointer]:
+              - /url: mailto:humans@tiptap.dev?subject=Mail%20for%20the%20humans%20at%20Tiptap
+        - list [ref=f20e800]:
+          - listitem [ref=f20e801]: Docs
+          - listitem [ref=f20e802]:
+            - link "Platform" [ref=f20e803] [cursor=pointer]:
+              - /url: https://tiptap.dev/docs
+          - listitem [ref=f20e804]:
+            - link "UI Components" [ref=f20e805] [cursor=pointer]:
+              - /url: https://tiptap.dev/docs/ui-components/getting-started/overview
+          - listitem [ref=f20e806]:
+            - link "Extensions" [ref=f20e807] [cursor=pointer]:
+              - /url: https://tiptap.dev/docs/editor/extensions/overview
+          - listitem [ref=f20e808]:
+            - link "Examples" [ref=f20e809] [cursor=pointer]:
+              - /url: https://tiptap.dev/docs/editor/examples/default
+          - listitem [ref=f20e810]:
+            - link "Dev guides" [ref=f20e811] [cursor=pointer]:
+              - /url: https://tiptap.dev/docs/guides
+          - listitem [ref=f20e812]:
+            - link "Hocuspocus" [ref=f20e813] [cursor=pointer]:
+              - /url: https://tiptap.dev/docs/hocuspocus/introduction
+        - list [ref=f20e814]:
+          - listitem [ref=f20e815]: Resources
+          - listitem [ref=f20e816]:
+            - link "Release notes" [ref=f20e817] [cursor=pointer]:
+              - /url: /blog/release-notes
+          - listitem [ref=f20e818]:
+            - link "Tiptap vs other editors" [ref=f20e819] [cursor=pointer]:
+              - /url: /alternatives
+          - listitem [ref=f20e820]:
+            - link "Experiments" [ref=f20e821] [cursor=pointer]:
+              - /url: /experiments
+          - listitem [ref=f20e822]:
+            - link "Pro license" [ref=f20e823] [cursor=pointer]:
+              - /url: /pro-license
+          - listitem [ref=f20e824]:
+            - link "MIT license" [ref=f20e825] [cursor=pointer]:
+              - /url: https://github.com/ueberdosis/tiptap/blob/main/LICENSE.md
+          - listitem [ref=f20e826]:
+            - link "Security" [ref=f20e827] [cursor=pointer]:
+              - /url: /security
+          - listitem [ref=f20e828]:
+            - link "Trust center" [ref=f20e829] [cursor=pointer]:
+              - /url: https://app.drata.com/trust/575777f8-04a9-4fec-ad1d-acbbe8b74891
+        - list [ref=f20e830]:
+          - listitem [ref=f20e831]: Connect
+          - listitem [ref=f20e832]:
+            - link "GitHub" [ref=f20e833] [cursor=pointer]:
+              - /url: https://tiptap.dev/github
+          - listitem [ref=f20e834]:
+            - link "Discord" [ref=f20e835] [cursor=pointer]:
+              - /url: https://tiptap.dev/discord
+          - listitem [ref=f20e836]:
+            - link "X" [ref=f20e837] [cursor=pointer]:
+              - /url: https://twitter.com/tiptap_editor
+          - listitem [ref=f20e838]:
+            - link "LinkedIn" [ref=f20e839] [cursor=pointer]:
+              - /url: https://www.linkedin.com/company/tiptapdev/
+          - listitem [ref=f20e840]:
+            - link "Bluesky" [ref=f20e841] [cursor=pointer]:
+              - /url: https://bsky.app/profile/tiptap.dev
+          - listitem [ref=f20e842]:
+            - link "Youtube" [ref=f20e843] [cursor=pointer]:
+              - /url: https://www.youtube.com/@tiptap-editor
+      - generic [ref=f20e844]:
+        - generic [ref=f20e845]:
+          - generic [ref=f20e847]:
+            - generic [ref=f20e848]: SOC 2 Type II
+            - generic [ref=f20e849]: Enterprise-ready security
+          - generic [ref=f20e851]:
+            - generic [ref=f20e852]: GDPR compliant
+            - generic [ref=f20e853]: EU hosting available
+          - generic [ref=f20e855]:
+            - generic [ref=f20e856]: Y Combinator
+            - generic [ref=f20e857]: Batch S23
+          - generic [ref=f20e859]:
+            - generic [ref=f20e860]: AWS
+            - generic [ref=f20e861]: Qualified Software
+        - generic [ref=f20e862]:
+          - generic [ref=f20e863]: © 2026 Tiptap
+          - generic [ref=f20e864]:
+            - link "System status" [ref=f20e865] [cursor=pointer]:
+              - /url: https://status.tiptap.dev/
+            - link "Privacy policy" [ref=f20e866] [cursor=pointer]:
+              - /url: /privacy-policy
+            - link "Terms" [ref=f20e867] [cursor=pointer]:
+              - /url: /terms-of-service
+            - link "Legal notice" [ref=f20e868] [cursor=pointer]:
+              - /url: /legal-notice
+  - iframe [ref=f20e869]:
+    

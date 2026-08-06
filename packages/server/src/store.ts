@@ -247,6 +247,27 @@ export class Store {
     ).run(input.id, input.workspaceId, input.kind, input.name, input.sponsorId ?? null);
   }
 
+  /**
+   * Everyone who can appear as an author, for rendering a name instead of an id.
+   *
+   * Revoked principals are included on purpose: a comment written by someone
+   * whose access was later revoked still has to say who wrote it, or the
+   * document's history develops holes.
+   */
+  listPrincipals(
+    workspaceId: string,
+  ): { id: string; kind: string; name: string; sponsorId: string | null }[] {
+    const rows = this.prepare(
+      'SELECT id, kind, name, sponsor_id FROM principals WHERE workspace_id = ? ORDER BY name',
+    ).all(workspaceId) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      id: String(row.id),
+      kind: String(row.kind),
+      name: String(row.name),
+      sponsorId: row.sponsor_id === null ? null : String(row.sponsor_id),
+    }));
+  }
+
   getPrincipal(id: string): Record<string, unknown> | undefined {
     return this.prepare('SELECT * FROM principals WHERE id = ?').get(id) as
       | Record<string, unknown>

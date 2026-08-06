@@ -18,9 +18,14 @@ import type {
   CheckpointSummary,
   AttributionSummary,
 } from '@galley/client';
+import type { EditorState } from 'prosemirror-state';
 import { diffToBlockOps } from '@galley/core/diff';
 import { parseDocument } from '@galley/markdown';
 import { Editor, type EditorHandle } from './editor/Editor.js';
+import { INSERT_TABLE, insertDiagram, insertImage } from './editor/commands.js';
+import { DIAGRAM_TEMPLATES } from './editor/diagram.js';
+import { MenuBar } from './chrome/MenuBar.js';
+import { Toolbar } from './chrome/Toolbar.js';
 import { emptyHighlights, type CommentAnchor, type CommentHighlightState } from './editor/plugins.js';
 import type { PendingSuggestion } from './editor/suggestions.js';
 import {
@@ -353,6 +358,8 @@ function Workspace({
             path={current.path}
             people={people}
             onToggleLibrary={() => setLibraryOpen((open) => !open)}
+            onNewDocument={() => void createDocument()}
+            onSignOut={onSignOut}
           />
         ) : (
           <FirstRun onCreate={() => void createDocument()} />
@@ -390,6 +397,8 @@ function DocumentView({
   path,
   people,
   onToggleLibrary,
+  onNewDocument,
+  onSignOut,
 }: {
   client: GalleyClient;
   credentials: Credentials;
@@ -397,6 +406,8 @@ function DocumentView({
   path: string;
   people: Map<string, Person>;
   onToggleLibrary(): void;
+  onNewDocument(): void;
+  onSignOut(): void;
 }): JSX.Element {
   const editor = useRef<EditorHandle>(null);
   const desk = useRef<HTMLDivElement>(null);
@@ -417,6 +428,17 @@ function DocumentView({
   const [peers, setPeers] = useState<PeerPresence[]>([]);
   const [activeBlock, setActiveBlock] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  /**
+   * The editor's state, mirrored here.
+   *
+   * The toolbar and the menus are pure functions of it — which button is
+   * pressed, which command is applicable, what the current paragraph style is
+   * called. Holding it here is what lets them be rendered from it rather than
+   * reaching into the view and guessing when to re-read.
+   */
+  const [editorState, setEditorState] = useState<EditorState | null>(null);
+  /** Which insert picker is open, if any. */
+  const [inserting, setInserting] = useState<'image' | 'diagram' | 'design' | null>(null);
   const [hoveredThread, setHoveredThread] = useState<string | null>(null);
   const [activeThread, setActiveThread] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState<Draft | null>(null);
@@ -767,73 +789,73 @@ function DocumentView({
 
   return (
     <>
+      {/*
+        The chrome, in the shape every word processor has used for thirty
+        years: identity and title on the first line, the menus under them, the
+        toolbar under those. It is a stack rather than a single row because
+        each line answers a different question — where am I, what can this
+        program do, what can I do to this word — and collapsing them into one
+        row is what makes a toolbar feel like a puzzle.
+      */}
       <header className="chrome">
-        <button className="icon-button chrome-menu" onClick={onToggleLibrary} aria-label="Documents">
-          <span aria-hidden="true">☰</span>
-        </button>
-
-        <nav className="breadcrumb" aria-label="Location">
-          {folder && (
-            <>
-              <span className="crumb">{prettyName(folder)}</span>
-              <span className="crumb-sep" aria-hidden="true">
-                ›
-              </span>
-            </>
-          )}
-          <span className="crumb is-current" data-testid="doc-title">
-            {title}
-          </span>
-        </nav>
-
-        <div className="chrome-right">
-          <button
-            className="chrome-button"
-            onClick={() => editor.current?.openInsertMenu()}
-            data-testid="insert"
-          >
-            <span aria-hidden="true">+</span> Insert
+        <div className="chrome-top">
+          <button className="icon-button chrome-menu" onClick={onToggleLibrary} aria-label="Documents">
+            <span aria-hidden="true">☰</span>
           </button>
-          <SaveBadge state={save} />
-          <Presence peers={peers} />
-          <button className="chrome-button" onClick={() => setShareOpen(true)}>
-            Share
-          </button>
-          <div className="menu-anchor" ref={menuAnchor}>
-            <button
-              className="icon-button"
-              aria-label="More"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              onClick={() => setMenuOpen((open) => !open)}
-            >
-              <span aria-hidden="true">⋯</span>
-            </button>
-            {menuOpen && (
-              <div className="menu" role="menu">
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    setHistoryOpen(true);
-                  }}
-                  data-testid="open-history"
-                >
-                  Version history
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    void navigator.clipboard?.writeText(loaded.content);
-                  }}
-                >
-                  Copy as Markdown
-                </button>
-              </div>
+
+          <nav className="breadcrumb" aria-label="Location">
+            {folder && (
+              <>
+                <span className="crumb">{prettyName(folder)}</span>
+                <span className="crumb-sep" aria-hidden="true">
+                  ›
+                </span>
+              </>
             )}
+            <span className="crumb is-current" data-testid="doc-title">
+              {title}
+            </span>
+          </nav>
+
+          <div className="chrome-right">
+            <SaveBadge state={save} />
+            <Presence peers={peers} />
+            <button className="chrome-button chrome-share" onClick={() => setShareOpen(true)}>
+              Share
+            </button>
           </div>
         </div>
+
+        <MenuBar
+          state={editorState}
+          readOnly={false}
+          run={(command) => editor.current?.run(command)}
+          onLink={() => editor.current?.openLink()}
+          onComment={() => editor.current?.openComment()}
+          onImage={() => setInserting('image')}
+          onDiagram={() => setInserting('diagram')}
+          onDesign={() => setInserting('design')}
+          onTable={() => editor.current?.run(INSERT_TABLE)}
+          onShare={() => setShareOpen(true)}
+          onHistory={() => setHistoryOpen(true)}
+          onNewDocument={onNewDocument}
+          onToggleLibrary={onToggleLibrary}
+          onCopyMarkdown={() => void navigator.clipboard?.writeText(editor.current?.markdown() ?? loaded.content)}
+          onDownload={() => downloadMarkdown(loaded.path, editor.current?.markdown() ?? loaded.content)}
+          onSignOut={onSignOut}
+        />
+
+        <Toolbar
+          state={editorState}
+          readOnly={false}
+          run={(command) => editor.current?.run(command)}
+          onLink={() => editor.current?.openLink()}
+          onComment={() => editor.current?.openComment()}
+          onImage={() => setInserting('image')}
+          onDiagram={() => setInserting('diagram')}
+          onDesign={() => setInserting('design')}
+          onTable={() => editor.current?.run(INSERT_TABLE)}
+        />
       </header>
 
       {notice && (
@@ -864,6 +886,7 @@ function DocumentView({
                 setDraft(markdown);
                 setSave('dirty');
               }}
+              onStateChange={setEditorState}
               onSelectBlock={(blockId) => {
                 setActiveBlock(blockId);
                 live.current?.sendCursor(blockId ? { blockId, offset: 0 } : null);
@@ -976,6 +999,32 @@ function DocumentView({
           </aside>
         </div>
       </div>
+
+      {inserting === 'image' && (
+        <ImagePicker
+          onClose={() => {
+            setInserting(null);
+            editor.current?.focus();
+          }}
+          onInsert={(src, alt) => {
+            setInserting(null);
+            editor.current?.run(insertImage(src, alt));
+          }}
+        />
+      )}
+
+      {inserting === 'diagram' && (
+        <DiagramPicker
+          onClose={() => {
+            setInserting(null);
+            editor.current?.focus();
+          }}
+          onInsert={(code) => {
+            setInserting(null);
+            editor.current?.run(insertDiagram(code));
+          }}
+        />
+      )}
 
       {shareOpen && (
         <Share path={loaded.path} onClose={() => setShareOpen(false)} />
@@ -1443,4 +1492,120 @@ function colorFor(name: string): string {
   let hash = 0;
   for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) % 997;
   return PEER_COLORS[hash % PEER_COLORS.length]!;
+}
+
+/**
+ * Save the document as a file.
+ *
+ * The bytes the editor is holding, not the last version the server confirmed:
+ * someone who chooses "Download" a second after typing means the words they can
+ * see, and handing them a stale file would be the kind of small betrayal that
+ * costs a product its credibility permanently.
+ */
+function downloadMarkdown(path: string, content: string): void {
+  const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${path.split('/').pop() || 'document'}.md`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  // Revoked on the next turn of the loop: revoking synchronously races the
+  // browser's own fetch of the blob and produces an empty file on some builds.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/**
+ * Choosing a diagram.
+ *
+ * A gallery of finished diagrams rather than an empty box, because "insert a
+ * flowchart" and "learn a diagram syntax from nothing" are very different asks
+ * and only the first one is what the writer wanted. Every card is a working
+ * diagram with real placeholder labels, so the first edit is renaming a box.
+ */
+function DiagramPicker({
+  onInsert,
+  onClose,
+}: {
+  onInsert(code: string): void;
+  onClose(): void;
+}): JSX.Element {
+  return (
+    <Overlay title="Insert a diagram" onClose={onClose}>
+      <p className="overlay-lead">Pick a shape to start from. You can change everything about it.</p>
+      <div className="diagram-gallery">
+        {DIAGRAM_TEMPLATES.map((template) => (
+          <button
+            key={template.id}
+            type="button"
+            className="diagram-card"
+            data-testid={`diagram-${template.id}`}
+            onClick={() => onInsert(template.code)}
+          >
+            <span className="diagram-card-name">{template.label}</span>
+            <span className="diagram-card-hint">{template.hint}</span>
+          </button>
+        ))}
+      </div>
+    </Overlay>
+  );
+}
+
+/**
+ * Choosing an image.
+ *
+ * By address only, for now. A paste-and-upload path needs somewhere to put the
+ * bytes, and there is no asset route yet — offering a file picker that silently
+ * embedded a multi-megabyte data URI into a document meant to be read by agents
+ * would be worse than not offering one.
+ */
+function ImagePicker({
+  onInsert,
+  onClose,
+}: {
+  onInsert(src: string, alt: string): void;
+  onClose(): void;
+}): JSX.Element {
+  const [src, setSrc] = useState('');
+  const [alt, setAlt] = useState('');
+  return (
+    <Overlay title="Insert an image" onClose={onClose}>
+      <form
+        className="image-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (src.trim()) onInsert(src.trim(), alt.trim());
+        }}
+      >
+        <label>
+          <span>Image address</span>
+          <input
+            autoFocus
+            value={src}
+            placeholder="https://… or ./images/diagram.png"
+            onChange={(event) => setSrc(event.target.value)}
+          />
+        </label>
+        <label>
+          <span>Description</span>
+          <input
+            value={alt}
+            placeholder="What the image shows"
+            onChange={(event) => setAlt(event.target.value)}
+          />
+          {/* Not optional-looking, because it is the only part of an image an
+              agent or a screen reader can read at all. */}
+          <small>Read aloud to anyone who cannot see it, and to every agent.</small>
+        </label>
+        <div className="overlay-actions">
+          <button type="button" className="ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="primary" disabled={!src.trim()}>
+            Insert
+          </button>
+        </div>
+      </form>
+    </Overlay>
+  );
 }

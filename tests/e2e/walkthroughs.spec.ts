@@ -36,12 +36,15 @@ async function openSpec(page: Page): Promise<void> {
   await openWorkspace(page);
   await page.getByTestId('doc-specs/checkout-v2').click();
   await expect(page.getByTestId('doc-title')).toHaveText('Checkout v2');
-  await expect(page.locator('.prose p').first()).toBeVisible();
+  await expect(page.locator('.prose > p[data-block-id]').first()).toBeVisible();
 }
 
 /** Put the caret at the end of a block, the way a person clicking would. */
 async function caretAtEndOf(page: Page, selector: string, index = 0): Promise<void> {
   await page.locator(selector).nth(index).click();
+  // The editor adopts a click into its own state on a later tick. Typing
+  // before that lands puts the text where the caret used to be.
+  await page.waitForTimeout(150);
   await page.evaluate(
     ({ sel, i }) => {
       const el = document.querySelectorAll(sel)[i];
@@ -55,6 +58,18 @@ async function caretAtEndOf(page: Page, selector: string, index = 0): Promise<vo
     },
     { sel: selector, i: index },
   );
+}
+
+/** History is a destination now, not a permanent tab. */
+async function openHistory(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByTestId('open-history').click();
+  await expect(page.getByTestId('history-rail')).toBeVisible();
+}
+
+async function closeOverlay(page: Page): Promise<void> {
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('history-rail')).toHaveCount(0);
 }
 
 async function readAsAgent(path: string): Promise<string> {
@@ -81,14 +96,16 @@ test.describe('the writing surface', () => {
     expect(text).not.toContain('|---');
   });
 
-  test('formats with the toolbar and keeps the change', async ({ page }) => {
+  test('formats from the selection and keeps the change', async ({ page }) => {
     await openSpec(page);
-    await caretAtEndOf(page, '.prose p');
+    await caretAtEndOf(page, '.prose > p[data-block-id]');
     await page.keyboard.type(' Bolded.');
     await page.keyboard.down('Shift');
     for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowLeft');
     await page.keyboard.up('Shift');
-    await page.getByRole('button', { name: 'Bold' }).click();
+    // The bubble appears on the selection; there is no permanent toolbar.
+    await expect(page.getByTestId('format-bubble')).toBeVisible();
+    await page.getByRole('button', { name: 'Bold', exact: true }).click();
 
     await expect(page.locator('.prose strong').filter({ hasText: 'Bolded.' })).toBeVisible();
     await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
@@ -99,8 +116,8 @@ test.describe('the writing surface', () => {
 
   test('turns Markdown shortcuts into structure as you type', async ({ page }) => {
     await openSpec(page);
-    const paragraphs = await page.locator('.prose p').count();
-    await caretAtEndOf(page, '.prose p', paragraphs - 1);
+    const paragraphs = await page.locator('.prose > p[data-block-id]').count();
+    await caretAtEndOf(page, '.prose > p[data-block-id]', paragraphs - 1);
     await page.keyboard.press('Enter');
     await page.keyboard.type('## A section typed with a shortcut');
 
@@ -112,12 +129,85 @@ test.describe('the writing surface', () => {
   });
 });
 
+test.describe('saving', () => {
+  test('block identity survives repeated saves', async ({ page }) => {
+    // The editor holds the annotated form and diffs each change against what
+    // it last sent. If it diffs against the *clean* form instead, every block
+    // looks new, a one-word edit becomes a delete-and-reinsert of the whole
+    // document, and every comment, citation and attribution anchored to those
+    // blocks is lost. This is the invariant the product is built on.
+    //
+    // The live connection is cut first, on purpose. Its change event happens to
+    // re-read the document and repair the diff base, which hides the fault
+    // whenever it arrives before the next keystroke. Saving has to be correct
+    // on its own — a writer whose socket is down still expects their document
+    // to survive being edited twice.
+    await page.routeWebSocket(/\/v1\/sync/, (ws) => ws.close());
+    await openSpec(page);
+
+    const paragraph = page.locator('.prose > p[data-block-id]').nth(1);
+    await paragraph.click();
+    await page.waitForTimeout(150);
+    await page.keyboard.press('ControlOrMeta+Alt+m');
+    await page.getByTestId('comment-input').fill('Anchored before any editing.');
+    await page.getByTestId('comment-submit').click();
+    await expect(page.getByTestId('comment-card').first()).toBeVisible();
+    const anchored = await paragraph.getAttribute('data-block-id');
+
+    const idsBefore = await page.locator('.prose [data-block-id]').evaluateAll((nodes) =>
+      nodes.map((node) => (node as HTMLElement).dataset.blockId),
+    );
+
+    // Two saves, because the first one is what re-seeds the diff base.
+    for (const text of [' First edit.', ' Second edit.']) {
+      await caretAtEndOf(page, '.prose > p[data-block-id]');
+      await page.keyboard.type(text);
+      await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    }
+
+    const idsAfter = await page.locator('.prose [data-block-id]').evaluateAll((nodes) =>
+      nodes.map((node) => (node as HTMLElement).dataset.blockId),
+    );
+    expect(idsAfter, 'the blocks lost their identity across saves').toEqual(idsBefore);
+
+    const asAgent = await readAsAgent('specs/checkout-v2');
+    expect(asAgent).toContain('First edit.');
+    expect(asAgent).toContain('Second edit.');
+    expect(asAgent, 'a later save deleted content it should not have').toContain('## Validation');
+
+    const response = await fetch(`${API}/v1/docs/specs%2Fcheckout-v2/comments`, {
+      headers: { authorization: `Bearer ${tokens().token}` },
+    });
+    const { comments } = (await response.json()) as {
+      comments: { body: string; anchor: { blockId: string }; orphanedAt: string | null }[];
+    };
+    const mine = comments.find((c) => c.body === 'Anchored before any editing.');
+    expect(mine, 'the note vanished across saves').toBeTruthy();
+    expect(mine!.anchor.blockId).toBe(anchored);
+    expect(mine!.orphanedAt, 'the note lost its anchor across saves').toBeNull();
+  });
+
+  test('keeps text typed while a save is in flight', async ({ page }) => {
+    await openSpec(page);
+    await caretAtEndOf(page, '.prose > p[data-block-id]');
+    await page.keyboard.type(' Before the flush.');
+    // Long enough for the debounce to fire and the request to be out.
+    await page.waitForTimeout(700);
+    await page.keyboard.type(' During the flush.');
+
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    const asAgent = await readAsAgent('specs/checkout-v2');
+    expect(asAgent).toContain('Before the flush.');
+    expect(asAgent, 'text typed during a save round-trip was dropped').toContain('During the flush.');
+  });
+});
+
 test.describe('walkthrough A: human writes, agent consumes', () => {
   test('an agent reads exactly the bytes the writer produced, minus the plumbing', async ({
     page,
   }) => {
     await openSpec(page);
-    await caretAtEndOf(page, '.prose p');
+    await caretAtEndOf(page, '.prose > p[data-block-id]');
     await page.keyboard.type(' Written by a person.');
     await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
 
@@ -157,9 +247,10 @@ test.describe('walkthrough B: agent writes, human reviews', () => {
     await openSpec(page);
 
     // Priya comments on the second paragraph.
-    const paragraph = page.locator('.prose p').nth(1);
+    const paragraph = page.locator('.prose > p[data-block-id]').nth(1);
     await paragraph.click();
-    await page.getByTestId('rail-comments').click();
+    await page.waitForTimeout(150);
+    await page.keyboard.press('ControlOrMeta+Alt+m');
     await page.getByTestId('comment-input').fill('Is this still true for JPY?');
     await page.getByTestId('comment-submit').click();
     await expect(page.getByTestId('comment-card')).toHaveCount(2);
@@ -189,10 +280,11 @@ test.describe('walkthrough B: agent writes, human reviews', () => {
     // It appears for review, attributed, and does not touch the document yet.
     await page.reload();
     await page.getByTestId('doc-specs/checkout-v2').click();
-    await page.getByTestId('rail-suggestions').click();
+    // No tab to open: the proposal is rendered in the document, at the
+    // paragraph it would rewrite.
     const card = page.locator(`[data-testid="suggestion-card"]`).filter({ hasText: 'JPY' }).first();
     await expect(card).toBeVisible();
-    await expect(card.locator('.tag')).toHaveText('pending');
+    await expect(card).toContainText('Nothing changes until you accept it.');
     expect(await page.locator('.prose').innerText()).toContain(anchoredText.slice(0, 20));
 
     // Priya accepts it.
@@ -216,7 +308,7 @@ test.describe('walkthrough B: agent writes, human reviews', () => {
 
   test('a stale proposal is shown as stale and cannot be accepted', async ({ page }) => {
     await openSpec(page);
-    const paragraph = page.locator('.prose p').nth(1);
+    const paragraph = page.locator('.prose > p[data-block-id]').nth(1);
     const blockId = await paragraph.getAttribute('data-block-id');
 
     const created = await fetch(`${API}/v1/docs/specs%2Fcheckout-v2/suggestions`, {
@@ -230,14 +322,15 @@ test.describe('walkthrough B: agent writes, human reviews', () => {
     const { suggestion } = (await created.json()) as { suggestion: { id: string } };
 
     // Priya edits the same paragraph herself, out from under the proposal.
-    await caretAtEndOf(page, '.prose p', 1);
+    await caretAtEndOf(page, '.prose > p[data-block-id]', 1);
     await page.keyboard.type(' Edited by a person first.');
     await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
 
-    await page.getByTestId('rail-suggestions').click();
     const card = page.locator('[data-testid="suggestion-card"]').filter({ hasText: 'overtaken' });
-    await expect(card.locator('.tag').first()).toHaveText('stale', { timeout: 15_000 });
-    await expect(card.getByRole('button', { name: 'Accept' })).toBeDisabled();
+    await expect(card).toContainText("so it can't be applied", { timeout: 15_000 });
+    // Absent rather than disabled: a greyed primary button invites a click and
+    // explains nothing.
+    await expect(card.getByRole('button', { name: 'Use this' })).toHaveCount(0);
 
     // And the API refuses too, not just the button.
     const accept = await fetch(
@@ -249,13 +342,14 @@ test.describe('walkthrough B: agent writes, human reviews', () => {
 });
 
 test.describe('review surfaces', () => {
-  test('shows an orphaned anchor in the tray rather than guessing', async ({ page }) => {
-    // An external edit deletes an annotated block. The anchor must land in the
-    // tray with its last-known text, never silently reattach.
+  test('shows a note that lost its place rather than guessing', async ({ page }) => {
+    // An external edit deletes an annotated block. The note must be kept with
+    // its last-known text, never silently reattached to something else.
     await openSpec(page);
-    const paragraph = page.locator('.prose p').nth(2);
+    const paragraph = page.locator('.prose p').filter({ hasText: 'Support may override' }).first();
     await paragraph.click();
-    await page.getByTestId('rail-comments').click();
+    await page.waitForTimeout(150);
+    await page.keyboard.press('ControlOrMeta+Alt+m');
     await page.getByTestId('comment-input').fill('Who approves an override?');
     await page.getByTestId('comment-submit').click();
     await expect(page.getByTestId('comment-card').first()).toBeVisible();
@@ -278,7 +372,6 @@ test.describe('review surfaces', () => {
 
     await page.reload();
     await page.getByTestId('doc-specs/checkout-v2').click();
-    await page.getByTestId('rail-orphans').click();
     await expect(page.getByTestId('orphan-card').first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId('orphan-card').first()).toContainText('override');
   });
@@ -300,12 +393,25 @@ test.describe('review surfaces', () => {
 });
 
 test.describe('accessibility and resilience', () => {
-  test('the toolbar is reachable and labelled', async ({ page }) => {
+  test('formatting is labelled, and absent until there is a selection', async ({ page }) => {
     await openSpec(page);
+    // At rest the writing surface carries no formatting chrome at all.
+    await expect(page.getByRole('toolbar', { name: 'Formatting' })).toHaveCount(0);
+
+    await caretAtEndOf(page, '.prose > p[data-block-id]');
+    await page.keyboard.down('Shift');
+    for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowLeft');
+    await page.keyboard.up('Shift');
+
     const toolbar = page.getByRole('toolbar', { name: 'Formatting' });
     await expect(toolbar).toBeVisible();
-    for (const label of ['Bold', 'Italic', 'Bullet list', 'Quote']) {
-      await expect(page.getByRole('button', { name: label })).toBeVisible();
+    for (const label of ['Bold', 'Italic', 'Link', 'Add a note']) {
+      await expect(toolbar.getByRole('button', { name: label, exact: true })).toBeVisible();
+    }
+    // And the block types are reachable by name rather than by glyph.
+    await toolbar.getByRole('button', { name: /Text|Heading|Quote/ }).first().click();
+    for (const label of ['Heading 1', 'Bulleted list', 'Callout']) {
+      await expect(page.getByRole('menuitem', { name: new RegExp(label) })).toBeVisible();
     }
   });
 
@@ -317,26 +423,63 @@ test.describe('accessibility and resilience', () => {
     page.on('pageerror', (error) => errors.push(error.message));
 
     await openSpec(page);
-    await page.getByTestId('rail-suggestions').click();
-    await page.getByTestId('rail-orphans').click();
-    await page.getByTestId('rail-comments').click();
-    await caretAtEndOf(page, '.prose p');
+    await page.getByRole('button', { name: 'More' }).click();
+    await page.getByTestId('open-history').click();
+    await expect(page.getByTestId('history-rail')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await caretAtEndOf(page, '.prose > p[data-block-id]');
     await page.keyboard.type(' A quiet edit.');
     await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
 
     expect(errors.filter((e) => !e.includes('favicon'))).toEqual([]);
   });
 
-  test('renders usably at a narrow viewport', async ({ page }) => {
+  test('renders usably at every width, with the notes never over the text', async ({ page }) => {
     await openSpec(page);
-    await page.setViewportSize({ width: 720, height: 900 });
-    await expect(page.locator('.prose')).toBeVisible();
-    await expect(page.getByTestId('rail')).toBeVisible();
 
-    const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
-    );
-    expect(overflow, 'the page scrolls horizontally at a narrow viewport').toBeLessThanOrEqual(1);
+    // A spread of real window sizes, from a large desktop display down to a
+    // phone. 1180 and 1280 are the ones that were broken: too narrow for the
+    // margin to fit beside the page, but not narrow enough to have moved the
+    // notes below it.
+    for (const width of [2560, 1920, 1512, 1400, 1280, 1180, 980, 720, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.waitForTimeout(250);
+      await expect(page.locator('.prose')).toBeVisible();
+      await expect(page.getByTestId('rail')).toBeVisible();
+
+      const geometry = await page.evaluate(() => {
+        const desk = document.querySelector('.desk')!;
+        const page_ = document.querySelector('.page')!.getBoundingClientRect();
+        const lane = document.querySelector('.lane')!.getBoundingClientRect();
+        const prose = document.querySelector('.prose')!;
+        return {
+          measureEm:
+            prose.getBoundingClientRect().width /
+            parseFloat(getComputedStyle(prose).fontSize),
+          documentOverflow:
+            document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          deskOverflow: desk.scrollWidth - desk.clientWidth,
+          // The page must contain its own content; a collapsed page box is how
+          // the notes ended up sitting on top of the paragraphs.
+          pageContainsProse:
+            Math.round(document.querySelector('.prose')!.getBoundingClientRect().bottom) <=
+            Math.round(page_.bottom) + 1,
+          overlaps: !(
+            lane.top >= page_.bottom ||
+            lane.bottom <= page_.top ||
+            lane.left >= page_.right ||
+            lane.right <= page_.left
+          ),
+        };
+      });
+
+      expect(geometry.documentOverflow, `the window scrolls sideways at ${width}px`).toBeLessThanOrEqual(1);
+      expect(geometry.deskOverflow, `the document is cut off at ${width}px`).toBeLessThanOrEqual(1);
+      expect(geometry.pageContainsProse, `the page does not contain its text at ${width}px`).toBe(true);
+      expect(geometry.overlaps, `the notes cover the document at ${width}px`).toBe(false);
+      // The page may grow with the window; the line length may not.
+      expect(geometry.measureEm, `the line is too long to read at ${width}px`).toBeLessThanOrEqual(37);
+    }
   });
 });
 
@@ -345,24 +488,25 @@ test.describe('history', () => {
     await openSpec(page);
 
     // Make a change worth remembering, then name it.
-    await caretAtEndOf(page, '.prose p');
+    await caretAtEndOf(page, '.prose > p[data-block-id]');
     await page.keyboard.type(' The good version.');
     await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
 
-    await page.getByTestId('rail-history').click();
+    await openHistory(page);
     await expect(page.getByTestId('revision').first()).toBeVisible();
     await page.getByTestId('checkpoint-input').fill('before the rewrite');
     await page.getByTestId('checkpoint-submit').click();
     await expect(page.getByTestId('history-rail')).toContainText('before the rewrite');
+    await closeOverlay(page);
 
     // Regret it.
-    await caretAtEndOf(page, '.prose p');
+    await caretAtEndOf(page, '.prose > p[data-block-id]');
     await page.keyboard.type(' A regrettable addition.');
     await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
     await expect(page.locator('.prose')).toContainText('A regrettable addition.');
 
     // Bring the named version back.
-    await page.getByTestId('rail-history').click();
+    await openHistory(page);
     const named = page.locator('[data-testid="revision"]').filter({ hasText: 'before the rewrite' });
     await named.first().hover();
     await named.first().getByRole('button', { name: 'Restore' }).click();
@@ -371,19 +515,22 @@ test.describe('history', () => {
     await expect(page.locator('.prose')).not.toContainText('A regrettable addition.');
 
     // The restore is itself in the timeline — nothing was erased.
-    await page.getByTestId('rail-history').click();
+    await openHistory(page);
     await expect(page.getByTestId('history-rail')).toContainText('restored the version');
   });
 
   test('says who wrote the selected block, and whether it was a person', async ({ page }) => {
     await openSpec(page);
-    await page.locator('.prose p').first().click();
-    await caretAtEndOf(page, '.prose p');
+    await page.locator('.prose > p[data-block-id]').first().click();
+    await caretAtEndOf(page, '.prose > p[data-block-id]');
     await page.keyboard.type(' Written by a person.');
     await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
 
-    await page.getByTestId('rail-history').click();
-    await page.locator('.prose p').first().click();
+    // Attribution answers "who wrote this paragraph", so the paragraph is
+    // chosen first and the timeline is opened against it.
+    await page.locator('.prose > p[data-block-id]').first().click();
+    await page.waitForTimeout(150);
+    await openHistory(page);
     await expect(page.getByTestId('attribution')).toBeVisible();
     await expect(page.getByTestId('attribution')).toContainText('priya');
   });
@@ -392,9 +539,7 @@ test.describe('history', () => {
     // `idea.md`: users never get commits, branches, merges, conflicts, or the
     // word "rebase". This asserts the promise at the surface where it matters.
     await openSpec(page);
-    for (const rail of ['comments', 'suggestions', 'orphans', 'history']) {
-      await page.getByTestId(`rail-${rail}`).click();
-    }
+    await openHistory(page);
     const text = (await page.locator('body').innerText()).toLowerCase();
     for (const forbidden of ['commit', 'branch', 'rebase', 'merge conflict']) {
       expect(text, `the interface used the word "${forbidden}"`).not.toContain(forbidden);
