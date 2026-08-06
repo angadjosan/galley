@@ -12,7 +12,35 @@
  */
 export { parseDesign, encode, type ParseError, type ParseResult } from './parse.js';
 export { serializeDesign, type SerializeOptions } from './serialize.js';
-export { resolveClass, resolveClasses, VOCABULARY, type Declarations, type Resolution } from './classes.js';
+export {
+  resolveClass,
+  resolveClasses,
+  SHADOW_ROLES,
+  THEME_ROLES,
+  VOCABULARY,
+  type Declarations,
+  type Resolution,
+} from './classes.js';
+export {
+  DEFAULT_THEME,
+  THEME_FENCE,
+  checkContrast,
+  contrastRatio,
+  embedTheme,
+  extractTheme,
+  isThemeDocument,
+  modeNames,
+  modeOf,
+  parseTheme,
+  serializeTheme,
+  themeToCss,
+  toDtcg,
+  type ContrastFinding,
+  type ThemeDocument,
+  type ThemeError,
+  type ThemeMode,
+  type ThemeParseResult,
+} from './theme.js';
 export { lintDesign, outline } from './lint.js';
 export {
   find,

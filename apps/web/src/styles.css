@@ -2483,24 +2483,16 @@ kbd {
  * would mean restyling every design in every document the day Galley changed
  * its own colours.
  */
+/**
+ * A design's own palette lives in the theme document, not here.
+ *
+ * These sixteen colours used to be sixteen hex literals at this spot, which
+ * meant no workspace could have its own brand and — the honest consequence —
+ * every design in Galley was a picture of a product that uses Galley's own
+ * palette. The `--d-*` block is compiled from the theme now and injected at
+ * runtime; see `packages/design/src/theme.ts`.
+ */
 .design-surface {
-  --d-canvas: #ffffff;
-  --d-surface: #f6f7f9;
-  --d-raised: #ffffff;
-  --d-sunken: #eceef2;
-  --d-fg: #14161a;
-  --d-fg-muted: #5b6270;
-  --d-fg-subtle: #8b929e;
-  --d-on-accent: #ffffff;
-  --d-border: #dfe2e8;
-  --d-border-strong: #c3c8d2;
-  --d-accent: #2f6df0;
-  --d-accent-soft: #e5ecfd;
-  --d-danger: #d0392f;
-  --d-danger-soft: #fbeae9;
-  --d-warn: #a8700a;
-  --d-warn-soft: #fdf3e0;
-
   font-family: var(--sans);
   color: var(--d-fg);
   background: var(--d-canvas);
@@ -3002,4 +2994,32 @@ kbd {
   height: auto;
   border-radius: var(--r-xs);
   vertical-align: middle;
+}
+
+/* Light / dark, as a viewer setting. Nothing is authored and nothing is
+   duplicated — every colour already resolves to a token, so the design flips. */
+.design-mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.design-mode-switch button {
+  padding: 4px 10px;
+  border: none;
+  background: var(--card);
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.design-mode-switch button + button {
+  border-left: 1px solid var(--line);
+}
+
+.design-mode-switch button.is-on {
+  background: var(--accent-tint);
+  color: var(--accent-text);
+  font-weight: 560;
 }

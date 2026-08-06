@@ -55,6 +55,15 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
   const [selected, setSelected] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [showSource, setShowSource] = useState(false);
+  /**
+   * Which mode the canvas is drawing in.
+   *
+   * A viewer setting, not a property of the design — "show me this dark" is a
+   * question about the moment, not about the document. Nothing is authored and
+   * nothing is duplicated; every colour already resolves to a token, so the
+   * whole design flips.
+   */
+  const [mode, setMode] = useState('light');
 
   const parsed = useMemo(() => parseDesign(props.source), [props.source]);
   const design = parsed.ok ? parsed.design : null;
@@ -162,6 +171,19 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
       <header className="design-editor-head">
         <h2>{design?.name ?? 'Design'}</h2>
         <div className="design-editor-actions">
+          <div className="design-mode-switch" role="group" aria-label="Mode">
+            {MODES.map((name) => (
+              <button
+                key={name}
+                type="button"
+                className={mode === name ? 'is-on' : ''}
+                aria-pressed={mode === name}
+                onClick={() => setMode(name)}
+              >
+                {name === 'light' ? 'Light' : 'Dark'}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             className={`chrome-button ${showSource ? 'is-on' : ''}`}
@@ -247,6 +269,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
             <DesignView
               design={design}
               options={{
+                mode,
                 interactive: true,
                 selectedId: selected,
                 hoveredId: hovered,
@@ -306,6 +329,9 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
 }
 
 const KIND_GLYPH: Record<string, string> = { box: '▢', text: 'T', image: '🖼' };
+
+/** The modes every theme has. Adding a third axis is refused — see the theme. */
+const MODES = ['light', 'dark'] as const;
 
 /**
  * The property panel.

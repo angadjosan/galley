@@ -103,12 +103,32 @@ const RADIUS: Record<string, string> = {
   full: '999px',
 };
 
+/**
+ * Shadows, as tokens rather than as literals.
+ *
+ * They used to be literal `rgb(16 18 22 / 8%)` values, which is invisible on a
+ * dark canvas — a defect that was dormant only because there was no dark mode.
+ * A shadow is the absence of light and a dark surface has less of it to lose,
+ * so the value has to come from the theme like every other colour does.
+ */
 const SHADOW: Record<string, string> = {
   none: 'none',
-  sm: '0 1px 2px rgb(16 18 22 / 8%)',
-  md: '0 2px 6px rgb(16 18 22 / 10%), 0 1px 2px rgb(16 18 22 / 6%)',
-  lg: '0 10px 30px -8px rgb(16 18 22 / 22%)',
+  sm: 'var(--d-shadow-sm)',
+  md: 'var(--d-shadow-md)',
+  lg: 'var(--d-shadow-lg)',
 };
+
+/**
+ * The colour roles a theme must supply, in declaration order.
+ *
+ * Derived from `COLOR` rather than written out again: the palette and the theme
+ * cannot disagree about which roles exist, because there is only one list.
+ * `transparent` is excluded — it is a keyword, not a colour anyone themes.
+ */
+export const THEME_ROLES: readonly string[] = Object.keys(COLOR).filter((role) => role !== 'transparent');
+
+/** The shadow roles a theme must supply. `none` is a keyword, not a token. */
+export const SHADOW_ROLES: readonly string[] = Object.keys(SHADOW).filter((role) => role !== 'none');
 
 const WEIGHT: Record<string, string> = {
   normal: '400',

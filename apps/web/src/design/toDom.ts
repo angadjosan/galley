@@ -13,12 +13,13 @@ import { resolveClasses, type DesignDocument, type Layer } from '@galley/design'
  * It is also why nothing here is interactive. A preview is a picture of a
  * design that lives somewhere else; the place to change it is that document.
  */
-export function designToDom(design: DesignDocument): HTMLElement {
+export function designToDom(design: DesignDocument, mode?: string): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'design-preview-frames';
   for (const frame of design.frames) {
     const surface = document.createElement('div');
     surface.className = 'design-surface';
+    if (mode) surface.dataset.mode = mode;
     surface.style.width = `${frame.width}px`;
     if (frame.height !== 'auto') surface.style.height = `${frame.height}px`;
     apply(surface, frame.classes);

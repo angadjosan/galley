@@ -18,6 +18,14 @@ import { resolveClasses, type DesignDocument, type Frame, type Layer } from '@ga
  */
 
 export interface RenderOptions {
+  /**
+   * Which of the theme's modes to draw in.
+   *
+   * On the surface element rather than on the page, so one design can show
+   * light and dark side by side — which is the whole reason a mode is a frame's
+   * property and not the viewer's.
+   */
+  readonly mode?: string;
   readonly selectedId?: string | null;
   readonly hoveredId?: string | null;
   /** Layers something is anchored to, drawn with a persistent marker. */
@@ -73,6 +81,7 @@ function FrameView({ frame, options }: { frame: Frame; options: RenderOptions })
       <div
         className={outlineClass('design-surface', frame.id, options)}
         data-layer-id={frame.id}
+        data-mode={options.mode}
         style={{
           width: frame.width,
           height: frame.height === 'auto' ? 'auto' : frame.height,
