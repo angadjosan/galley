@@ -28,5 +28,13 @@ export {
   type LintFinding,
   type TextLayer,
 } from './types.js';
+export {
+  applyOps,
+  idAfter,
+  type ApplyResult,
+  type AuthoredOp,
+  type DesignOp,
+  type NewLayer,
+} from './ops.js';
 export { STARTERS, type DesignStarter } from './starters.js';
 export { DESIGN_FENCE, extractDesign, embedDesign, isDesignDocument } from './embed.js';

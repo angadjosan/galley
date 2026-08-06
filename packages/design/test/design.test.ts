@@ -22,9 +22,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   STARTERS,
+  applyOps,
   embedDesign,
   extractDesign,
   find,
+  idAfter,
   lintDesign,
   outline,
   parseDesign,
@@ -520,5 +522,102 @@ describe('what the second round found', () => {
     // `key in attrs` on a bare literal found `constructor` on the prototype and
     // reported it as given twice when it appeared once.
     expect(errorsOf('<design name="x"><frame width="10"><box constructor="y"></box></frame></design>')).toEqual([]);
+  });
+});
+
+/**
+ * The op vocabulary.
+ *
+ * The claim it exists to make: **the canvas and the agent speak the same
+ * language.** A mouse drag and an agent's proposal produce the same kind of
+ * thing, so undo, history, attribution and review are one implementation.
+ *
+ * The property that makes a *batch* usable is the one tested hardest here.
+ * Layer ids are derived from position, so an insert renumbers everything after
+ * it — and a batch that resolved its targets one at a time would have op 2
+ * addressing a layer op 1 moved out from under it.
+ */
+describe('design ops', () => {
+  const source = [
+    '<design name="x">',
+    '  <frame width="100">',
+    '    <box name="First"></box>',
+    '    <box name="Second"></box>',
+    '    <text name="Label">hi</text>',
+    '  </frame>',
+    '</design>',
+  ].join('\n');
+
+  function applied(ops: Parameters<typeof applyOps>[1]): DesignDocument {
+    const result = applyOps(parsed(source), ops);
+    if (!result.ok) throw new Error(`expected the batch to apply: ${result.errors.join('; ')}`);
+    return result.design;
+  }
+
+  function namesIn(design: DesignDocument): string[] {
+    return design.frames[0]!.children.map((child) => child.name);
+  }
+
+  it('resolves every target against the tree as it was, not as it becomes', () => {
+    // `l_0_0` and `l_0_2` are First and Label. Inserting at the front renumbers
+    // both — so a batch that resolved lazily would rename the wrong layers.
+    const design = applied([
+      { op: 'insert', parent: 'l_0', index: 0, layer: { kind: 'box', name: 'Inserted' } },
+      { op: 'set-name', id: 'l_0_0', name: 'First renamed' },
+      { op: 'set-name', id: 'l_0_2', name: 'Label renamed' },
+    ]);
+    expect(namesIn(design)).toEqual(['Inserted', 'First renamed', 'Second', 'Label renamed']);
+  });
+
+  it('applies all of a batch or none of it', () => {
+    // Half a batch is a design nobody asked for and nobody can review.
+    const result = applyOps(parsed(source), [
+      { op: 'set-name', id: 'l_0_0', name: 'Changed' },
+      { op: 'set-name', id: 'l_nope', name: 'Never' },
+    ]);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.join(' ')).toContain('l_nope');
+  });
+
+  it('moves a layer into another and keeps its subtree', () => {
+    const design = applied([{ op: 'move', id: 'l_0_2', parent: 'l_0_0', index: 0 }]);
+    expect(namesIn(design)).toEqual(['First', 'Second']);
+    const first = design.frames[0]!.children[0]!;
+    expect(first.kind === 'box' && first.children.map((c) => c.name)).toEqual(['Label']);
+  });
+
+  it('refuses to move a layer inside itself', () => {
+    // Allowing it detaches the whole subtree from the document and loses it.
+    const result = applyOps(parsed(source), [{ op: 'move', id: 'l_0_0', parent: 'l_0_0', index: 0 }]);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.join(' ')).toContain('inside itself');
+  });
+
+  it('refuses to delete the only frame', () => {
+    const result = applyOps(parsed(source), [{ op: 'delete', id: 'l_0' }]);
+    expect(result.ok).toBe(false);
+  });
+
+  it('produces a design that still serializes and lints', () => {
+    const design = applied([
+      { op: 'insert', parent: 'l_0', index: 1, layer: { kind: 'text', name: 'New', classes: ['text-body', 'text-fg'], content: 'Added' } },
+      { op: 'set-classes', id: 'l_0_0', classes: ['flex', 'flex-col', 'gap-2'] },
+    ]);
+    const markup = serializeDesign(design, { durable: new Set() });
+    expect(markup).toContain('Added');
+    // The output is real: it parses, and it has nothing for the linter to say.
+    expect(lintDesign(parsed(markup))).toEqual([]);
+  });
+
+  it('says where a layer will be before the next read', () => {
+    // Positional ids mean the editor cannot know what it just created without
+    // this, and re-deriving it by hand in the editor would be a second copy of
+    // the rule.
+    const design = parsed(source);
+    expect(idAfter(design, 'l_0', 1)).toBe('l_0_1');
+    expect(idAfter(design, 'l_0_0', 0)).toBe('l_0_0_0');
+    expect(idAfter(design, 'l_missing', 0)).toBeNull();
   });
 });
