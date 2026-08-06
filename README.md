@@ -54,7 +54,9 @@ galley skill                           # write the first-party agent skill
 ```
 
 After `pull`, the documents are just files in a folder — every coding agent
-already knows how to read files. The commands exist for what a filesystem
+already knows how to read files. Images come down with them, into `assets/`,
+and the references are rewritten to point at the local copies; `push` rewrites
+them back, so a pull followed by a push sends nothing. The commands exist for what a filesystem
 cannot express: addressing a block, searching semantically, posting a comment,
 proposing an edit.
 

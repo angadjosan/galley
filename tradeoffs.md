@@ -407,7 +407,10 @@ stories, and a way for an asset to outlive or predate the document that
 references it. `galley pull` is the place this becomes worth revisiting: a
 mirrored workspace whose images are `/v1/assets/…` URLs is not really mirrored.
 
-**Bytes in the database, addressed by content hash.** What shipped. A workspace
+**Bytes in the database, addressed by content hash.** What shipped, and `pull`
+now writes them out to an `assets/` folder and rewrites the references, so a
+mirrored workspace really is one — the sibling-folder option below turns out to
+be reachable *from* this one rather than instead of it. A workspace
 stays one file to back up, the same screenshot pasted into four documents is
 stored once, and — the property that made the decision — the URL is a function
 of the bytes, so a re-save of the paragraph produces *identical* Markdown and

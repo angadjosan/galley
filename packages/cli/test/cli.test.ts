@@ -436,3 +436,91 @@ describe('help and unknown commands', () => {
     expect(result.err).toMatch(/unknown command/);
   });
 });
+
+/**
+ * Mirroring images.
+ *
+ * The promise `pull` makes is that afterwards the documents are *just files in
+ * a folder* — every coding agent already knows how to read those. A document
+ * whose images are still `/v1/assets/…` URLs breaks that promise: it renders
+ * only while the server is up and the reader is authenticated.
+ *
+ * So the reference is rewritten on the way down and back on the way up, and the
+ * property that matters is that the pair is exact. A transform that is not its
+ * own inverse turns the next `push` into a rewrite of every image reference in
+ * the workspace.
+ */
+describe('pull mirrors images', () => {
+  /** A real 1×1 PNG, stored through the API the way a paste does. */
+  async function storeImage(path = 'specs/checkout-v2'): Promise<string> {
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const response = await fetch(`${ctx.baseUrl}/v1/docs/${encodeURIComponent(path)}/assets`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ctx.tokens.priya}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ data: png.toString('base64') }),
+    });
+    const body = (await response.json()) as { url: string };
+    return body.url;
+  }
+
+  /** A document at `specs/…`, two deep, so the reference has to climb. */
+  async function documentWithImage(path: string, body: string): Promise<string> {
+    const url = await storeImage();
+    await ctx.server.workspace.create(path, body.replace('URL', url), {
+      id: 'u-priya',
+      kind: 'human',
+      name: 'priya',
+    });
+    return url;
+  }
+
+  it('writes the bytes to disk and points the document at them', async () => {
+    await documentWithImage('specs/shot', '# Shot\n\nA shot: ![a shot](URL)\n');
+
+    const dir = join(ctx.root, 'mirror');
+    expect((await galley('pull', dir)).code).toBe(0);
+
+    const document = readFileSync(join(dir, 'specs/shot.md'), 'utf8');
+    // Two directories deep, so the reference climbs back to the root.
+    expect(document).toContain('](../assets/');
+    expect(document).not.toContain('/v1/assets/');
+
+    const id = /assets\/([0-9a-f]+)\.png/.exec(document)?.[1];
+    expect(id, 'the rewritten reference has no id').toBeTruthy();
+    // The bytes are really there, and really a PNG.
+    const bytes = readFileSync(join(dir, 'assets', `${id}.png`));
+    expect(bytes.subarray(0, 4)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  });
+
+  it('sends nothing when a pull is followed straight by a push', async () => {
+    // The property the whole transform rests on. If it were not its own
+    // inverse, every image reference in the workspace would be rewritten by the
+    // first push after a pull — a diff nobody made.
+    await documentWithImage('specs/shot2', '# Shot\n\n![a shot](URL)\n');
+
+    const dir = join(ctx.root, 'mirror2');
+    await galley('pull', dir);
+    const pushed = await galley('push', dir);
+    expect(pushed.out).toMatch(/nothing to push|no local changes/i);
+  });
+
+  it('sends a real edit without disturbing the image reference', async () => {
+    const url = await documentWithImage('specs/shot3', '# Shot\n\n![a shot](URL)\n\nA line.\n');
+
+    const dir = join(ctx.root, 'mirror3');
+    await galley('pull', dir);
+    const file = join(dir, 'specs/shot3.md');
+    writeFileSync(file, readFileSync(file, 'utf8').replace('A line.', 'A changed line.'));
+
+    expect((await galley('push', dir, '--write')).code).toBe(0);
+    const after = await ctx.server.workspace.openByPath('specs/shot3');
+    const content = await after.read();
+    expect(content).toContain('A changed line.');
+    // Back in the server's own form, not the checkout's.
+    expect(content).toContain(url);
+    expect(content).not.toContain('../assets/');
+  });
+});

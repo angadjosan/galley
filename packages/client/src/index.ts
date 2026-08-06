@@ -247,6 +247,25 @@ export class GalleyClient {
     );
   }
 
+  /**
+   * Fetch a stored image.
+   *
+   * Bytes rather than JSON, so this does not go through `call` — an image is
+   * the one thing this API returns that is not a document.
+   */
+  async getAsset(id: string): Promise<{ bytes: Uint8Array; mediaType: string }> {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/assets/${encodeURIComponent(id)}`, {
+      headers: { authorization: `Bearer ${this.token}` },
+    });
+    if (!response.ok) {
+      throw new GalleyApiError(response.status, `could not read image ${id}`);
+    }
+    return {
+      bytes: new Uint8Array(await response.arrayBuffer()),
+      mediaType: response.headers.get('content-type') ?? 'application/octet-stream',
+    };
+  }
+
   async resolveComment(ref: string, commentId: string): Promise<Comment> {
     const { comment } = await this.call<{ comment: Comment }>(
       'POST',

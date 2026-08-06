@@ -282,6 +282,64 @@ async function searchCommand(args: ParsedArgs, io: Io): Promise<number> {
 // pull / push / status
 // ---------------------------------------------------------------------------
 
+
+// ---------------------------------------------------------------------------
+// Assets
+// ---------------------------------------------------------------------------
+
+/**
+ * Mirroring images.
+ *
+ * A pulled workspace whose images are still `/v1/assets/…` URLs is not mirrored
+ * — it is a folder of documents that only render while the server is up and the
+ * reader is authenticated. `pull` is supposed to leave behind something every
+ * coding agent already knows how to read, and half of a screenshot is not that.
+ *
+ * So the reference is *rewritten* on the way down and rewritten *back* on the
+ * way up. That is the same shape as the block-id markers: a local form that maps
+ * to a server form, with the transform applied in both directions so `push`
+ * never sees a difference it did not make. The base copy stores the local form,
+ * which is what makes the diff honest.
+ *
+ * The id survives the round trip and the extension does not need to: the id is
+ * the content hash, so `assets/<id>.png` and `/v1/assets/<id>` name the same
+ * bytes and the extension is there for the reader's benefit alone.
+ */
+const ASSET_URL = /\/v1\/assets\/([0-9a-f]{8,64})/g;
+const ASSET_FILE = /(?:\.\.\/)*assets\/([0-9a-f]{8,64})(?:\.[a-z0-9]+)?/g;
+
+const ASSET_EXTENSIONS: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+};
+
+/** Every asset id a document refers to. */
+export function assetIdsIn(content: string): string[] {
+  return [...new Set([...content.matchAll(ASSET_URL)].map((match) => match[1]!))];
+}
+
+/** How many `../` it takes to get from a document back to the workspace root. */
+function upTo(docPath: string): string {
+  const depth = docPath.split('/').length - 1;
+  return '../'.repeat(depth);
+}
+
+/** Server form to local form. */
+export function localizeAssets(content: string, docPath: string, extensions: Map<string, string>): string {
+  const prefix = upTo(docPath);
+  return content.replace(ASSET_URL, (whole, id: string) => {
+    const extension = extensions.get(id);
+    return extension ? `${prefix}assets/${id}.${extension}` : whole;
+  });
+}
+
+/** Local form back to server form, so `push` sends what the server understands. */
+export function serverizeAssets(content: string): string {
+  return content.replace(ASSET_FILE, (_whole, id: string) => `/v1/assets/${id}`);
+}
+
 function fileFor(root: string, path: string): string {
   return join(resolve(root), `${path}.md`);
 }
@@ -337,20 +395,46 @@ async function pullCommand(args: ParsedArgs, io: Io): Promise<number> {
         }
 
         const fetched = await api.read(doc.docId);
+
+        // Images come down with the document that references them, into one
+        // folder at the workspace root — content-addressed, so two documents
+        // referencing the same screenshot share one file.
+        const extensions = new Map<string, string>();
+        for (const id of assetIdsIn(fetched.content)) {
+          try {
+            const asset = await api.getAsset(id);
+            const extension = ASSET_EXTENSIONS[asset.mediaType] ?? 'bin';
+            extensions.set(id, extension);
+            const target = join(root, 'assets', `${id}.${extension}`);
+            if (!existsSync(target)) {
+              mkdirSync(dirname(target), { recursive: true });
+              writeFileSync(target, asset.bytes);
+            }
+          } catch {
+            // An image that cannot be fetched leaves its reference pointing at
+            // the server, which is what it did before. A missing picture is not
+            // a reason to fail a pull of a hundred documents.
+            skipped.push(`${doc.path} (image ${id.slice(0, 8)} could not be fetched)`);
+          }
+        }
+        const content = localizeAssets(fetched.content, doc.path, extensions);
+
         mkdirSync(dirname(file), { recursive: true });
-        writeFileSync(file, fetched.content);
+        writeFileSync(file, content);
         // The base copy: what this working copy was pulled from. `push` diffs
         // against it rather than against the server's current state, so it
         // sends what *this user* changed and nothing else.
         const base = basePath(root, doc.docId);
         mkdirSync(dirname(base), { recursive: true });
-        writeFileSync(base, fetched.content);
+        // The *local* form, so `push` diffs like against like and a pull
+        // followed immediately by a push sends nothing at all.
+        writeFileSync(base, content);
         entries[doc.docId] = {
           docId: doc.docId,
           path: doc.path,
           file: relative(root, file),
           ticket: fetched.ticket,
-          hash: hash(fetched.content),
+          hash: hash(content),
           pulledAt: new Date().toISOString(),
         };
       }),
@@ -389,6 +473,11 @@ async function collectChanges(root: string, api: GalleyClient): Promise<LocalCha
           return; // deleted locally: a delete is a deliberate act, not a diff
         }
         if (hash(local) === entry.hash) return;
+        // Back to the form the server speaks. The local file refers to images
+        // by a relative path; the document of record refers to them by URL, and
+        // sending the local form would rewrite every image reference in the
+        // workspace into something only this checkout can resolve.
+        local = serverizeAssets(local);
         const remote = await api.read(entry.docId);
         let base: string;
         try {
@@ -398,6 +487,7 @@ async function collectChanges(root: string, api: GalleyClient): Promise<LocalCha
           // the two-way behaviour, and say so at the call site.
           base = remote.content;
         }
+        base = serverizeAssets(base);
         changes.push({ entry, local, remote: remote.content, base });
       }),
     ),
