@@ -1291,3 +1291,58 @@ duplicate too.
 Found by the "logs no console errors" e2e test, which failed only in a full run —
 the earlier tests are what accumulated enough revisions for a rehydration to
 happen at all.
+
+---
+
+## D44 — What three adversarial reviews found, and the one lesson worth keeping
+
+Three reviewers were pointed at the chrome, the diagram work and the design
+editor, with instructions to verify every claim before reporting it. They
+returned roughly forty defects. The suite was green throughout.
+
+**The single most useful sentence in the three reports** was about the design
+package: *"the test suite passed all 24 of its assertions against inputs
+written to satisfy it."* Every test had been written by the same person who
+wrote the code, minutes later, from the same mental model — so the tests covered
+the format and did not attack it. Attacking is a different activity, and it is
+the one that found:
+
+- an attribute value containing `>` silently destroying a layer's name,
+- `String.fromCodePoint` throwing out of a React render *and* a ProseMirror
+  `decorations()` call, so one bad entity in a design took down every prose
+  document that linked to it,
+- a nested `<frame>` being hoisted to the top and emitted first, reordering
+  frames on save.
+
+All three returned `ok: true`.
+
+**The worst defect was in code written hours earlier.** Bolding a phrase and
+then highlighting one word of it destroyed the emphasis — not on save, but on
+the save *after* that, because the first one produced `** plain**`, which is not
+left-flanking, and the second escaped the asterisks. The existing test covered
+the case where the HTML mark was outermost, which is the case that works. The
+fix is in D41's neighbourhood: the widest run wins, and the mark table is only a
+tie-break.
+
+**Three things were broken in ways no test could have caught, only a browser:**
+the style dropdown and the toolbar overflow menu were both rendered, invisible
+and unclickable behind `overflow: hidden`; the menu bar listened for
+`pointerdown` and so could not be opened by a keyboard at all, while asserting
+`role="menubar"`, which tells a screen-reader user to press arrow keys that did
+nothing; and the design editor's controlled inputs were reverted by React on
+every keystroke, so exactly one character survived per save round-trip.
+
+**Four shortcuts the menus advertised were bound to something else or to
+nothing.** That is a category of bug a reviewer finds and a test suite does not,
+because nobody writes a test asserting that a label is true. The structural fix
+was to delete the third copy of the list: the keymap is derived from the same
+specs the toolbar and the menus are drawn from, so the glyph a menu prints *is*
+the binding.
+
+**What to do with this.** Two habits, both cheap:
+
+1. **After writing tests for a format, attack it.** Not more of the same tests —
+   deliberately hostile input, written by someone who did not write the parser.
+2. **Anything with a popup, a keyboard contract or a controlled input has to be
+   driven in a browser before it is believed.** Six of the worst findings were
+   invisible to `tsc`, to 600 unit tests, and to a screenshot.
