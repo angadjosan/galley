@@ -1,0 +1,149 @@
+- generic [ref=f55e3]:
+  - complementary [ref=f55e4]:
+    - generic [ref=f55e5]: Galley
+    - textbox "Search" [ref=f55e13]:
+      - /placeholder: Search everything
+    - navigation [ref=f55e14]:
+      - generic [ref=f55e15]:
+        - generic [ref=f55e16]: Design
+        - button "Galley" [ref=f55e17] [cursor=pointer]
+        - button "Form" [ref=f55e19] [cursor=pointer]
+      - generic [ref=f55e21]:
+        - generic [ref=f55e22]: Policies
+        - button "Refund policy" [ref=f55e23] [cursor=pointer]
+      - generic [ref=f55e25]:
+        - generic [ref=f55e26]: Runbooks
+        - button "Deploy runbook" [ref=f55e27] [cursor=pointer]
+      - generic [ref=f55e29]:
+        - generic [ref=f55e30]: Specs
+        - button "Checkout v2" [active] [ref=f55e31] [cursor=pointer]
+    - generic [ref=f55e33]:
+      - button "New document" [ref=f55e34] [cursor=pointer]: + New document
+      - button "Sign out" [ref=f55e35] [cursor=pointer]
+  - generic [ref=f55e36]:
+    - banner [ref=f55e584]:
+      - generic [ref=f55e585]:
+        - button "Documents" [ref=f55e586] [cursor=pointer]:
+          - generic [ref=f55e587]: ☰
+        - navigation "Location" [ref=f55e588]:
+          - generic [ref=f55e589]: Specs
+          - generic [ref=f55e590]: ›
+          - generic [ref=f55e591]: Checkout v2
+        - generic [ref=f55e592]:
+          - generic "Saved" [ref=f55e593]
+          - generic "priya" [ref=f55e595]: P
+          - button "Share" [ref=f55e596] [cursor=pointer]
+      - menubar "Main" [ref=f55e597]:
+        - menuitem "File" [ref=f55e599] [cursor=pointer]
+        - menuitem "Edit" [ref=f55e601] [cursor=pointer]
+        - menuitem "Insert" [ref=f55e603] [cursor=pointer]
+        - menuitem "Format" [ref=f55e605] [cursor=pointer]
+      - toolbar "Formatting" [ref=f55e607]:
+        - generic [ref=f55e608]:
+          - button "Undo" [disabled] [ref=f55e609]
+          - button "Redo" [disabled] [ref=f55e613]
+        - generic [ref=f55e619]:
+          - 'button "Paragraph style: Title" [expanded] [ref=f55e620] [cursor=pointer]':
+            - generic [ref=f55e621]: Title
+          - menu [ref=f55e764]:
+            - menuitemradio "Normal text ⌘⌥0" [ref=f55e765] [cursor=pointer]:
+              - generic [ref=f55e766]: Normal text
+              - generic [ref=f55e767]: ⌘⌥0
+            - menuitemradio "Title ⌘⌥1" [checked] [ref=f55e768] [cursor=pointer]:
+              - generic [ref=f55e772]: Title
+              - generic [ref=f55e773]: ⌘⌥1
+            - menuitemradio "Heading 1 ⌘⌥2" [ref=f55e774] [cursor=pointer]:
+              - generic [ref=f55e775]: Heading 1
+              - generic [ref=f55e776]: ⌘⌥2
+            - menuitemradio "Heading 2 ⌘⌥3" [ref=f55e777] [cursor=pointer]:
+              - generic [ref=f55e778]: Heading 2
+              - generic [ref=f55e779]: ⌘⌥3
+            - menuitemradio "Heading 3 ⌘⌥4" [ref=f55e780] [cursor=pointer]:
+              - generic [ref=f55e781]: Heading 3
+              - generic [ref=f55e782]: ⌘⌥4
+        - generic [ref=f55e624]:
+          - button "Bold" [ref=f55e626] [cursor=pointer]:
+            - generic [ref=f55e627]: B
+          - button "Italic" [ref=f55e628] [cursor=pointer]:
+            - generic [ref=f55e629]: I
+          - button "Underline" [ref=f55e630] [cursor=pointer]:
+            - generic [ref=f55e631]: U
+          - button "Strikethrough" [ref=f55e632] [cursor=pointer]:
+            - generic [ref=f55e633]: S
+          - button "Highlight" [ref=f55e634] [cursor=pointer]
+          - button "Code" [ref=f55e638] [cursor=pointer]
+        - generic [ref=f55e642]:
+          - button "Insert link" [ref=f55e644] [cursor=pointer]
+          - button "Add comment" [ref=f55e648] [cursor=pointer]
+          - button "Insert image" [ref=f55e651] [cursor=pointer]
+          - button "Insert diagram" [ref=f55e656] [cursor=pointer]
+          - button "Insert design" [ref=f55e662] [cursor=pointer]
+          - button "Insert table" [ref=f55e667] [cursor=pointer]
+        - generic [ref=f55e671]:
+          - button "Checklist" [disabled] [ref=f55e673]
+          - button "Bulleted list" [disabled] [ref=f55e679]
+          - button "Numbered list" [disabled] [ref=f55e685]:
+            - img [ref=f55e686]:
+              - generic [ref=f55e688]: "1"
+              - generic [ref=f55e689]: "2"
+              - generic [ref=f55e690]: "3"
+          - button "Decrease indent" [disabled] [ref=f55e691]
+          - button "Increase indent" [disabled] [ref=f55e695]
+        - button "Clear formatting" [disabled] [ref=f55e701]
+    - generic [ref=f55e706]:
+      - main [ref=f55e707]:
+        - generic "Document" [ref=f55e710]:
+          - heading "Checkout v2" [level=1] [ref=f55e711]
+          - paragraph [ref=f55e712]: The currency field is optional for a charge request, and defaults to the account's settlement currency when it is left out.
+          - paragraph [ref=f55e713]: The amount field is required and is expressed in the minor units of the charge currency — cents for USD, yen for JPY.
+          - complementary [ref=f55e714]:
+            - generic [ref=f55e717]:
+              - generic [ref=f55e718]: galley-bot/ci
+              - generic [ref=f55e719]: set up by priya · suggested a change
+            - generic [ref=f55e720]: JPY has no minor unit; the implementation special-cases it.
+            - generic [ref=f55e721]: The amount field is required and is expressed in the minor units of the charge currency — cents for USD, and whole yen for JPY, which has no minor unit.
+            - generic [ref=f55e722]:
+              - generic [ref=f55e723]: Nothing changes until you accept it.
+              - generic [ref=f55e724]:
+                - button "Use this" [ref=f55e725] [cursor=pointer]
+                - button "Dismiss" [ref=f55e726] [cursor=pointer]
+                - button "Edit instead" [ref=f55e727] [cursor=pointer]
+          - heading "Validation" [level=2] [ref=f55e728]
+          - list [ref=f55e729]:
+            - listitem [ref=f55e730]:
+              - paragraph [ref=f55e731]:
+                - text: Reject a request with no
+                - code [ref=f55e732]: amount
+                - text: .
+            - listitem [ref=f55e733]:
+              - paragraph [ref=f55e734]:
+                - text: Reject a negative
+                - code [ref=f55e735]: amount
+                - text: .
+            - listitem [ref=f55e736]:
+              - paragraph [ref=f55e737]: Accept everything else.
+          - complementary [ref=f55e738]:
+            - generic [ref=f55e739]: NOTE
+            - paragraph [ref=f55e741]: Support may override this policy for a customer with a documented exception.
+          - table [ref=f55e742]:
+            - rowgroup [ref=f55e743]:
+              - row [ref=f55e744]:
+                - columnheader "Field" [ref=f55e745]
+                - columnheader "Type" [ref=f55e746]
+                - columnheader "Required" [ref=f55e747]
+              - row [ref=f55e748]:
+                - cell "currency" [ref=f55e749]
+                - cell "string" [ref=f55e750]
+                - cell "no" [ref=f55e751]
+              - row [ref=f55e752]:
+                - cell "amount" [ref=f55e753]
+                - cell "integer" [ref=f55e754]
+                - cell "yes" [ref=f55e755]
+      - complementary [ref=f55e756]:
+        - article [ref=f55e757] [cursor=pointer]:
+          - generic [ref=f55e758]:
+            - generic [ref=f55e759]: S
+            - generic [ref=f55e760]:
+              - generic [ref=f55e761]: sam
+              - generic [ref=f55e762]: 1h ago
+          - paragraph [ref=f55e763]: Is this still true after the settlement change?

@@ -1039,3 +1039,255 @@ and Node's default policy for an unhandled rejection is to terminate the process
 A chaos run that failed four consecutive transactions surfaced it: the document
 survived, the retry worked, and the server died anyway. A sidecar record that
 cannot be written is now a counted loss.
+
+---
+
+## D38 — The chrome is a menu bar and a toolbar, not a `/` menu
+
+**Context:** the product's premise is a writing surface for people who will
+never type `**bold**`. The chrome it had was the opposite bet: a `/` menu, a
+selection bubble, a "+" button, and a comment in `Editor.tsx` arguing that a
+permanent toolbar "was spending permanent attention on rare actions."
+
+That argument was wrong on the facts, and the reversal is worth recording
+because the old reasoning was persuasive.
+
+**The factual error.** The claim was that a toolbar is inert whenever the caret
+is collapsed. It is not. Of the controls a word-processor toolbar carries, only
+link and comment genuinely need a selection; the paragraph style, every list
+button, both indents, undo, redo and clear-formatting all operate on the caret's
+paragraph or on the document, and bold/italic/underline set stored marks for the
+next character typed. The premise was inverted.
+
+**The deeper error.** A toolbar's primary job is not invocation. It is
+*advertisement and status* — it answers "what can this thing do?" and "what am I
+in right now?", and it answers both without being asked. A control that only
+appears on selection cannot do either, because it is absent exactly when someone
+is looking around wondering what the program is.
+
+**The evidence, which is unusually direct.** The designer who shipped Dropbox
+Paper's slash commands published a teardown of them finding two distinct
+failures: an *awareness* problem (people did not know the commands existed) and
+a *usability* problem (people who knew did not know how to use them). The fix
+Dropbox tried — an inline "type / to quick add" hint at the cursor — drew
+complaints that it interrupted writing. That is the trap in one move: **teaching
+a hidden affordance destroys the calm that justified hiding it.** A persistent
+toolbar is the only teaching mechanism that does not intrude on the text,
+because it does not live in the text.
+
+Two cross-checks kept this from being over-claimed. Craft and Coda have nearly
+identical chrome — no persistent bar, a `/` menu, a selection bubble — and sit at
+opposite ends of every approachability comparison, so visible chrome is not
+sufficient on its own; conceptual surface area dominates. Galley's conceptual
+surface is small (it is a document with paragraphs), which means discoverability
+is the whole fight here, and it is a much cheaper one than Notion's.
+
+**Decision:**
+
+- **A menu bar.** Everything the app can do is enumerated in it, in plain
+  English, with its shortcut shown — which is where most people ever learn a
+  shortcut. The toolbar is a shortcut *to* this list, never a superset of it: a
+  control the toolbar has and the menus do not is a control that cannot be found
+  by looking.
+- **A persistent toolbar.** Same order every time. A control that cannot apply
+  is greyed rather than removed, because a row whose buttons come and go is a row
+  you cannot build muscle memory against. The greying is honest — it comes from
+  asking each ProseMirror command, with no dispatcher, whether it *could* run,
+  which is the command's own applicability answer rather than a second guess at
+  it.
+- **Overflow is measured, not media-queried.** The space available to the
+  toolbar depends on whether the document list is open, which no viewport
+  breakpoint can see. A `ResizeObserver` on the bar decides how many groups fit;
+  undo and the style menu never collapse.
+- **One thing still hangs off the selection:** a comment button, in the margin,
+  where it covers nothing. That is what Google Docs does, and the restraint is
+  the point — a popup over the words you just selected covers the thing you are
+  looking at.
+
+**Consequence:** `slash.ts` is deleted, and the placeholder text no longer
+advertises a key. `corePlugins` no longer takes a `slash` plugin. Two e2e tests
+that asserted the *absence* of a toolbar were inverted to assert its presence,
+which is the honest way to record a reversal in a test suite.
+
+---
+
+## D39 — A real page, at real dimensions
+
+**Decision:** the page is 816px wide with 96px margins — US Letter at 96dpi, one
+inch — with square corners, a hairline edge and a 3px contact shadow. It was a
+`clamp(880px, 62vw, 1060px)` fluid column with a 16px radius and a 28px ambient
+blur.
+
+**Why a fixed page rather than a maximum.** A fixed page is a *shared coordinate
+system*. "Halfway down page 3" and "the third line of the second paragraph" mean
+the same thing to two people on different monitors; a fluid column has no such
+vocabulary, and the line-break positions it produces are a property of the
+reader's window rather than of the document. That is also why Google shipped its
+pageless mode as an opt-in subset rather than a replacement — going pageless
+costs page numbers, headers, footers and columns, and they could not offer it as
+a superset.
+
+The existing comment defending the fluid width — "a wider page would only buy a
+longer line, which is the one dimension readability does not want" — is a good
+argument for a *maximum* and no argument at all against a fixed value.
+
+**Why the desk cooled.** It was `#eae7e0`, a warm beige. It is a nicer colour and
+the wrong signal: a tinted desk reads as *a designed surface* and competes with
+the paper rather than holding it. Near-neutral leaves the page as the only object
+on screen with intent. The shadow changed for the same reason — a 28px ambient
+blur is an elevated card, and paper on a desk has an edge and a contact shadow.
+
+**Consequence:** the margin's breakpoint stopped being taste and became
+arithmetic — paper, plus the spread's padding, plus the gap, plus the narrowest a
+note card can be and still hold a sentence. The old threshold let the desk
+scroll sideways at 1280px, which the width test caught.
+
+---
+
+## D40 — A diagram is a fence, and mermaid is guarded three ways
+
+**Decision:** a fenced block whose info string names a diagram language loads as
+a `diagram` node — an atom holding its source — and serializes back to the same
+fence. The allowlist has one entry, `mermaid`, and the rule for adding to it is
+strict: **only a language the rest of the world already draws.** A language that
+GitHub shows as source and Galley shows as a picture would be the WYSIWYG lying
+about the file.
+
+**The three guards, and why all three.** Mermaid's default failure mode is to
+draw its own "Syntax error" graphic straight into the live DOM, outside anything
+it was handed. Inside ProseMirror that is not cosmetic: the view's
+`MutationObserver` sees foreign nodes appear inside the editor and either parses
+them into the document or throws — so a half-typed diagram could corrupt a
+writer's file. Each of these is individually sufficient, and all three are
+present because any one is a config regression away from being absent:
+
+1. `suppressErrorRendering: true`, so failure never touches the page.
+2. `parse(..., { suppressErrors: true })` before `render`, which returns `false`
+   rather than throwing and appends nothing anywhere.
+3. `ignoreMutation` on the NodeView, so nothing under the SVG is read back.
+
+Alongside them: `securityLevel: 'strict'` with a `>= 11.10` floor, because a 2025
+advisory showed strict was bypassable before it and the source arrives from
+agents; a silenced global `parseError` hook, because a writer's typo is not a
+program error; a render generation counter plus an `isConnected` check, so a slow
+render that lost the race cannot paint; a cache keyed on **theme as well as
+source**, because mermaid bakes colours into its SVG; and a dynamic import, so a
+document with no diagram pays nothing.
+
+**A failed diagram shows its own source and a plain-English sentence, never a red
+box.** The document is never wrong — only the picture is unavailable.
+
+**And the bug this work found.** `nodeToFlow` hardcoded a fence's `meta` to
+`null` while the parser and the serializer had both always carried it, so editing
+```` ```ts title="server.ts" ```` silently deleted the tail. That is precisely the
+"silently disappears on save" failure `schema.ts`'s own header warns about, and
+it was live on `main`.
+
+---
+
+## D41 — Underline and highlight are inline HTML, and that is not an extension
+
+CommonMark has no syntax for either. Both round-trip as `<u>…</u>` and
+`<mark>…</mark>` — the inline HTML the spec itself permits, which renders
+correctly in every HTML-producing renderer and degrades to visible text in none.
+
+They exist because **the toolbar is the product's promise.** A writer coming
+from a word processor reaches for underline and for the yellow marker, and a
+toolbar missing both is the tell that this is a Markdown editor wearing a
+costume.
+
+mdast hands these back as three flat siblings — an `html` open tag, the content,
+an `html` close tag — so the pairing is folded into a mark before the ordinary
+inline walk, and `wrapMark` returns a *list* rather than a node. An unbalanced
+tag is left as a raw atom rather than guessed at, and the allowlist is two
+elements long: anything with attributes, or whose meaning depends on where it
+sits, stays raw and is re-emitted verbatim.
+
+The cost — two constructs an agent reads as HTML rather than as Markdown — is in
+`tradeoffs.md`, along with the four controls that are *absent* for the same
+reason and could not be made to pay it.
+
+---
+
+## D42 — A design is a web page with the cascade removed
+
+**Context:** "an agent-native, agent-readable Figma." The whole feature rests on
+one decision — what a design's source of truth is — so that is where the
+thinking went.
+
+**Decision:** a design is a small tree of boxes, text and images, laid out by
+flexbox, in which every node carries its complete style inline as a **closed set
+of utility class names** and every value comes from a named scale. No selectors,
+no cascade, no stylesheet.
+
+**Four properties follow, in the order they matter:**
+
+1. **An edit is local.** Changing one layer changes one line — the precondition
+   for the same splicing guarantee the prose engine makes. This is why
+   unrestricted HTML+CSS lost: with a cascade, the effect of an edit depends on
+   the whole document, and a GUI change to a class silently changes every node
+   matching it.
+2. **A model can write it.** The measured gap between a semantic format and raw
+   coordinates is large and consistent. On VGBench, GPT-4 scored 54.9% authoring
+   SVG against 81.0% on TikZ, the paper's own explanation being that SVG is
+   low-level geometry while the others carry high-level constructs. SVGenius then
+   showed the same models collapsing from ~80% to ~33% as a drawing passes
+   sixteen paths. Sixteen paths is a button group.
+3. **Nothing in the pipeline measures text.** Advance width is a property of the
+   font file and a model cannot know it — so the format never asks. It says "a
+   column with a gap" and the browser does the arithmetic. This is also why flow
+   layout is the only layout: there is no way to store a coordinate, so a mouse
+   cannot produce one.
+4. **It degrades.** The markup is legible in any renderer, which is Principle IV
+   holding for a picture.
+
+**The closure is the feature.** There is no syntax for a literal colour, so the
+characteristic failure of a machine-written design — a blue that is *almost* the
+brand blue — cannot be expressed. An unknown class is an error carrying the fix,
+never a silent drop: a design that ignored what it did not understand would look
+different in the editor and in the export.
+
+**A design is its own document** whose body is a single ```` ```design ```` fence.
+That buys identity, history, comments, suggestions and a CLI read path for free,
+because all of those already work for documents, and it means the storage layer
+learned nothing new. A prose document points at one with an ordinary CommonMark
+link — a link everywhere else, a live embed here. See `tradeoffs.md` for the
+`.design.html` sibling this diverges from.
+
+**The parser is hand-written and strict**, deliberately: it runs in Node for the
+CLI, and a browser parser is *specified* to recover from anything, which is
+exactly wrong for a format whose value is that an unknown construct is reported
+rather than dropped.
+
+**The linter runs in the loop, not as a report.** Every rule catches something a
+model gets wrong and a person does not — invented values, an image with no
+description, alignment classes on a box that is not a row, two layers claiming
+one id. A linter whose output nobody reads is a slower way of shipping the same
+bug.
+
+**The agent surface has three read tiers and the cheapest exists on day one.**
+`galley design outline` is structure without styling. That ordering is the lesson
+from Figma's MCP server, which shipped a sparse representation only after users
+reported a 351,378-token response from the full one. `galley design classes`
+takes no reference at all, because the tool serving its own grammar is the
+defence against a model confidently inventing class names that do not exist.
+
+---
+
+## D43 — A ticket names one mutation, so `History` refuses to record it twice
+
+`History.adopt` replayed every persisted revision unconditionally, so rehydrating
+a document that was already warm recorded each of its revisions a second time.
+The timeline showed one moment twice, two rows claimed the same restore target,
+and `at(ticket)` was free to answer with either.
+
+A ticket is the sequencer's identifier for one mutation, so two revisions sharing
+one has no correct interpretation — the only question is whether the duplicate is
+dropped at the boundary or corrupts everything downstream. `record` now ignores a
+ticket it already holds. The set of seen tickets is deliberately *not* pruned
+when eviction drops a revision: an evicted revision that came back would be a
+duplicate too.
+
+Found by the "logs no console errors" e2e test, which failed only in a full run —
+the earlier tests are what accumulated enough revisions for a rehydration to
+happen at all.

@@ -265,3 +265,121 @@ Taking the best of three rounds keeps it strict — a genuine queue shows up in
 every round — at the cost of up to three times the samples on an unlucky run.
 The alternative of pinning the suite to serial execution was rejected: the
 contention is realistic, and the suite's wall time is a feature.
+
+---
+
+## The four toolbar controls that are not there
+
+A Google Docs–shaped toolbar contains controls CommonMark cannot store. The
+tension is not vague — it is exactly this wide:
+
+| Control | Storable? |
+|---|---|
+| Bold, italic, strikethrough, code, links, lists, headings, tables, quote, rule, images | native Markdown |
+| Underline, highlight | inline HTML the spec permits — **shipped**, see `decisions.md` D41 |
+| **Font family, font size, text colour, paragraph alignment** | nothing |
+
+The four in the last row are the ones a Google Docs user will look for and not
+find, and they are absent for one reason: the button would either lie or destroy
+the setting on the next save. A control that produces something the serializer
+cannot express is a control that silently deletes work, which is the failure
+`schema.ts`'s header exists to prevent.
+
+**The fork not taken, and it is a real one.** These could live in the *sidecar*,
+as per-block presentation keyed by block id — the machinery already exists, every
+node already carries a `blockId`, and the `.md` would stay pristine. Opening the
+file elsewhere would lose presentation and never content, which is a defensible
+line. It is genuinely the strongest available answer, and it is a genuine
+advantage over both competitors: Notion cannot give you clean Markdown, Google
+Docs cannot give you a stable file, and block identity is exactly the mechanism
+that lets Galley have a word-processor toolbar over a clean one.
+
+It is not built because it is a *second* place presentation lives, and every
+consumer — the CLI, `galley pull`, an agent reading the file, another editor —
+would then see a document that is missing something the app shows. "The file is
+the payload" is the product's first claim, and a sidecar that carries layout
+weakens it in a way that only shows up later. Revisit when someone asks for
+centred text twice.
+
+What must *not* happen in the meantime: `<span style="color:#c00">` in the
+Markdown. That is the walled garden Principle IV names, and it is the reason the
+underline and highlight allowlist is two elements long and closed.
+
+---
+
+## Diagrams: an atom holding source, vs. a code block with two view modes
+
+The researched recommendation was to keep a diagram as the existing `code_block`
+node and switch its NodeView between "drawing" and "source" depending on where
+the selection is. The argument for it is strong and mostly correct: no new node
+type, no special-casing in `flowToNode`/`nodeToFlow`, and — the real prize —
+agent suggestions, comments and the `suggestion` mark keep working *inside* a
+diagram's source with no extra code, because the source is still text content in
+the document.
+
+What shipped instead is a separate `diagram` atom holding its source in an
+attribute, edited in a panel.
+
+**Why:** an atom cannot be half-typed into an unparseable state by a stray
+keystroke on the canvas, and the panel can offer what a text surface cannot — a
+gallery of finished diagrams to start from, a live preview, and a plain-English
+sentence when the source does not draw. For the writer this product is for, "here
+are six diagrams, pick one and rename the boxes" is a different proposition from
+"here is a text box, learn a grammar."
+
+**What is actually lost, stated plainly:** a comment cannot be anchored to a line
+*inside* a diagram, and an agent cannot suggest a two-line change to one — it
+proposes the block. Both are real, and both are smaller than they sound: a
+diagram is a single figure, and a note on it is a note on the figure.
+
+**What would flip this:** the first time someone wants to review a diagram's
+source the way they review a paragraph. The dual-mode design is the answer then,
+and the round-trip is identical either way, so the change is confined to the
+editor.
+
+---
+
+## The design format: a `.design.html` sibling vs. a design *document*
+
+The researched recommendation was that a design live in its own
+`checkout-payment.design.html` file next to the prose, referenced by an
+image-inside-a-link so that every CommonMark renderer shows a picture and a click
+reaches the source.
+
+What shipped is a design as its own **Galley document** whose body is a single
+```` ```design ```` fence, referenced by an ordinary link.
+
+**What the sibling buys that this does not:** a rendered `.svg` that GitHub draws
+inline, so a design is visible in a pull request without Galley. That is a real
+loss and the main reason to revisit.
+
+**Why the document won anyway:** the server stores documents — Markdown with
+frontmatter, an id, a history, comments, suggestions, an anchor tray, a CLI read
+path. A second storage type would have had to earn all of that again, and the
+difference a reader sees is nil: a design document is still a file on disk, still
+has its own identity, is still citable from any number of prose documents, and
+still keeps its own timeline. The inline-in-the-prose-document option was rejected
+for the reasons the research gives and they were decisive: every canvas nudge
+would land in the spec's diff and its timeline, and a design with no identity of
+its own cannot be shared between two documents, which is most of what a design
+reference is for.
+
+**The path back** is short if the SVG matters: render the design headlessly, write
+the sibling `.svg`, and change the link to an image-inside-a-link. The format does
+not move.
+
+---
+
+## `w-` and `h-` accept raw pixels, and nothing else does
+
+The design vocabulary is closed — there is no way to write a literal colour, a
+literal spacing, a literal radius. `w-` and `h-` are the exception: `h-44` means
+forty-four pixels.
+
+The consistent alternative was to force sizes onto the spacing scale. It was
+rejected because a control's height and an avatar's width are genuinely
+*dimensions* rather than rhythm, and putting them on a 4px ladder produces `h-11`
+meaning 44px by a coincidence no reader can see. The pressure this creates is
+real and worth naming: it is the one place a model can write a number nobody
+chose, and the first sign of trouble will be designs full of `h-37`. If that
+happens, the fix is a closed size scale rather than reopening the argument.
