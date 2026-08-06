@@ -237,3 +237,162 @@ function mapLayers(design: DesignDocument, fn: (layer: Layer) => Layer): DesignD
   };
   return { ...design, frames: design.frames.map((frame) => ({ ...frame, children: frame.children.map(descend) })) };
 }
+
+/**
+ * The ways the parser used to accept something and quietly change it.
+ *
+ * Every case here was found by adversarial review, and every one returned
+ * `ok: true` with no errors while losing or corrupting content. That is the
+ * single outcome this format exists to make impossible — a design that renders
+ * differently from what its author wrote, with nothing to point at.
+ *
+ * The lesson for the next reader: the original test suite passed all 24 of its
+ * assertions against inputs written to satisfy it. Attacking the format is a
+ * different activity from covering it.
+ */
+describe('nothing is accepted and quietly changed', () => {
+  /** Parse, expecting failure, and return the messages. */
+  function errors(source: string): string[] {
+    const result = parseDesign(source);
+    if (result.ok) throw new Error('expected this to be refused, but it parsed');
+    return result.errors.map((error) => error.message);
+  }
+
+  const wrap = (inner: string): string => `<design name="x">\n<frame width="100">\n${inner}\n</frame>\n</design>`;
+
+  it('refuses an unquoted attribute rather than dropping the styling', () => {
+    expect(errors(wrap('<box class=flex></box>')).join(' ')).toContain('class="flex"');
+  });
+
+  it('refuses an attribute given twice rather than picking one', () => {
+    expect(errors(wrap('<box class="flex" class="p-4"></box>')).join(' ')).toContain('twice');
+  });
+
+  it('refuses something that is not an attribute at all', () => {
+    expect(errors(wrap('<box "flex"></box>')).length).toBeGreaterThan(0);
+  });
+
+  it('reads an attribute containing a closing angle bracket correctly', () => {
+    // This used to end the tag inside the quotes: the name was destroyed and
+    // the leftover became the element's content, with `ok: true`.
+    const design = parsed(wrap('<text name="a&gt;b">hi</text>'));
+    const text = design.frames[0]!.children[0]!;
+    expect(text.name).toBe('a>b');
+    expect(text.kind === 'text' && text.content).toBe('hi');
+  });
+
+  it('does not throw on a code point outside Unicode', () => {
+    // This ran inside a React render and inside a ProseMirror decorations()
+    // call, so one of these took down the canvas *and* every prose document
+    // that linked to the design.
+    expect(() => parseDesign(wrap('<text>&#1114112;</text>'))).not.toThrow();
+    expect(errors(wrap('<text>&#1114112;</text>')).join(' ')).toContain('not a character');
+  });
+
+  it('decodes a hex entity rather than silently leaving it as text', () => {
+    // Unhandled, it survived as literal text and was then escaped into
+    // `&amp;#x27;` on the way out — a round trip that changed the label.
+    const design = parsed(wrap('<text>&#x27;q&#x27;</text>'));
+    const text = design.frames[0]!.children[0]!;
+    expect(text.kind === 'text' && text.content).toBe("'q'");
+  });
+
+  it('refuses a frame inside a frame rather than hoisting it', () => {
+    // Hoisting emitted the inner frame *first*, so frames reordered on save.
+    expect(errors('<design name="x"><frame width="100"><frame width="50"></frame></frame></design>').join(' ')).toContain(
+      'cannot go inside',
+    );
+  });
+
+  it('refuses a design inside a design', () => {
+    expect(errors('<design name="a"><design name="b"></design></design>').join(' ')).toContain('another');
+  });
+
+  it('refuses a layer inside a text rather than dropping both', () => {
+    expect(errors(wrap('<text>hi<box></box></text>')).join(' ')).toContain('holds words');
+  });
+
+  it('refuses a height that is not a number', () => {
+    // It became NaN, was written back as `height="NaN"`, and reached the
+    // renderer as a style nobody could see was wrong.
+    expect(errors('<design name="x"><frame width="100" height="tall"></frame></design>').join(' ')).toContain('height');
+  });
+
+  it('accepts a written-out image close tag without inventing four errors', () => {
+    const result = parseDesign(wrap('<image src="a.png" alt="A picture"></image>'));
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe('a design is only a design when the fence says exactly that', () => {
+  const body = '<design name="x">\n  <frame width="10"></frame>\n</design>';
+
+  it.each([
+    ['a designer fence', 'designer'],
+    ['a designsystem fence', 'designsystem'],
+    ['an info string with a tail', 'design foo'],
+  ])('does not open %s as a design', (_name, info) => {
+    // A prefix match made an ordinary prose document unreachable in the prose
+    // editor, and the next save rewrote its info string to `design`.
+    expect(extractDesign(`# a\n\n\`\`\`${info}\nnot a design\n\`\`\`\n`)).toBeNull();
+  });
+
+  it('opens an exact design fence', () => {
+    expect(extractDesign(`# a\n\n\`\`\`design\n${body}\n\`\`\`\n`)).not.toBeNull();
+  });
+
+  it.each([
+    ['the fence alone', `\`\`\`design\n${body}\n\`\`\`\n`],
+    ['prose either side', `# t\n\n\`\`\`design\n${body}\n\`\`\`\n\nafter\n`],
+    ['another fence first', `\`\`\`js\nx\n\`\`\`\n\n\`\`\`design\n${body}\n\`\`\`\n`],
+    ['a tilde fence', `~~~design\n${body}\n~~~\n`],
+    ['no trailing newline', `\`\`\`design\n${body}\n\`\`\``],
+  ])('puts %s back exactly as it was', (_name, document) => {
+    const found = extractDesign(document);
+    expect(found).not.toBeNull();
+    expect(embedDesign(document, found!.source)).toBe(document);
+  });
+});
+
+/**
+ * Ids have to be a function of position, not of a counter.
+ *
+ * The canvas re-parses on every edit and holds the selected layer's id. A
+ * monotonic counter is stable within one parse and useless across two, so the
+ * selection died on every keystroke — and two parses of the same bytes
+ * disagreed about what a layer was called, which is not a property an
+ * identifier may have.
+ */
+describe('provisional ids', () => {
+  it('gives the same layer the same id every time it is read', () => {
+    const source = STARTERS.find((starter) => starter.id === 'form')!.source;
+    expect([...idsOf(parsed(source))]).toEqual([...idsOf(parsed(source))]);
+  });
+
+  it('gives every layer in a design a different id', () => {
+    for (const starter of STARTERS) {
+      const design = parsed(starter.source);
+      const ids = [...walk(design)].map(({ layer }) => layer.id);
+      expect(new Set(ids).size, starter.label).toBe(ids.length);
+    }
+  });
+
+  it('survives an edit to another layer', () => {
+    const source = STARTERS.find((starter) => starter.id === 'cards')?.source ?? STARTERS[2]!.source;
+    const before = parsed(source);
+    const target = [...walk(before)][3]!.layer.id;
+    const edited = serializeDesign(
+      {
+        ...before,
+        frames: before.frames.map((frame) => ({
+          ...frame,
+          children: frame.children.map((child) =>
+            child.kind === 'text' ? { ...child, content: 'Changed' } : child,
+          ),
+        })),
+      },
+      { durable: new Set() },
+    );
+    expect([...idsOf(parsed(edited))]).toContain(target);
+  });
+});

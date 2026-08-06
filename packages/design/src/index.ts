@@ -29,4 +29,4 @@ export {
   type TextLayer,
 } from './types.js';
 export { STARTERS, type DesignStarter } from './starters.js';
-export { DESIGN_FENCE, extractDesign, embedDesign } from './embed.js';
+export { DESIGN_FENCE, extractDesign, embedDesign, isDesignDocument } from './embed.js';

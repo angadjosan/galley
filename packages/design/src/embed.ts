@@ -34,13 +34,35 @@
  * Galley. Principle IV holds with nothing to degrade, because nothing was
  * extended.
  */
-import { parseDesign } from './parse.js';
+import { parseDesign, type ParseError } from './parse.js';
 import type { DesignDocument } from './types.js';
 
 /** The info string that makes a fenced block a design. */
 export const DESIGN_FENCE = 'design';
 
-const FENCE = /(^|\n)(`{3,}|~{3,})[ \t]*design[^\n]*\n([\s\S]*?)\n?\2[ \t]*(?=\n|$)/;
+/**
+ * The design fence.
+ *
+ * The info string must be **exactly** `design`. It was a prefix match, and the
+ * consequences were not cosmetic: a ```designer or ```designsystem fence made
+ * an ordinary prose document open as a design — unreachable in the prose
+ * editor, drawn as an empty broken canvas — and the next save rewrote the info
+ * string to `design`, destroying the author's language tag.
+ *
+ * **Column zero only**, though CommonMark allows up to three spaces of indent.
+ * An indented fence is indented on every line, so writing a design back into
+ * one would have to re-indent the markup — and the markup is what the diff is
+ * measured in. Matching it and then failing to round-trip it is worse than not
+ * matching it: a design inside a list item is simply not a design, and it says
+ * so by opening as prose.
+ *
+ * What this deliberately does *not* do is track enclosing fences, so a ```design
+ * block quoted inside a ````four-backtick block is still found. Doing that
+ * properly means parsing the document, and `extractDesign` runs against every
+ * document that is opened. The partial mitigation is that the closing delimiter
+ * must match the opening one.
+ */
+const FENCE = /(^|\n)(`{3,}|~{3,})[ \t]*design[ \t]*(?=\n)\n([\s\S]*?)\n?\2[ \t]*(?=\n|$)/;
 
 /**
  * Pull the design out of a document's Markdown.
@@ -48,14 +70,23 @@ const FENCE = /(^|\n)(`{3,}|~{3,})[ \t]*design[^\n]*\n([\s\S]*?)\n?\2[ \t]*(?=\n
  * Returns null for a document that is not a design, which is the common case
  * and must be cheap: every link in every document is checked against this.
  */
-export function extractDesign(markdown: string): { source: string; design: DesignDocument } | null {
+export function extractDesign(
+  markdown: string,
+): { source: string; design: DesignDocument; errors: readonly ParseError[] } | null {
   const match = FENCE.exec(markdown);
   if (!match) return null;
   const source = match[3] ?? '';
   const parsed = parseDesign(source);
   // A design that does not parse is still a design — the canvas shows the
-  // errors rather than pretending the document is prose.
-  return { source, design: parsed.ok ? parsed.design : { name: 'Untitled design', frames: [] } };
+  // errors rather than pretending the document is prose. The errors come back
+  // with it, because swallowing them meant `galley design outline` printed
+  // "Untitled design" and exited 0 for a file it could not read: the tool lied,
+  // and the entire value of a strict parser was unreachable from the CLI.
+  return {
+    source,
+    design: parsed.ok ? parsed.design : { name: 'Untitled design', frames: [] },
+    errors: parsed.ok ? [] : parsed.errors,
+  };
 }
 
 /** Whether a document is a design, without paying to parse it. */

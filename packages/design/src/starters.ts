@@ -21,7 +21,7 @@ export const STARTERS: readonly DesignStarter[] = [
     hint: 'An empty screen',
     source: [
       '<design name="Untitled design">',
-      '  <frame name="Screen" width="390" height="auto" class="flex flex-col gap-4 p-6 bg-canvas">',
+      '  <frame name="Screen" width="390" class="flex flex-col gap-4 p-6 bg-canvas">',
       '    <text class="text-h2 text-fg">Title</text>',
       '    <text class="text-body text-fg-muted">Say what this screen is for.</text>',
       '  </frame>',
@@ -34,7 +34,7 @@ export const STARTERS: readonly DesignStarter[] = [
     hint: 'Fields and a button',
     source: [
       '<design name="Payment">',
-      '  <frame name="Payment / default" width="390" height="auto" class="flex flex-col gap-6 p-6 bg-canvas">',
+      '  <frame name="Payment / default" width="390" class="flex flex-col gap-6 p-6 bg-canvas">',
       '    <text class="text-h2 text-fg">Payment</text>',
       '    <box name="Card field" class="flex flex-col gap-1">',
       '      <text class="text-label text-fg-muted">Card number</text>',
@@ -69,7 +69,7 @@ export const STARTERS: readonly DesignStarter[] = [
     hint: 'A list of items',
     source: [
       '<design name="Cards">',
-      '  <frame name="List" width="520" height="auto" class="flex flex-col gap-3 p-6 bg-canvas">',
+      '  <frame name="List" width="520" class="flex flex-col gap-3 p-6 bg-canvas">',
       '    <text class="text-h2 text-fg">Recent documents</text>',
       '    <box name="Card" class="flex flex-row items-center gap-4 p-4 bg-surface border border-border rounded-lg shadow-sm">',
       '      <box class="w-40 h-40 bg-accent-soft rounded-md shrink-0"></box>',
@@ -101,7 +101,7 @@ export const STARTERS: readonly DesignStarter[] = [
     hint: 'One component, several ways',
     source: [
       '<design name="Button states">',
-      '  <frame name="Button" width="420" height="auto" class="flex flex-col gap-4 p-6 bg-canvas">',
+      '  <frame name="Button" width="420" class="flex flex-col gap-4 p-6 bg-canvas">',
       '    <text class="text-label text-fg-muted">Default</text>',
       '    <box class="flex items-center justify-center h-40 px-5 bg-accent rounded-md">',
       '      <text class="text-body font-semibold text-on-accent">Continue</text>',

@@ -1,3 +1,4 @@
+import { defaultFrameName, defaultLayerName } from './names.js';
 import { encode } from './parse.js';
 import type { DesignDocument, Frame, Layer } from './types.js';
 
@@ -33,24 +34,30 @@ export function serializeDesign(design: DesignDocument, options: SerializeOption
   const lines: string[] = [];
 
   lines.push(`<design name="${attribute(design.name)}">`);
-  for (const frame of design.frames) {
-    lines.push(...serializeFrame(frame, durable));
-  }
+  design.frames.forEach((frame, index) => {
+    lines.push(...serializeFrame(frame, index, durable));
+  });
   lines.push('</design>');
   return `${lines.join('\n')}\n`;
 }
 
-function serializeFrame(frame: Frame, durable: ReadonlySet<string>): string[] {
+function serializeFrame(frame: Frame, index: number, durable: ReadonlySet<string>): string[] {
+  // `name` and `height` are emitted only when they say something, for the same
+  // reason a layer's invented name is not. Writing them unconditionally meant
+  // the *first* save of a hand-written or agent-written design rewrote a line
+  // nobody had touched — the exact failure this serializer exists to avoid, and
+  // invisible in the tests because every starter carries both.
   const attrs = [
     idAttribute(frame.id, durable),
-    `name="${attribute(frame.name)}"`,
+    frame.name === defaultFrameName(index) ? '' : `name="${attribute(frame.name)}"`,
     `width="${frame.width}"`,
-    frame.height === 'auto' ? 'height="auto"' : `height="${frame.height}"`,
+    frame.height === 'auto' ? '' : `height="${frame.height}"`,
     classAttribute(frame.classes),
   ].filter(Boolean);
 
   const open = `  <frame ${attrs.join(' ')}>`;
-  if (frame.children.length === 0) return [open, '  </frame>'];
+  // On one line when empty, matching how an empty `<box>` is written.
+  if (frame.children.length === 0) return [`${open}</frame>`];
   return [open, ...frame.children.flatMap((child) => serializeLayer(child, durable, 2)), '  </frame>'];
 }
 
@@ -84,12 +91,13 @@ function idAttribute(id: string, durable: ReadonlySet<string>): string {
  * A name is emitted only when it says something.
  *
  * The parser gives an unnamed box the name "Box", so writing that back would
- * add an attribute to every line of every design that nobody asked for.
+ * add an attribute to every line of every design that nobody asked for. The
+ * comparison is against exactly what the parser *would* have invented for this
+ * layer, so an author who genuinely names something "Box" keeps that name.
  */
 function nameAttribute(layer: Layer): string {
-  const generic = layer.kind === 'text' ? 'Text' : layer.kind === 'image' ? 'Image' : ['Box', 'Group'];
-  const isGeneric = Array.isArray(generic) ? generic.includes(layer.name) : layer.name === generic;
-  return isGeneric ? '' : `name="${attribute(layer.name)}"`;
+  const invented = defaultLayerName(layer.kind, layer.kind === 'box' ? layer.children.length : 0);
+  return layer.name === invented ? '' : `name="${attribute(layer.name)}"`;
 }
 
 function classAttribute(classes: readonly string[]): string {

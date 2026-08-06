@@ -2936,3 +2936,39 @@ kbd {
   color: var(--text-3);
   font-size: var(--fs-small);
 }
+
+.design-tree-tools {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px 10px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 6px;
+}
+
+.design-tree-tools button {
+  flex: 1;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--card);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+.design-tree-tools button:hover:not(:disabled) {
+  background: var(--accent-tint);
+  border-color: var(--accent-line);
+  color: var(--accent-text);
+}
+
+.design-tree-tools button:disabled {
+  color: var(--text-4);
+  cursor: default;
+}
+
+.design-tree-delete:hover:not(:disabled) {
+  background: var(--danger-tint) !important;
+  border-color: var(--danger) !important;
+  color: var(--danger) !important;
+}

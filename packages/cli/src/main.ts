@@ -231,6 +231,13 @@ async function designCommand(args: ParsedArgs, io: Io): Promise<number> {
     return 1;
   }
 
+  // A design that could not be read is reported before anything else. Printing
+  // an outline of a file the parser rejected is worse than printing nothing.
+  if (found.errors.length > 0 && sub !== 'source') {
+    for (const error of found.errors) io.err(`line ${error.line}: ${error.message}\n`);
+    return 1;
+  }
+
   if (sub === 'source') {
     io.out(found.source.endsWith('\n') ? found.source : `${found.source}\n`);
     return 0;

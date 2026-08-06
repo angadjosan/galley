@@ -872,7 +872,11 @@ function DocumentView({
    * because someone deleted the fence stops opening as one, with nothing to get
    * out of sync.
    */
-  const asDesign = extractDesign(loaded.content);
+  // The *draft*, not the last version the server confirmed. Reading the saved
+  // content meant the canvas's controlled inputs were reverted by React on
+  // every keystroke — exactly one character survived per save round-trip, and
+  // the selection was lost when the save landed. The editor was unusable.
+  const asDesign = extractDesign(draft || loaded.content);
   if (asDesign) {
     return (
       <>
@@ -925,9 +929,14 @@ function DocumentView({
           onChange={(source) => {
             // Spliced back into the document, so the prose around the design —
             // a title above it, notes below — is copied rather than rewritten.
-            setDraft(embedDesign(loaded.content, source));
+            // Spliced into the newest draft, so consecutive edits compose
+            // rather than each one being applied to the last saved version.
+            setDraft(embedDesign(latestDraft.current || loaded.content, source));
             setSave('dirty');
           }}
+          // A design *is* a document, so there is nowhere to go "back" to.
+          // Closing means putting it down and picking another one, which is
+          // what the document list is for.
           onClose={onToggleLibrary}
         />
         {shareOpen && <Share path={loaded.path} onClose={() => setShareOpen(false)} />}

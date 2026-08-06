@@ -58,14 +58,56 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
   const layers = useMemo(() => (design ? [...walk(design)] : []), [design]);
   const current = layers.find((entry) => entry.layer.id === selected)?.layer ?? null;
 
+  const write = useCallback(
+    (next: DesignDocument) => {
+      props.onChange(serializeDesign(next, { durable: props.anchored ?? new Set() }));
+    },
+    [props],
+  );
+
   /** Rewrite one layer and hand the whole design back as markup. */
   const edit = useCallback(
     (id: string, change: (layer: Layer) => Layer) => {
       if (!design || props.readOnly) return;
-      props.onChange(serializeDesign(mapLayers(design, id, change), { durable: props.anchored ?? new Set() }));
+      write(mapLayers(design, id, change));
     },
-    [design, props],
+    [design, props.readOnly, write],
   );
+
+  /**
+   * Add a layer inside the selection, or at the end of the first frame.
+   *
+   * Inside a container when one is selected, and *after* the selection when a
+   * leaf is — which is what "add" means to someone who has just clicked a
+   * label and wants another one next to it. Every new layer arrives with the
+   * classes that make it visible: a box with no `flex` and no padding is an
+   * invisible zero-height rectangle, and an editor whose "add box" appears to
+   * do nothing is worse than one with no button.
+   */
+  const add = useCallback(
+    (kind: 'box' | 'text') => {
+      if (!design || props.readOnly) return;
+      const made: Layer =
+        kind === 'text'
+          ? { id: 'new', kind: 'text', name: 'Text', classes: ['text-body', 'text-fg'], content: 'New text' }
+          : { id: 'new', kind: 'box', name: 'Box', classes: ['flex', 'flex-col', 'gap-2', 'p-4', 'bg-surface', 'rounded-md'], children: [] };
+
+      const next = insertLayer(design, selected, made);
+      write(next);
+      // Select what was just made, so the next thing typed lands on it. The id
+      // is position-derived, so it is knowable before the reparse.
+      setSelected(next.pendingId);
+    },
+    [design, props.readOnly, selected, write],
+  );
+
+  const remove = useCallback(() => {
+    if (!design || props.readOnly || !selected) return;
+    const next = removeLayer(design, selected);
+    if (!next) return;
+    write(next);
+    setSelected(null);
+  }, [design, props.readOnly, selected, write]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -112,6 +154,23 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
 
       <div className="design-editor-body">
         <aside className="design-tree" aria-label="Layers">
+          <div className="design-tree-tools">
+            <button type="button" onClick={() => add('box')} disabled={props.readOnly} title="Add a box">
+              + Box
+            </button>
+            <button type="button" onClick={() => add('text')} disabled={props.readOnly} title="Add some text">
+              + Text
+            </button>
+            <button
+              type="button"
+              onClick={remove}
+              disabled={props.readOnly || !selected}
+              title="Delete the selected layer"
+              className="design-tree-delete"
+            >
+              Delete
+            </button>
+          </div>
           {layers.map(({ layer, depth }) => (
             <button
               key={layer.id}
@@ -454,6 +513,76 @@ function Toggle({ label, on, onChange }: { label: string; on: boolean; onChange(
       <span>{label}</span>
     </label>
   );
+}
+
+/**
+ * Put a new layer in, and say where it landed.
+ *
+ * Inside the selection when it is a container, after it when it is a leaf, and
+ * at the end of the first frame when there is none. The returned `pendingId` is
+ * the position-derived id the parser will give it on the next read — knowable
+ * in advance precisely because the id is a function of position, which is the
+ * property that makes selection survive an edit at all.
+ */
+function insertLayer(
+  design: DesignDocument,
+  selected: string | null,
+  made: Layer,
+): DesignDocument & { pendingId: string } {
+  let pendingId = '';
+
+  const place = (children: readonly Layer[], at: number, path: readonly number[]): Layer[] => {
+    pendingId = `l_${[...path, at].join('_')}`;
+    return [...children.slice(0, at), made, ...children.slice(at)];
+  };
+
+  const descend = (layer: Layer, path: readonly number[]): Layer => {
+    if (layer.kind !== 'box') return layer;
+    if (layer.id === selected) {
+      return { ...layer, children: place(layer.children, layer.children.length, path) };
+    }
+    const children: Layer[] = [];
+    layer.children.forEach((child, index) => {
+      if (child.id === selected && child.kind !== 'box') {
+        children.push(child);
+        pendingId = `l_${[...path, index + 1].join('_')}`;
+        children.push(made);
+        return;
+      }
+      children.push(descend(child, [...path, index]));
+    });
+    return { ...layer, children };
+  };
+
+  const frames = design.frames.map((frame, frameIndex) => {
+    const path = [frameIndex];
+    if (frame.id === selected || (!selected && frameIndex === 0)) {
+      return { ...frame, children: place(frame.children, frame.children.length, path) };
+    }
+    const children: Layer[] = [];
+    frame.children.forEach((child, index) => {
+      if (child.id === selected && child.kind !== 'box') {
+        children.push(child);
+        pendingId = `l_${[...path, index + 1].join('_')}`;
+        children.push(made);
+        return;
+      }
+      children.push(descend(child, [...path, index]));
+    });
+    return { ...frame, children };
+  });
+
+  return { ...design, frames, pendingId };
+}
+
+/** Take a layer out. A frame is not removable — a design needs one. */
+function removeLayer(design: DesignDocument, id: string): DesignDocument | null {
+  if (design.frames.some((frame) => frame.id === id)) return null;
+  const prune = (children: readonly Layer[]): Layer[] =>
+    children
+      .filter((child) => child.id !== id)
+      .map((child) => (child.kind === 'box' ? { ...child, children: prune(child.children) } : child));
+  return { ...design, frames: design.frames.map((frame) => ({ ...frame, children: prune(frame.children) })) };
 }
 
 /**
