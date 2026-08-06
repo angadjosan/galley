@@ -1,5 +1,8 @@
-import { find, type DesignDocument, type Frame, type Layer, type LayerId } from '@galley/design';
+import type { DesignDocument, LayerId } from '@galley/design';
 import { containsPoint, type Rect } from './camera.js';
+import { canHold, childrenOf, parentOf, subtreeIds, type Holder } from './tree.js';
+
+export { parentOf, slotOf } from './tree.js';
 
 /**
  * Where a drag would put a layer.
@@ -75,19 +78,6 @@ export const DIRECTION_WINDOW = 10;
 /** The pointer must travel this far before a press becomes a drag. */
 export const DRAG_ACTIVATE = 4;
 
-type Holder = Frame | Layer;
-
-/** The children of anything that can hold layers. */
-function childrenOf(node: Holder | null): readonly Layer[] {
-  if (!node) return [];
-  if (!('kind' in node)) return node.children;
-  return node.kind === 'box' ? node.children : [];
-}
-
-function canHold(node: Holder | null): boolean {
-  return !!node && (!('kind' in node) || node.kind === 'box');
-}
-
 /**
  * The axis the parent's children run along.
  *
@@ -100,36 +90,6 @@ export function axisOf(node: Holder): 'x' | 'y' {
   if (classes.includes('flex-col')) return 'y';
   if (classes.includes('flex-row') || classes.includes('flex')) return 'x';
   return 'y';
-}
-
-/** Every layer id from `id` down, so a drag cannot land inside itself. */
-function subtreeIds(design: DesignDocument, id: LayerId): Set<LayerId> {
-  const found = new Set<LayerId>();
-  const layer = find(design, id);
-  if (!layer) return found;
-  const descend = (node: Holder): void => {
-    found.add(node.id);
-    for (const child of childrenOf(node)) descend(child);
-  };
-  descend(layer);
-  return found;
-}
-
-/** The parent of a layer, or null for a frame. */
-export function parentOf(design: DesignDocument, id: LayerId): Holder | null {
-  const search = (node: Holder): Holder | null => {
-    for (const child of childrenOf(node)) {
-      if (child.id === id) return node;
-      const deeper = search(child);
-      if (deeper) return deeper;
-    }
-    return null;
-  };
-  for (const frame of design.frames) {
-    const found = search(frame);
-    if (found) return found;
-  }
-  return null;
 }
 
 /**
@@ -244,12 +204,4 @@ export function sameTarget(a: DropTarget | null, b: DropTarget | null): boolean 
 export function moveIndex(from: { parentId: LayerId; index: number }, to: DropTarget): number {
   if (from.parentId !== to.parentId) return to.index;
   return to.index > from.index ? to.index - 1 : to.index;
-}
-
-/** Where a layer currently sits, for `moveIndex` and for cancelling. */
-export function slotOf(design: DesignDocument, id: LayerId): { parentId: LayerId; index: number } | null {
-  const parent = parentOf(design, id);
-  if (!parent) return null;
-  const index = childrenOf(parent).findIndex((child) => child.id === id);
-  return index === -1 ? null : { parentId: parent.id, index };
 }
