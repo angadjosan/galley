@@ -37,6 +37,18 @@ export interface Loaded {
 }
 
 const CALLOUT = /^\[!([A-Za-z]+)\]([+-])?\s*/;
+
+/**
+ * Fence info strings the editor renders as a picture rather than as code.
+ *
+ * Kept deliberately small. Every entry here is a language whose fenced form is
+ * already rendered as a diagram by GitHub and by the common Markdown previewers,
+ * so a Galley document opened anywhere else shows the same picture. Adding one
+ * that is not, would mean the editor showed a drawing where every other reader
+ * showed source — the WYSIWYG lying about the file, which is the one thing this
+ * codebase will not do.
+ */
+export const DIAGRAM_LANGS = new Set(['mermaid']);
 const MARKER = /^<!--\s*\^([A-Za-z0-9_-]{2,64})\s*-->$/;
 
 /**
@@ -150,6 +162,16 @@ function flowToNode(
       );
     }
     case 'code':
+      // A fence whose info string names a diagram language is a picture, not
+      // code. The bytes on disk are identical either way — this is purely which
+      // face the editor puts on them.
+      if (node.lang && DIAGRAM_LANGS.has(node.lang.toLowerCase())) {
+        return schema.nodes.diagram!.create({
+          ...attrs,
+          lang: node.lang.toLowerCase(),
+          code: node.value ?? '',
+        });
+      }
       return schema.nodes.code_block!.create(
         { ...attrs, lang: node.lang ?? null },
         node.value ? [schema.text(node.value)] : [],
@@ -253,7 +275,68 @@ function stripCalloutLabel(node: RootContent, strip: boolean): RootContent {
   };
 }
 
+/**
+ * Inline HTML elements the editor understands as formatting rather than as raw
+ * source, keyed by the mark they become.
+ *
+ * Only elements whose entire meaning *is* a text style. `<u>` and `<mark>` are
+ * the two a word-processor toolbar needs and Markdown does not have; anything
+ * with attributes, or whose meaning depends on where it sits, stays an
+ * `inline_raw` atom and is re-emitted verbatim.
+ */
+const HTML_MARKS: Record<string, string> = { u: 'underline', mark: 'highlight' };
+
+/**
+ * Fold `<u>…</u>` and `<mark>…</mark>` runs into marks before the ordinary walk.
+ *
+ * mdast hands these back as three separate siblings — an `html` open tag, the
+ * content, an `html` close tag — so the pairing has to happen across the array
+ * rather than inside the per-child switch. An opening tag with no matching close
+ * is left alone and falls through to `inline_raw`, because unbalanced HTML in
+ * someone's document is their content, not an invitation to guess.
+ */
+function foldHtmlMarks(
+  children: readonly PhrasingContent[],
+  marks: readonly Mark[],
+): PmNode[] | null {
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    if (child?.type !== 'html') continue;
+    const open = /^<([a-z]+)>$/i.exec(child.value.trim());
+    const markName = open ? HTML_MARKS[open[1]!.toLowerCase()] : undefined;
+    const markType = markName ? schema.marks[markName] : undefined;
+    if (!open || !markType) continue;
+
+    const closing = `</${open[1]!.toLowerCase()}>`;
+    // Nesting of the same element is not something a toolbar can produce, but a
+    // hand-written document may contain it; depth counting keeps the pairing
+    // right if it does.
+    let depth = 1;
+    let close = -1;
+    for (let j = i + 1; j < children.length; j++) {
+      const later = children[j];
+      if (later?.type !== 'html') continue;
+      const tag = later.value.trim().toLowerCase();
+      if (tag === child.value.trim().toLowerCase()) depth++;
+      else if (tag === closing && --depth === 0) {
+        close = j;
+        break;
+      }
+    }
+    if (close === -1) continue;
+
+    return [
+      ...inlineToNodes(children.slice(0, i), marks),
+      ...inlineToNodes(children.slice(i + 1, close), [...marks, markType.create()]),
+      ...inlineToNodes(children.slice(close + 1), marks),
+    ];
+  }
+  return null;
+}
+
 function inlineToNodes(children: readonly PhrasingContent[], marks: readonly Mark[] = []): PmNode[] {
+  const folded = foldHtmlMarks(children, marks);
+  if (folded) return folded;
   const out: PmNode[] = [];
   for (const child of children) {
     switch (child.type) {
@@ -383,6 +466,16 @@ function nodeToFlow(node: PmNode): RootContent {
       };
     case 'code_block':
       return { type: 'code', lang: (node.attrs.lang as string | null) ?? null, meta: null, value: node.textContent };
+    case 'diagram':
+      // Back to the fence it came from. A diagram the writer never opened is
+      // still covered by the unchanged-block rule above and re-emitted byte for
+      // byte; this path only runs for one that was actually edited.
+      return {
+        type: 'code',
+        lang: (node.attrs.lang as string | null) ?? 'mermaid',
+        meta: null,
+        value: String(node.attrs.code ?? ''),
+      };
     case 'horizontal_rule':
       return { type: 'thematicBreak' };
     case 'raw_block':
@@ -483,7 +576,7 @@ function nodeToInline(node: PmNode): PhrasingContent[] {
   return buildInline(pieces, []);
 }
 
-const MARK_ORDER = ['link', 'strong', 'em', 'strike', 'code'];
+const MARK_ORDER = ['link', 'highlight', 'underline', 'strong', 'em', 'strike', 'code'];
 
 /**
  * Rebuild nested Markdown emphasis from ProseMirror's flat per-text marks.
@@ -523,7 +616,7 @@ function buildInline(
 
     let end = index;
     while (end < pieces.length && pieces[end]!.marks.some((mark) => mark.eq(next))) end++;
-    out.push(wrapMark(next, buildInline(pieces.slice(index, end), [...applied, next])));
+    out.push(...wrapMark(next, buildInline(pieces.slice(index, end), [...applied, next])));
     index = end;
   }
   return out;
@@ -534,26 +627,41 @@ function isAnnotation(name: string): boolean {
   return name === 'comment' || name === 'suggestion';
 }
 
-function wrapMark(mark: Mark, children: PhrasingContent[]): PhrasingContent {
+/**
+ * Returns a list, not a node: `<u>` and `<mark>` have no mdast node of their
+ * own and come back as an open tag, the children, and a close tag.
+ */
+function wrapMark(mark: Mark, children: PhrasingContent[]): PhrasingContent[] {
   switch (mark.type.name) {
     case 'strong':
-      return { type: 'strong', children };
+      return [{ type: 'strong', children }];
     case 'em':
-      return { type: 'emphasis', children };
+      return [{ type: 'emphasis', children }];
     case 'strike':
-      return { type: 'delete', children };
+      return [{ type: 'delete', children }];
     case 'code':
-      return { type: 'inlineCode', value: children.map(plainText).join('') };
+      return [{ type: 'inlineCode', value: children.map(plainText).join('') }];
+    case 'underline':
+      return htmlWrap('u', children);
+    case 'highlight':
+      return htmlWrap('mark', children);
     case 'link':
-      return {
-        type: 'link',
-        url: String(mark.attrs.href ?? ''),
-        title: (mark.attrs.title as string | null) ?? null,
-        children,
-      };
+      return [
+        {
+          type: 'link',
+          url: String(mark.attrs.href ?? ''),
+          title: (mark.attrs.title as string | null) ?? null,
+          children,
+        },
+      ];
     default:
-      return { type: 'text', value: children.map(plainText).join('') };
+      return [{ type: 'text', value: children.map(plainText).join('') }];
   }
+}
+
+/** `html` phrasing nodes are emitted verbatim, which is what a tag needs. */
+function htmlWrap(tag: string, children: PhrasingContent[]): PhrasingContent[] {
+  return [{ type: 'html', value: `<${tag}>` }, ...children, { type: 'html', value: `</${tag}>` }];
 }
 
 function nodeToPhrasing(node: PmNode): PhrasingContent {
