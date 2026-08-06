@@ -23,6 +23,7 @@ import {
 } from './plugins.js';
 import { galleyKeymap } from './commands.js';
 import { DiagramView } from './DiagramView.js';
+import { imageUpload, type ImageUploader } from './images.js';
 import { renderDiagram } from './diagram.js';
 import { designPreview, designPreviewKey, noDesigns, type DesignSources } from '../design/preview.js';
 import {
@@ -89,6 +90,12 @@ export interface EditorProps {
   onSelectBlock?(blockId: string | null): void;
   onHoverThread?(threadId: string | null): void;
   onOpenThread?(threadId: string): void;
+  /**
+   * Where a pasted or dropped image goes. Absent means the two gestures are
+   * simply not offered, which is honest for a surface with nowhere to put the
+   * bytes.
+   */
+  imageUploader?: ImageUploader;
   /** The writer selected words and asked to leave a note on them. */
   onRequestComment?(target: {
     blockId: string;
@@ -208,6 +215,14 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
         }),
         suggestionReview(callbacks.current.suggestions, suggestionRef),
         designPreview(callbacks.current.designs ?? noDesigns),
+        ...(callbacks.current.imageUploader
+          ? [
+              imageUpload({
+                upload: (file) => callbacks.current.imageUploader!.upload(file),
+                onError: (message) => callbacks.current.imageUploader!.onError(message),
+              }),
+            ]
+          : []),
       ],
     });
 

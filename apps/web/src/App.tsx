@@ -669,6 +669,28 @@ function DocumentView({
     };
   }, [client, loaded, draft, designSources]);
 
+  /**
+   * Where a pasted image goes.
+   *
+   * The document's own asset route, so permission to write the document is
+   * permission to attach to it, and the URL that lands in the Markdown is
+   * content-addressed — the same screenshot pasted twice produces identical
+   * bytes on disk.
+   */
+  const imageUploader = useMemo(
+    () => ({
+      async upload(file: File): Promise<string> {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const { url } = await client.putAsset(path, bytes);
+        return url;
+      },
+      onError(message: string) {
+        setNotice({ tone: 'bad', text: message });
+      },
+    }),
+    [client, path],
+  );
+
   const designs = useMemo(
     () => ({ byPath: designSources, onOpen: onOpenPath }),
     [designSources, onOpenPath],
@@ -1045,6 +1067,7 @@ function DocumentView({
                 setSave('dirty');
               }}
               onStateChange={setEditorState}
+              imageUploader={imageUploader}
               onSelectBlock={(blockId) => {
                 setActiveBlock(blockId);
                 live.current?.sendCursor(blockId ? { blockId, offset: 0 } : null);

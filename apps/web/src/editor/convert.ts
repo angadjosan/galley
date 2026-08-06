@@ -335,6 +335,14 @@ function foldHtmlMarks(
   return null;
 }
 
+/**
+ * Every node produced here carries `marks`, atoms included.
+ *
+ * An atom created without them silently loses whatever emphasis surrounded it:
+ * `<u>*<span>*</u>` came back as a bare `<span>`, with the underline *and* the
+ * italics gone, because the `inline_raw` holding `<span>` was built with no
+ * marks and the serializer had nothing left to wrap.
+ */
 function inlineToNodes(children: readonly PhrasingContent[], marks: readonly Mark[] = []): PmNode[] {
   const folded = foldHtmlMarks(children, marks);
   if (folded) return folded;
@@ -375,41 +383,50 @@ function inlineToNodes(children: readonly PhrasingContent[], marks: readonly Mar
         break;
       case 'image':
         out.push(
-          schema.nodes.image!.create({ src: child.url, alt: child.alt ?? '', title: child.title ?? null }),
+          schema.nodes.image!.create(
+            { src: child.url, alt: child.alt ?? '', title: child.title ?? null },
+            null,
+            marks as Mark[],
+          ),
         );
         break;
       case 'break':
-        out.push(schema.nodes.hard_break!.create());
+        out.push(schema.nodes.hard_break!.create(null, null, marks as Mark[]));
         break;
       case 'html':
         // As an atom, not as text: text is escaped on the way out, so
         // `<span class="x">` came back as `\<span class="x"\>`.
         if (child.value) {
-          out.push(schema.nodes.inline_raw!.create({ source: child.value, label: child.value }));
+          out.push(
+            schema.nodes.inline_raw!.create({ source: child.value, label: child.value }, null, marks as Mark[]),
+          );
         }
         break;
       case 'linkReference':
         out.push(
-          schema.nodes.inline_raw!.create({
-            source: `[${plainOf(child.children)}][${child.identifier}]`,
-            label: plainOf(child.children),
-          }),
+          schema.nodes.inline_raw!.create(
+            { source: `[${plainOf(child.children)}][${child.identifier}]`, label: plainOf(child.children) },
+            null,
+            marks as Mark[],
+          ),
         );
         break;
       case 'imageReference':
         out.push(
-          schema.nodes.inline_raw!.create({
-            source: `![${child.alt ?? ''}][${child.identifier}]`,
-            label: child.alt ?? child.identifier,
-          }),
+          schema.nodes.inline_raw!.create(
+            { source: `![${child.alt ?? ''}][${child.identifier}]`, label: child.alt ?? child.identifier },
+            null,
+            marks as Mark[],
+          ),
         );
         break;
       case 'footnoteReference':
         out.push(
-          schema.nodes.inline_raw!.create({
-            source: `[^${child.identifier}]`,
-            label: `[${child.identifier}]`,
-          }),
+          schema.nodes.inline_raw!.create(
+            { source: `[^${child.identifier}]`, label: `[${child.identifier}]` },
+            null,
+            marks as Mark[],
+          ),
         );
         break;
       default: {
@@ -656,6 +673,24 @@ function isAnnotation(name: string): boolean {
  * own and come back as an open tag, the children, and a close tag.
  */
 function wrapMark(mark: Mark, children: PhrasingContent[]): PhrasingContent[] {
+  // Whitespace never sits inside the delimiters.
+  //
+  // CommonMark's flanking rules say a closing `**` preceded by a space cannot
+  // close, and an opening `**` followed by one cannot open — so `**a **` is not
+  // emphasis at all, it is four literal asterisks. Emitting it meant the *next*
+  // save read them as literal and escaped them, and the emphasis was gone.
+  //
+  // This arrangement is not exotic: it is what any two marks that *cross* look
+  // like, and crossing is unrepresentable in Markdown, so one of them has to be
+  // split at a boundary that may well fall on a space.
+  const outer = liftEdgeSpace(children);
+  if (outer.lead || outer.trail) {
+    return [
+      ...(outer.lead ? [{ type: 'text' as const, value: outer.lead }] : []),
+      ...wrapMark(mark, outer.inner),
+      ...(outer.trail ? [{ type: 'text' as const, value: outer.trail }] : []),
+    ];
+  }
   switch (mark.type.name) {
     case 'strong':
       return [{ type: 'strong', children }];
@@ -681,6 +716,46 @@ function wrapMark(mark: Mark, children: PhrasingContent[]): PhrasingContent[] {
     default:
       return [{ type: 'text', value: children.map(plainText).join('') }];
   }
+}
+
+/**
+ * Peel leading and trailing whitespace out of a run, to sit outside its
+ * delimiters. Returns empty strings when there is none, so the caller's fast
+ * path is a pair of falsy checks.
+ */
+function liftEdgeSpace(children: PhrasingContent[]): {
+  lead: string;
+  trail: string;
+  inner: PhrasingContent[];
+} {
+  const inner = [...children];
+  let lead = '';
+  let trail = '';
+
+  const first = inner[0];
+  if (first?.type === 'text') {
+    const match = /^\s+/.exec(first.value);
+    if (match) {
+      lead = match[0];
+      const rest = first.value.slice(lead.length);
+      if (rest) inner[0] = { ...first, value: rest };
+      else inner.shift();
+    }
+  }
+  const last = inner[inner.length - 1];
+  if (last?.type === 'text') {
+    const match = /\s+$/.exec(last.value);
+    if (match) {
+      trail = match[0];
+      const rest = last.value.slice(0, last.value.length - trail.length);
+      if (rest) inner[inner.length - 1] = { ...last, value: rest };
+      else inner.pop();
+    }
+  }
+  // A run that is *nothing but* whitespace has no content to emphasise, so the
+  // whole thing becomes text and the mark is dropped rather than emitted empty.
+  if (inner.length === 0) return { lead: lead + trail, trail: '', inner: [] };
+  return { lead, trail, inner };
 }
 
 /** `html` phrasing nodes are emitted verbatim, which is what a tag needs. */

@@ -225,6 +225,28 @@ export class GalleyClient {
     return comment;
   }
 
+  /**
+   * Store an image and get back the URL to put in the document.
+   *
+   * Base64 over JSON rather than multipart, because the client, the CLI and
+   * every test already speak JSON to this server and one transport is worth
+   * more than the third of a byte multipart would save.
+   */
+  async putAsset(ref: string, bytes: Uint8Array): Promise<{ url: string; mediaType: string }> {
+    let binary = '';
+    // Chunked: `String.fromCharCode(...bytes)` on a multi-megabyte image blows
+    // the argument limit and throws a RangeError that reads like a network
+    // failure.
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    return this.call<{ url: string; mediaType: string }>(
+      'POST',
+      `/v1/docs/${encodeURIComponent(ref)}/assets`,
+      { data: btoa(binary) },
+    );
+  }
+
   async resolveComment(ref: string, commentId: string): Promise<Comment> {
     const { comment } = await this.call<{ comment: Comment }>(
       'POST',

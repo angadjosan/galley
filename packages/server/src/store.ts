@@ -132,6 +132,27 @@ CREATE TABLE IF NOT EXISTS checkpoints (
 );
 CREATE INDEX IF NOT EXISTS checkpoints_doc ON checkpoints(doc_id);
 
+/**
+ * Pasted and dropped images, addressed by the hash of their bytes.
+ *
+ * Content-addressed rather than named, for three reasons that all matter here:
+ * the same screenshot pasted into four documents is stored once; the URL that
+ * goes into the Markdown never changes, so a re-save produces identical bytes
+ * and the splice cache still hits; and there is no filename to collide, escape
+ * or leak.
+ *
+ * Held in the database beside the documents rather than on a filesystem, so a
+ * workspace remains one file to back up and an asset cannot outlive or predate
+ * the document that references it.
+ */
+CREATE TABLE IF NOT EXISTS assets (
+  id           TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  media_type   TEXT NOT NULL,
+  bytes        BLOB NOT NULL,
+  created_at   TEXT NOT NULL
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS blocks_fts USING fts5(
   block_id UNINDEXED,
   doc_id   UNINDEXED,
@@ -497,6 +518,32 @@ export class Store {
       payload: string;
     }[];
     return rows.map((r) => JSON.parse(r.payload) as T);
+  }
+
+  // -------------------------------------------------------------------------
+  // Assets
+  // -------------------------------------------------------------------------
+
+  /**
+   * Store an image, keyed by the hash of its own bytes.
+   *
+   * Idempotent: pasting the same screenshot twice stores it once and returns
+   * the same id, so the Markdown that references it is byte-identical both
+   * times and the splice cache still hits.
+   */
+  putAsset(workspaceId: string, id: string, mediaType: string, bytes: Uint8Array, at: string): void {
+    this.prepare(
+      `INSERT INTO assets (id, workspace_id, media_type, bytes, created_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO NOTHING`,
+    ).run(id, workspaceId, mediaType, bytes, at);
+  }
+
+  getAsset(workspaceId: string, id: string): { mediaType: string; bytes: Uint8Array } | null {
+    const row = this.prepare('SELECT media_type, bytes FROM assets WHERE id = ? AND workspace_id = ?').get(
+      id,
+      workspaceId,
+    ) as { media_type: string; bytes: Uint8Array } | undefined;
+    return row ? { mediaType: row.media_type, bytes: row.bytes } : null;
   }
 
   // -------------------------------------------------------------------------

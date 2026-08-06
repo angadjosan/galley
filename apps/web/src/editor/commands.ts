@@ -279,8 +279,14 @@ function insertNode(node: PmNode): Command {
     // always false and this never ran in the case it was written for.
     const last = tr.doc.lastChild;
     if (!last || last.isAtom || last.isLeaf) {
+      const landedAtEnd = tr.selection.to >= tr.doc.content.size - 1;
       tr.insert(tr.doc.content.size, schema.nodes.paragraph!.create());
-      tr.setSelection(TextSelection.near(tr.doc.resolve(tr.doc.content.size - 1)));
+      // Only follow the caret down to it when the insertion *was* at the end.
+      // A document that already ended with an atom gains its trailing
+      // paragraph either way, but yanking the cursor to the bottom of the
+      // document after inserting a table in the middle of it is worse than the
+      // problem this branch exists to solve.
+      if (landedAtEnd) tr.setSelection(TextSelection.near(tr.doc.resolve(tr.doc.content.size - 1)));
     }
     dispatch(tr.scrollIntoView());
     return true;

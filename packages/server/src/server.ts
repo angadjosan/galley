@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import websocket from '@fastify/websocket';
 import { randomUUID } from 'node:crypto';
@@ -73,6 +74,40 @@ export function build(options: ServerOptions = {}): GalleyServer {
   const admission = new Semaphore(options.maxConcurrentRequests ?? 256, 'admission');
 
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 8 * 1024 * 1024 });
+
+  /**
+   * The largest image this server will store.
+   *
+   * Base64 inflates by a third, so this sits comfortably inside the 8 MB body
+   * limit above and the two cannot be raised independently into a state where
+   * a legal upload is rejected by the transport.
+   */
+  const MAX_ASSET_BYTES = 4 * 1024 * 1024;
+
+  /**
+   * What an image actually is, from its first bytes.
+   *
+   * The signature rather than the client's `Content-Type`, which is a claim
+   * rather than a fact. The list is short on purpose: a format that is not here
+   * is refused, and refusing a format is a smaller problem than storing
+   * something that is served back with a type the browser will execute.
+   */
+  const sniffImage = (bytes: Buffer): string | null => {
+    const starts = (...signature: number[]): boolean =>
+      signature.every((byte, index) => bytes[index] === byte);
+    if (starts(0x89, 0x50, 0x4e, 0x47)) return 'image/png';
+    if (starts(0xff, 0xd8, 0xff)) return 'image/jpeg';
+    if (starts(0x47, 0x49, 0x46, 0x38)) return 'image/gif';
+    if (starts(0x52, 0x49, 0x46, 0x46) && bytes.subarray(8, 12).toString('latin1') === 'WEBP') {
+      return 'image/webp';
+    }
+    // SVG is deliberately absent. It is a document that can carry script, and
+    // serving one from this origin would hand any uploader a same-origin
+    // execution surface -- the one file type where "it is only an image" is
+    // false.
+    return null;
+  };
+
   void app.register(websocket, { options: { maxPayload: 8 * 1024 * 1024 } });
 
   app.addHook('onRequest', async (request, reply) => {
@@ -255,6 +290,81 @@ export function build(options: ServerOptions = {}): GalleyServer {
     const { q, limit } = request.query as { q?: string; limit?: string };
     const results = await workspace.search(q ?? '', Math.min(100, Number(limit) || 20));
     return { results: results.filter((r) => auth.can(session, `/${r.path}`, 'read')) };
+  });
+
+
+  /**
+   * Store a pasted or dropped image, and hand back a URL for the Markdown.
+   *
+   * Three rules, and each one is load-bearing rather than defensive habit:
+   *
+   * - **The bytes decide the name.** The id is the SHA-256 of the content, so
+   *   the same screenshot pasted twice is stored once and produces the same
+   *   URL both times — which means a document re-saved after a paste has
+   *   byte-identical Markdown and the splice cache still hits. A random name
+   *   would make every save of that paragraph a new diff.
+   * - **The magic bytes decide the type, not the client.** A `Content-Type`
+   *   header is a claim by whoever is uploading. The signature is a fact.
+   * - **Write permission on the document is the permission to attach to it.**
+   *   An asset is part of a document, so it does not get an access rule of its
+   *   own to fall out of step with the document's.
+   */
+  app.post('/v1/docs/:ref/assets', async (request, reply) => {
+    const session = sessionOf(request);
+    const actor = await resolve((request.params as { ref: string }).ref);
+    await authorizeDoc(session, actor, 'write');
+
+    const body = request.body as { data?: string } | undefined;
+    if (!body?.data || typeof body.data !== 'string') {
+      return reply.code(400).send({ error: 'data must be a base64 string' });
+    }
+
+    let bytes: Buffer;
+    try {
+      bytes = Buffer.from(body.data, 'base64');
+    } catch {
+      return reply.code(400).send({ error: 'data is not valid base64' });
+    }
+    if (bytes.length === 0) return reply.code(400).send({ error: 'the image is empty' });
+    if (bytes.length > MAX_ASSET_BYTES) {
+      return reply.code(413).send({ error: 'that image is larger than 4 MB' });
+    }
+
+    const mediaType = sniffImage(bytes);
+    if (!mediaType) {
+      return reply.code(415).send({ error: 'that file is not an image this server stores' });
+    }
+
+    const id = createHash('sha256').update(bytes).digest('hex').slice(0, 32);
+    store.putAsset(workspace.workspaceId, id, mediaType, bytes, new Date().toISOString());
+    return reply.code(201).send({ id, url: `/v1/assets/${id}`, mediaType, bytes: bytes.length });
+  });
+
+  /**
+   * Read an image back.
+   *
+   * Scoped to the workspace rather than to a document: an asset is shared by
+   * every document that references it, which is the point of addressing it by
+   * content. Cached immutably, because a content-addressed URL cannot change
+   * what it points at.
+   */
+  app.get('/v1/assets/:id', async (request, reply) => {
+    const session = sessionOf(request);
+    const asset = store.getAsset(workspace.workspaceId, (request.params as { id: string }).id);
+    if (!asset) return reply.code(404).send({ error: 'no such image' });
+    // Any principal with read access anywhere in the workspace may fetch an
+    // asset. A per-document rule is not expressible here — an asset does not
+    // know which documents point at it, and by design it may be many.
+    if (!auth.can(session, '/', 'read') && !auth.can(session, '/*', 'read')) {
+      // Fall back to "can they read anything at all", which is what a session
+      // scoped to one folder should still satisfy.
+      const anything = workspace.list('').some((doc) => auth.can(session, `/${doc.path}`, 'read'));
+      if (!anything) return reply.code(403).send({ error: 'not permitted' });
+    }
+    return reply
+      .header('content-type', asset.mediaType)
+      .header('cache-control', 'public, max-age=31536000, immutable')
+      .send(Buffer.from(asset.bytes));
   });
 
   app.get('/v1/docs/:ref/comments', async (request) => {

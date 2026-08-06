@@ -167,6 +167,42 @@ describe('underline and highlight', () => {
     }
   });
 
+  /**
+   * Two more ways a mark could be lost, both found by a second review.
+   *
+   * The first is an *atom* inside a mark. `inlineToNodes` built images, hard
+   * breaks and `inline_raw` atoms without passing the marks in force, so
+   * `<u>*<span>*</u>` came back as a bare `<span>` — the underline and the
+   * italics both gone, with nothing in the document left to serialize.
+   *
+   * The second is two marks that **cross**: bold over "a b", highlight over
+   * "b c". Crossing is unrepresentable in Markdown, so one has to be split, and
+   * the split can land on a space — producing `**a **`, which CommonMark reads
+   * as four literal asterisks because a closing delimiter preceded by
+   * whitespace cannot close. The emphasis then vanished on the *next* save.
+   */
+  it.each([
+    ['an underline around an italic raw span', 'alpha *one two* <u>*<span>*</u> <u>*x*</u>\n'],
+    ['an italic containing a hard break', '*a<br>b*\n'],
+    ['bold and a highlight that cross', '**a <mark>b** c</mark> d\n'],
+    ['a highlight that starts mid-bold and ends after it', '**x <mark>y** z</mark>\n'],
+  ])('keeps %s byte-stable across repeated saves', (_name, source) => {
+    let current = source;
+    for (let generation = 0; generation < 3; generation++) {
+      current = roundTrip(current, ({ doc }) => touch(doc, 0));
+      expect(current, `generation ${generation}`).toBe(source);
+    }
+  });
+
+  it('splits a crossing mark at the word, not inside the delimiters', () => {
+    // The general form. A closing `**` *preceded* by whitespace cannot close,
+    // so the split has to leave the space outside the pair — the round trip
+    // above proves the result is valid Markdown; this names what makes it so.
+    const out = roundTrip('**a <mark>b** c</mark> d\n', ({ doc }) => touch(doc, 0));
+    expect(out).not.toContain('**a **');
+    expect(out).not.toContain('\\*');
+  });
+
   it('leaves an unbalanced tag alone rather than guessing', () => {
     const source = 'An orphan <u> tag.\n';
     const { doc } = markdownToDoc(source);
