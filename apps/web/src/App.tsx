@@ -362,6 +362,23 @@ function Workspace({
             onToggleLibrary={() => setLibraryOpen((open) => !open)}
             onNewDocument={() => void createDocument()}
             onSignOut={onSignOut}
+            onOpenPath={(path) => {
+              const target = documents.find((doc) => doc.path === path);
+              if (target) {
+                setSelected(target.docId);
+                return;
+              }
+              // A path this list has never seen — a design created moments ago,
+              // or one a collaborator added. Refresh and try once more rather
+              // than doing nothing, which reads as a dead button.
+              void refreshList().then(() =>
+                client
+                  .list()
+                  .then((list) => list.find((doc) => doc.path === path))
+                  .then((found) => found && setSelected(found.docId))
+                  .catch(() => undefined),
+              );
+            }}
           />
         ) : (
           <FirstRun onCreate={() => void createDocument()} />
@@ -401,6 +418,7 @@ function DocumentView({
   onToggleLibrary,
   onNewDocument,
   onSignOut,
+  onOpenPath,
 }: {
   client: GalleyClient;
   credentials: Credentials;
@@ -410,6 +428,8 @@ function DocumentView({
   onToggleLibrary(): void;
   onNewDocument(): void;
   onSignOut(): void;
+  /** Open another document by its path — how a design reference is followed. */
+  onOpenPath(path: string): void;
 }): JSX.Element {
   const editor = useRef<EditorHandle>(null);
   const desk = useRef<HTMLDivElement>(null);
@@ -441,6 +461,8 @@ function DocumentView({
   const [editorState, setEditorState] = useState<EditorState | null>(null);
   /** Which insert picker is open, if any. */
   const [inserting, setInserting] = useState<'image' | 'diagram' | 'design' | null>(null);
+  /** The markup of every design this document links to, by path. */
+  const [designSources, setDesignSources] = useState<ReadonlyMap<string, string>>(new Map());
   const [hoveredThread, setHoveredThread] = useState<string | null>(null);
   const [activeThread, setActiveThread] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState<Draft | null>(null);
@@ -599,6 +621,57 @@ function DocumentView({
   const nameOf = useCallback(
     (id: string): string => people.get(id)?.name ?? prettyName(id.replace(/^[ua]-/, '')),
     [people],
+  );
+
+  /**
+   * Fetch every design this document points at, so each reference can draw.
+   *
+   * Keyed on the document's *text* rather than on a parse of it, and scanned
+   * with a regex rather than by walking the editor's tree, because this has to
+   * run before the editor exists and must not depend on it. A design already
+   * fetched is not fetched again — the previews would otherwise reload on every
+   * keystroke, and a design is a whole document.
+   */
+  useEffect(() => {
+    if (!loaded) return;
+    // The *draft*, not the last version the server confirmed. A design
+    // inserted a moment ago has to draw before the save lands, or the writer
+    // sees a link that does nothing for a second and concludes it is broken.
+    const text = draft || loaded.content;
+    const paths = new Set(
+      [...text.matchAll(/\[[^\]]*\]\(([^)\s]+)\s+"design"\)/g)].map((match) => match[1]!),
+    );
+    const missing = [...paths].filter((path) => !designSources.has(path));
+    if (missing.length === 0) return;
+
+    let live = true;
+    void Promise.all(
+      missing.map(async (path) => {
+        try {
+          const doc = await client.read(path);
+          return [path, extractDesign(doc.content)?.source ?? null] as const;
+        } catch {
+          // A reference to a document that is gone, or that this reader cannot
+          // see. The link stays; there is simply nothing to draw under it.
+          return [path, null] as const;
+        }
+      }),
+    ).then((fetched) => {
+      if (!live) return;
+      setDesignSources((current) => {
+        const next = new Map(current);
+        for (const [path, source] of fetched) if (source !== null) next.set(path, source);
+        return next;
+      });
+    });
+    return () => {
+      live = false;
+    };
+  }, [client, loaded, draft, designSources]);
+
+  const designs = useMemo(
+    () => ({ byPath: designSources, onOpen: onOpenPath }),
+    [designSources, onOpenPath],
   );
 
   const inlineSuggestions: PendingSuggestion[] = useMemo(
@@ -955,6 +1028,7 @@ function DocumentView({
               markdown={loaded.content}
               revision={loaded.version}
               highlights={highlights}
+              designs={designs}
               suggestions={inlineSuggestions}
               suggestionHandlers={suggestionHandlers}
               onChange={(markdown) => {

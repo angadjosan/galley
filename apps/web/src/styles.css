@@ -2859,3 +2859,67 @@ kbd {
   font-size: 0.85em;
   opacity: 0.75;
 }
+
+/* A live design reference, drawn under the paragraph that mentions it. */
+
+.design-preview {
+  margin: 1.1em 0 1.4em;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  overflow: hidden;
+  /* The design is somebody else's product, drawn inside a document. Its own
+     type scale is set in px, so it must not inherit the prose measure. */
+  font-family: var(--sans);
+  font-size: var(--fs-ui);
+  line-height: normal;
+  user-select: none;
+}
+
+.design-preview-stage {
+  display: flex;
+  justify-content: center;
+  padding: 20px;
+  overflow-x: auto;
+}
+
+.design-preview-frames {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.design-preview-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--card);
+  font-size: var(--fs-small);
+  color: var(--text-3);
+}
+
+.design-preview-open {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.design-preview-open:hover {
+  background: var(--accent-tint);
+  border-color: var(--accent-line);
+  color: var(--accent-text);
+}
+
+.design-preview-broken {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}

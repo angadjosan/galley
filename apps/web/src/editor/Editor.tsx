@@ -23,6 +23,7 @@ import {
 } from './plugins.js';
 import { DiagramView } from './DiagramView.js';
 import { renderDiagram } from './diagram.js';
+import { designPreview, designPreviewKey, noDesigns, type DesignSources } from '../design/preview.js';
 import {
   suggestionKey,
   suggestionReview,
@@ -68,6 +69,12 @@ export interface EditorProps {
   revision: number;
   readOnly?: boolean;
   highlights: CommentHighlightState;
+  /**
+   * The designs this document links to, so each reference draws underneath the
+   * paragraph that mentions it. Passed in rather than fetched here, so a design
+   * changing does not rebuild the document.
+   */
+  designs?: DesignSources;
   suggestions: readonly PendingSuggestion[];
   suggestionHandlers: SuggestionHandlers;
   onChange?(markdown: string): void;
@@ -191,6 +198,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
           onLink: () => setLinking(true),
         }),
         suggestionReview(callbacks.current.suggestions, suggestionRef),
+        designPreview(callbacks.current.designs ?? noDesigns),
       ],
     });
 
@@ -263,6 +271,12 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
     if (!editor) return;
     editor.dispatch(editor.state.tr.setMeta(suggestionKey, props.suggestions));
   }, [props.suggestions]);
+
+  useEffect(() => {
+    const editor = view.current;
+    if (!editor || !props.designs) return;
+    editor.dispatch(editor.state.tr.setMeta(designPreviewKey, props.designs));
+  }, [props.designs]);
 
   // The bubble follows the selection, but never while the pointer is down: a
   // bubble that chases a growing selection is the single loudest tell that a
