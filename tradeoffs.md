@@ -383,3 +383,46 @@ meaning 44px by a coincidence no reader can see. The pressure this creates is
 real and worth naming: it is the one place a model can write a number nobody
 chose, and the first sign of trouble will be designs full of `h-37`. If that
 happens, the fix is a closed size scale rather than reopening the argument.
+
+---
+
+## Images: bytes in the database, addressed by their hash
+
+A pasted image has to live somewhere. Three forks were open, and the reasoning
+for each is worth keeping because two of them keep looking attractive.
+
+**A data URI in the Markdown.** Zero infrastructure, and the document stays a
+single self-contained file — which is genuinely tempting for a product whose
+first claim is "the file is the payload". Rejected because the payload is read
+by *agents*: a 400 KB screenshot becomes 540 KB of base64 in the middle of a
+paragraph, and every model that reads the document pays for it, forever, on
+every read. It also makes a one-word edit to that paragraph a half-megabyte
+diff.
+
+**A sibling folder on disk.** What the research recommended, and what makes a
+workspace copyable and committable with its images intact. Rejected *for now*
+only because the server has no filesystem story at all — documents live in
+SQLite — and adding one for images would mean two storage models, two backup
+stories, and a way for an asset to outlive or predate the document that
+references it. `galley pull` is the place this becomes worth revisiting: a
+mirrored workspace whose images are `/v1/assets/…` URLs is not really mirrored.
+
+**Bytes in the database, addressed by content hash.** What shipped. A workspace
+stays one file to back up, the same screenshot pasted into four documents is
+stored once, and — the property that made the decision — the URL is a function
+of the bytes, so a re-save of the paragraph produces *identical* Markdown and
+the splice cache still hits. A random filename would have turned every save of
+that paragraph into a fresh diff, which is the failure the entire splicing
+engine exists to prevent.
+
+**SVG is refused, and that is not caution.** It is the one image format that is
+a document: it can carry script, and serving one from the app's own origin
+would hand any uploader a same-origin execution surface. "It is only an image"
+is false for exactly one format, and this is it. The cost is real — an exported
+diagram is often an SVG — and the answer is that diagrams are a fence, not an
+upload.
+
+**Base64 over JSON rather than multipart.** A third more bytes on the wire, for
+one transport that the app, the CLI and every test already speak. Revisit if
+uploads ever become large enough for the overhead to be the constraint, which
+at a 4 MB cap they are not.
