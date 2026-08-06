@@ -303,6 +303,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
               onSelection={setSelection}
               onEscape={props.onClose}
               onMove={moveLayer}
+              onDelete={(id) => run([{ op: 'delete', id }]) && setSelection((at) => ({ focus: at.focus, ids: [] }))}
             />
           )}
         </div>
@@ -311,6 +312,11 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
           {current ? (
             <Inspector
               layer={current}
+              // Which way this layer's siblings run, so "Fill" can write the
+              // class that actually fills: `grow` along the flow, stretch
+              // across it. Without it the control would have to guess, and a
+              // size control that guesses is one that silently does nothing.
+              flow={design ? flowOf(design, current.id) : null}
               readOnly={props.readOnly ?? false}
               findings={findings.filter((finding) => finding.layerId === current.id)}
               onEdit={(change) => edit(current.id, change)}
@@ -369,11 +375,13 @@ const MODES = ['light', 'dark'] as const;
  */
 function Inspector({
   layer,
+  flow,
   readOnly,
   findings,
   onEdit,
 }: {
   layer: Layer | { id: string; name: string; classes: readonly string[] };
+  flow: 'x' | 'y' | null;
   readOnly: boolean;
   findings: readonly LintFinding[];
   onEdit(change: (layer: Layer) => Layer): void;
@@ -536,6 +544,16 @@ function Inspector({
         </fieldset>
       )}
 
+      {'kind' in layer && layer.kind !== 'text' && (
+        <fieldset className="inspector-group" disabled={readOnly}>
+          <legend>Size</legend>
+          <div className="inspector-row">
+            <Size axis="w" flow={flow} classes={classes} onEdit={onEdit} />
+            <Size axis="h" flow={flow} classes={classes} onEdit={onEdit} />
+          </div>
+        </fieldset>
+      )}
+
       <fieldset className="inspector-group" disabled={readOnly}>
         <legend>Paint</legend>
         <div className="inspector-row">
@@ -569,7 +587,6 @@ function Inspector({
         <div className="inspector-row inspector-toggles">
           <Toggle label="Border" on={has('border')} onChange={() => toggle('border')} />
           <Toggle label="Shadow" on={has('shadow-sm')} onChange={() => toggle('shadow-sm')} />
-          <Toggle label="Fills space" on={has('grow')} onChange={() => toggle('grow')} />
         </div>
       </fieldset>
 
@@ -589,6 +606,96 @@ function Inspector({
       </details>
     </div>
   );
+}
+
+/**
+ * Fixed, Hug, or Fill — the three things a size can be.
+ *
+ * Figma's vocabulary, and it is worth borrowing exactly because it is the one
+ * every designer already knows and because all three are expressible here:
+ * *hug* is the flexbox default, *fill* is `grow` along the flow and stretch
+ * across it, and *fixed* is the one place this format admits a raw pixel.
+ *
+ * "Fill" resolving to two different classes depending on the parent is not a
+ * leak — it is the whole reason this control needs to know the parent's
+ * direction. A single `grow` on the cross axis does nothing at all, silently,
+ * which is exactly the failure the linter exists to catch.
+ */
+function Size({
+  axis,
+  flow,
+  classes,
+  onEdit,
+}: {
+  axis: 'w' | 'h';
+  flow: 'x' | 'y' | null;
+  classes: readonly string[];
+  onEdit(change: (layer: Layer) => Layer): void;
+}): JSX.Element {
+  const alongTheFlow = flow === (axis === 'w' ? 'x' : 'y');
+  const fillClass = alongTheFlow ? 'grow' : 'self-stretch';
+  const fixed = classes.find((name) => new RegExp(`^${axis}-\\d+$`).test(name)) ?? null;
+  const owned = (name: string): boolean =>
+    new RegExp(`^${axis}-(\\d+|full|auto|fit)$`).test(name) || name === fillClass;
+  const mode: 'fixed' | 'fill' | 'hug' = fixed ? 'fixed' : classes.includes(fillClass) ? 'fill' : 'hug';
+
+  /** Replace whatever this control owns, in place, with whatever it now says. */
+  const write = (next: readonly string[]): void => {
+    onEdit((current) => {
+      const at = current.classes.findIndex(owned);
+      const without = current.classes.filter((name) => !owned(name));
+      const insertAt = at === -1 ? without.length : Math.min(at, without.length);
+      return { ...current, classes: [...without.slice(0, insertAt), ...next, ...without.slice(insertAt)] };
+    });
+  };
+
+  return (
+    <label className="inspector-choice">
+      <span>{axis === 'w' ? 'Width' : 'Height'}</span>
+      <div className="inspector-size">
+        <select
+          value={mode}
+          onChange={(event) => {
+            const chosen = event.target.value;
+            if (chosen === 'hug') write([]);
+            else if (chosen === 'fill') write([fillClass]);
+            else write([`${axis}-${fixed ? fixed.slice(2) : 120}`]);
+          }}
+        >
+          <option value="hug">Hug</option>
+          <option value="fill">Fill</option>
+          <option value="fixed">Fixed</option>
+        </select>
+        {mode === 'fixed' && (
+          <input
+            type="number"
+            min={0}
+            max={2000}
+            value={Number(fixed!.slice(2))}
+            aria-label={axis === 'w' ? 'Width in pixels' : 'Height in pixels'}
+            onChange={(event) => {
+              const pixels = Math.max(0, Math.min(2000, Math.round(Number(event.target.value) || 0)));
+              write([`${axis}-${pixels}`]);
+            }}
+          />
+        )}
+      </div>
+    </label>
+  );
+}
+
+/**
+ * The direction a layer's siblings run in.
+ *
+ * A lookup on the parent, exactly as the drag resolver does it — the same
+ * question, and it must not get two answers.
+ */
+function flowOf(design: DesignDocument, id: string): 'x' | 'y' | null {
+  const parent = parentOf(design, id);
+  if (!parent) return null;
+  if (parent.classes.includes('flex-col')) return 'y';
+  if (parent.classes.includes('flex-row') || parent.classes.includes('flex')) return 'x';
+  return 'y';
 }
 
 function Choice({

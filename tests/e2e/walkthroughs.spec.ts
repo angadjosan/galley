@@ -879,5 +879,20 @@ test.describe('designs', () => {
     const cardAt = source.indexOf('Card number');
     expect(payAt, 'the pay button is gone from the design').toBeGreaterThan(-1);
     expect(payAt, 'the drag did not reorder the layers').toBeLessThan(cardAt);
+
+    // Arrows reorder. They do not nudge — this format has no coordinates, so a
+    // pixel of movement would have nowhere to be written down.
+    await page.keyboard.press('ArrowDown');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    // The drag put it first; one press down puts it after the heading.
+    expect(payAt, 'the drag did not put the button first').toBeLessThan(source.indexOf('>Payment<'));
+    const after = await readAsAgent(designPath);
+    expect(after.indexOf('Pay $42.00'), 'the arrow key did not reorder').toBeGreaterThan(
+      after.indexOf('>Payment<'),
+    );
+    // And across the flow it does nothing, rather than something arbitrary.
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(500);
+    expect(await readAsAgent(designPath)).toBe(after);
   });
 });

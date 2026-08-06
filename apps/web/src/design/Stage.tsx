@@ -24,6 +24,7 @@ import {
   type DropTarget,
 } from './drop.js';
 import { Overlay } from './Overlay.js';
+import { childrenOf } from './tree.js';
 import { DesignView } from './render.js';
 import {
   clickSelect,
@@ -67,6 +68,7 @@ export interface StageProps {
   onMove(id: LayerId, parentId: LayerId, index: number): void;
   /** Double-click on text, which means edit the words rather than go inside. */
   onEditText?(id: LayerId): void;
+  onDelete(id: LayerId): void;
 }
 
 /** What the pointer is in the middle of. Exactly one at a time, by construction. */
@@ -174,6 +176,40 @@ export function Stage(props: StageProps): JSX.Element {
       if (event.key === 'Enter') {
         event.preventDefault();
         props.onSelection(enterSelection(props.design, props.selection));
+        return;
+      }
+      if (event.key === 'Backspace' || event.key === 'Delete') {
+        const id = props.selection.ids.length === 1 ? props.selection.ids[0]! : null;
+        if (id && !props.readOnly && !isFrameId(props.design, id)) {
+          event.preventDefault();
+          props.onDelete(id);
+        }
+        return;
+      }
+      if (ARROWS.has(event.key)) {
+        /**
+         * Arrows **reorder**. They do not nudge.
+         *
+         * Nudging is a coordinate gesture and this format has no coordinates,
+         * so an arrow key that moved a layer by a pixel would have nowhere to
+         * write the pixel. Reordering is the same intent — "put this before
+         * that" — expressed in what the file can actually hold, and it is the
+         * only keyboard equivalent of the drag that exists.
+         */
+        const id = props.selection.ids.length === 1 ? props.selection.ids[0]! : null;
+        const from = id ? slotOf(props.design, id) : null;
+        if (!id || !from || props.readOnly) return;
+        const parent = find(props.design, from.parentId);
+        if (!parent) return;
+        const along = axisOf(parent) === 'x' ? ['ArrowLeft', 'ArrowRight'] : ['ArrowUp', 'ArrowDown'];
+        // An arrow across the flow does nothing rather than something
+        // arbitrary: in a row, up and down have no order to express.
+        if (!along.includes(event.key)) return;
+        event.preventDefault();
+        const step = event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -1 : 1;
+        const index = from.index + step;
+        if (index < 0 || index >= childCount(props.design, from.parentId)) return;
+        props.onMove(id, from.parentId, index);
         return;
       }
       if ((event.key === '0' || event.key === '9') && (event.metaKey || event.ctrlKey)) {
@@ -458,6 +494,13 @@ function boxOf(a: { x: number; y: number }, b: { x: number; y: number }): Rect {
     width: Math.abs(a.x - b.x),
     height: Math.abs(a.y - b.y),
   };
+}
+
+const ARROWS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+
+function childCount(design: DesignDocument, parentId: LayerId): number {
+  const parent = find(design, parentId);
+  return parent ? childrenOf(parent).length : 0;
 }
 
 function isFrameId(design: DesignDocument, id: LayerId): boolean {

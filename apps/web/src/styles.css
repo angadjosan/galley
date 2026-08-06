@@ -2809,6 +2809,29 @@ kbd {
 
 .inspector-field input,
 .inspector-field textarea,
+/* A mode and, when it is Fixed, the number it is fixed to. The input appears
+   only in that mode: a pixel field next to "Hug" would be a field that has no
+   value and no effect. */
+.inspector-size {
+  display: flex;
+  gap: 4px;
+}
+
+.inspector-size select {
+  flex: 1;
+  min-width: 0;
+}
+
+.inspector-size input {
+  width: 52px;
+  padding: 5px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--page);
+  color: var(--text);
+  font-size: var(--fs-small);
+}
+
 .inspector-choice select {
   padding: 5px 8px;
   border: 1px solid var(--line);
