@@ -628,7 +628,24 @@ function LinkPopup({
   onSubmit(href: string): void;
   onCancel(): void;
 }): JSX.Element | null {
-  const [href, setHref] = useState('');
+  /**
+   * Prefilled with the link that is already there.
+   *
+   * An empty field on already-linked text is a trap: there is no way to see
+   * where the link points, and Apply silently replaces it with whatever is
+   * typed. Editing a link should start from the link.
+   */
+  const [href, setHref] = useState(() => {
+    if (!view) return '';
+    const { from, $from } = view.state.selection;
+    const type = schema.marks.link;
+    if (!type) return '';
+    const existing =
+      type.isInSet(view.state.storedMarks ?? $from.marks()) ??
+      view.state.doc.resolve(from).marks().find((mark) => mark.type === type) ??
+      null;
+    return existing ? String(existing.attrs.href ?? '') : '';
+  });
   const element = useRef<HTMLFormElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
 
@@ -689,6 +706,9 @@ function LinkPopup({
         value={href}
         placeholder="Paste a link"
         aria-label="Link address"
+        // Selected on focus, so typing replaces the existing address rather
+        // than appending to it.
+        onFocus={(event) => event.currentTarget.select()}
         onChange={(event) => setHref(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Escape') {
