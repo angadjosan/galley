@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type JSX,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { find, type DesignDocument, type LayerId } from '@galley/design';
 import {
   IDENTITY,
@@ -100,6 +109,20 @@ export function Stage(props: StageProps): JSX.Element {
    */
   const travel = useRef({ x: { dir: 1 as 1 | -1, at: 0 }, y: { dir: 1 as 1 | -1, at: 0 } });
 
+  /**
+   * The current props and gesture, readable from a window listener.
+   *
+   * The keyboard effect must not re-subscribe: `props` is a fresh object on
+   * every parent render, so depending on it tore both window listeners down and
+   * re-added them constantly — and a keydown that arrives in that gap is a
+   * keystroke that does nothing. Reading through a ref makes the subscription
+   * happen once and still see the latest state.
+   */
+  const latest = useRef(props);
+  latest.current = props;
+  const gestureRef = useRef<Gesture>(gesture);
+  gestureRef.current = gesture;
+
   // ---------------------------------------------------------------------
   // Camera
   // ---------------------------------------------------------------------
@@ -146,6 +169,11 @@ export function Stage(props: StageProps): JSX.Element {
     return () => node.removeEventListener('wheel', onWheel);
   }, []);
 
+  // `fitAll` changes identity whenever the rects do, so the keyboard effect
+  // reaches it through a ref rather than re-subscribing for it.
+  const fitRef = useRef(fitAll);
+  fitRef.current = fitAll;
+
   const zoomBy = useCallback((factor: number) => {
     const node = viewport.current;
     if (!node) return;
@@ -159,30 +187,42 @@ export function Stage(props: StageProps): JSX.Element {
 
   useEffect(() => {
     const onDown = (event: KeyboardEvent): void => {
-      if (event.key === ' ' && !isTyping(event.target)) {
+      if (event.key === ' ' && !isTyping(event.target) && !isControl(event.target)) {
         // Space-drag pans, the one gesture every canvas tool shares. Held
         // rather than toggled, so it cannot be left on.
+        //
+        // Not when a control has focus. `preventDefault` on a button's Space
+        // suppresses the click the browser would synthesize, so stealing it
+        // unconditionally makes every button in the editor keyboard-dead —
+        // which is the exact defect this codebase has now found three times.
         event.preventDefault();
         setSpacePan(true);
         return;
       }
       if (isTyping(event.target)) return;
       if (event.key === 'Escape') {
-        const next = exitSelection(props.design, props.selection);
-        if (next) props.onSelection(next);
-        else props.onEscape();
+        // A drag in flight is what Escape is *for*. Cancelling it here rather
+        // than popping the selection is what makes a drag safe to start.
+        if (gestureRef.current.kind === 'drag' || gestureRef.current.kind === 'marquee') {
+          setGesture({ kind: 'none' });
+          setTarget(null);
+          return;
+        }
+        const next = exitSelection(latest.current.design, latest.current.selection);
+        if (next) latest.current.onSelection(next);
+        else latest.current.onEscape();
         return;
       }
       if (event.key === 'Enter') {
         event.preventDefault();
-        props.onSelection(enterSelection(props.design, props.selection));
+        latest.current.onSelection(enterSelection(latest.current.design, latest.current.selection));
         return;
       }
       if (event.key === 'Backspace' || event.key === 'Delete') {
-        const id = props.selection.ids.length === 1 ? props.selection.ids[0]! : null;
-        if (id && !props.readOnly && !isFrameId(props.design, id)) {
+        const id = latest.current.selection.ids.length === 1 ? latest.current.selection.ids[0]! : null;
+        if (id && !latest.current.readOnly && !isFrameId(latest.current.design, id)) {
           event.preventDefault();
-          props.onDelete(id);
+          latest.current.onDelete(id);
         }
         return;
       }
@@ -196,10 +236,10 @@ export function Stage(props: StageProps): JSX.Element {
          * that" — expressed in what the file can actually hold, and it is the
          * only keyboard equivalent of the drag that exists.
          */
-        const id = props.selection.ids.length === 1 ? props.selection.ids[0]! : null;
-        const from = id ? slotOf(props.design, id) : null;
-        if (!id || !from || props.readOnly) return;
-        const parent = find(props.design, from.parentId);
+        const id = latest.current.selection.ids.length === 1 ? latest.current.selection.ids[0]! : null;
+        const from = id ? slotOf(latest.current.design, id) : null;
+        if (!id || !from || latest.current.readOnly) return;
+        const parent = find(latest.current.design, from.parentId);
         if (!parent) return;
         const along = axisOf(parent) === 'x' ? ['ArrowLeft', 'ArrowRight'] : ['ArrowUp', 'ArrowDown'];
         // An arrow across the flow does nothing rather than something
@@ -208,26 +248,33 @@ export function Stage(props: StageProps): JSX.Element {
         event.preventDefault();
         const step = event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -1 : 1;
         const index = from.index + step;
-        if (index < 0 || index >= childCount(props.design, from.parentId)) return;
-        props.onMove(id, from.parentId, index);
+        if (index < 0 || index >= childCount(latest.current.design, from.parentId)) return;
+        latest.current.onMove(id, from.parentId, index);
         return;
       }
       if ((event.key === '0' || event.key === '9') && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
         if (event.key === '0') setCamera((current) => ({ ...current, zoom: 1 }));
-        else fitAll();
+        else fitRef.current();
       }
     };
     const onUp = (event: KeyboardEvent): void => {
       if (event.key === ' ') setSpacePan(false);
     };
+    // The keyup for a held Space is delivered to whatever window has focus, so
+    // ⌘-Tab away mid-pan and it never arrives — leaving the canvas permanently
+    // in pan mode, where clicking, selecting and dragging are all dead and the
+    // only cue is the cursor.
+    const onBlur = (): void => setSpacePan(false);
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup', onUp);
+    window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
+      window.removeEventListener('blur', onBlur);
     };
-  }, [fitAll, props]);
+  }, []);
 
   // ---------------------------------------------------------------------
   // Pointer
@@ -267,7 +314,13 @@ export function Stage(props: StageProps): JSX.Element {
     // Capturing the pointer for them would mean the button never sees its own
     // click — the control would be visible, hoverable and completely dead.
     if ((event.target as HTMLElement | null)?.closest('.design-zoom')) return;
+    // One gesture at a time. A second finger — the stage sets `touch-action:
+    // none`, so it gets one — would otherwise overwrite the gesture mid-drag
+    // and capture a different pointer, and the first finger's release would
+    // then complete the second finger's gesture.
+    if (gesture.kind !== 'none') return;
 
+    travel.current = { x: { dir: 1, at: event.clientX }, y: { dir: 1, at: event.clientY } };
     if (event.button === 1 || spacePan) {
       event.currentTarget.setPointerCapture(event.pointerId);
       setGesture({ kind: 'pan', from: { x: event.clientX, y: event.clientY }, camera });
@@ -299,7 +352,6 @@ export function Stage(props: StageProps): JSX.Element {
     // that happens to wobble two pixels is still a click.
     const grabbed = next.ids.length === 1 ? next.ids[0]! : null;
     if (grabbed && !props.readOnly && !isFrameId(props.design, grabbed)) {
-      travel.current = { x: { dir: 1, at: event.clientX }, y: { dir: 1, at: event.clientY } };
       setGesture({ kind: 'press', id: grabbed, from: { x: event.clientX, y: event.clientY } });
     }
   };
@@ -326,7 +378,7 @@ export function Stage(props: StageProps): JSX.Element {
     }
     if (gesture.kind === 'drag') {
       setTarget((previous) => {
-        const next = resolveFor(props.design, rects, pointAt(event), gesture.id, previous, camera.zoom, travel.current);
+        const next = resolveFor(props.design, rects, pointAt(event), gesture.id, camera.zoom, travel.current);
         // Only a *changed* slot causes a render. Recomputing is cheap;
         // redrawing an indicator sixty times a second in the same place is the
         // flicker every hand-rolled drag ships with.
@@ -339,12 +391,32 @@ export function Stage(props: StageProps): JSX.Element {
     setHovered(hit ? resolveClick(props.design, hit, props.selection.focus) : null);
   };
 
+  /**
+   * The browser took the gesture away — palm rejection, an OS gesture, a lost
+   * capture. Discarded, never committed: `pointercancel` means the drag did not
+   * finish, and writing a move op plus a history entry for a gesture the user
+   * did not complete is the worst possible reading of it.
+   */
+  const onPointerCancel = (event: ReactPointerEvent): void => {
+    setGesture({ kind: 'none' });
+    setTarget(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
   const onPointerUp = (event: ReactPointerEvent): void => {
+    // Only the button that started the gesture may end it. Otherwise a
+    // right-click during a left-button drag commits the drop.
+    if (event.button !== 0 && event.button !== 1) return;
     if (gesture.kind === 'marquee') {
       const box = boxOf(gesture.from, gesture.to);
-      // A marquee that never grew is a click on empty space: clear, don't
-      // select a random sliver.
-      if (box.width > 2 || box.height > 2) {
+      // Screen pixels, not canvas units: at 10% zoom a one-pixel wobble is ten
+      // canvas units and would count as a deliberate brush, and at 400% a real
+      // eight-pixel drag is two units and would count as a click that clears
+      // the selection.
+      const grew = Math.max(box.width, box.height) * camera.zoom > 2;
+      if (grew) {
         props.onSelection(marqueeSelect(props.design, props.selection.focus, rects, box));
       } else {
         props.onSelection({ focus: props.selection.focus, ids: [] });
@@ -367,12 +439,20 @@ export function Stage(props: StageProps): JSX.Element {
     }
   };
 
-  const onDoubleClick = (event: ReactPointerEvent): void => {
+  const onDoubleClick = (event: ReactMouseEvent): void => {
     const hit = layerUnder(event);
     if (!hit) return;
-    const node = find(props.design, hit);
-    if (node && 'kind' in node && node.kind === 'text' && props.onEditText) {
-      props.onEditText(hit);
+    // Resolved through the focus model first, so both halves of the same
+    // gesture agree about which layer was meant: without it, "edit the text"
+    // would open the words of a layer three levels below the one "go inside"
+    // would have entered.
+    const target = resolveClick(props.design, hit, props.selection.focus) ?? hit;
+    const node = find(props.design, target);
+    if (node && 'kind' in node && node.kind === 'text') {
+      // Double-clicking words means edit the words. There is nothing to be
+      // inside, so without this the gesture does nothing at all.
+      props.onSelection({ focus: props.selection.focus, ids: [target] });
+      props.onEditText?.(target);
       return;
     }
     props.onSelection(enterSelection(props.design, props.selection, hit));
@@ -397,7 +477,7 @@ export function Stage(props: StageProps): JSX.Element {
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
+      onPointerCancel={onPointerCancel}
       onPointerLeave={() => setHovered(null)}
       onDoubleClick={onDoubleClick}
     >
@@ -458,11 +538,10 @@ function resolveFor(
   rects: ReadonlyMap<LayerId, Rect>,
   pointer: { x: number; y: number },
   draggedId: LayerId,
-  previous: DropTarget | null,
   zoom: number,
   travel: { x: { dir: 1 | -1 }; y: { dir: 1 | -1 } },
 ): DropTarget | null {
-  const input = { pointer, rects, design, draggedId, previous, inset: EDGE_INSET / zoom };
+  const input = { pointer, rects, design, draggedId, inset: EDGE_INSET / zoom };
   const first = resolveDrop(input, travel.y.dir);
   if (!first) return null;
   const parent = find(design, first.parentId);
@@ -505,6 +584,12 @@ function childCount(design: DesignDocument, parentId: LayerId): number {
 
 function isFrameId(design: DesignDocument, id: LayerId): boolean {
   return design.frames.some((frame) => frame.id === id);
+}
+
+/** A keystroke meant for a focused control is not one meant for the canvas. */
+function isControl(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null;
+  return !!element?.closest?.('button, a, [role="button"], [tabindex]:not([tabindex="-1"])');
 }
 
 /** A keystroke meant for a field is not a keystroke meant for the canvas. */

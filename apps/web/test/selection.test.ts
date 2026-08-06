@@ -188,6 +188,40 @@ describe('the marquee', () => {
   });
 });
 
+describe('two frames', () => {
+  // Every fixture in this file has one frame, and one frame hides both of the
+  // bugs below completely.
+  const PAIR = design(
+    [
+      '<design name="x">',
+      '  <frame width="200" class="flex flex-col p-4"><box name="A" class="flex"></box></frame>',
+      '  <frame width="200" class="flex flex-col p-4"><box name="B" class="flex"></box></frame>',
+      '</design>',
+    ].join('\n'),
+  );
+  const rects = new Map<string, Rect>([
+    ['l_0', { x: 0, y: 0, width: 200, height: 100 }],
+    ['l_0_0', { x: 16, y: 16, width: 168, height: 60 }],
+    ['l_1', { x: 240, y: 0, width: 200, height: 100 }],
+    ['l_1_0', { x: 256, y: 16, width: 168, height: 60 }],
+  ]);
+
+  it('never brushes a selection across two of them', () => {
+    // A selection spanning parents is one the inspector, the reorder keys and
+    // every bulk gesture would have to refuse. The first one caught wins.
+    const caught = marqueeSelect(PAIR, null, rects, { x: 0, y: 40, width: 440, height: 10 });
+    expect(caught.ids).toEqual(['l_0_0']);
+  });
+
+  it('keeps the focus with the selection when a click pops out', () => {
+    // Inside one card, clicking into the other frame. Leaving the old focus
+    // behind drew "you are in here" around one box and the selection ring
+    // around a box outside it.
+    const next = clickSelect(PAIR, { focus: 'l_0_0', ids: [] }, 'l_1_0');
+    expect(next).toEqual({ focus: null, ids: ['l_1_0'] });
+  });
+});
+
 describe('after the design changes underneath', () => {
   it('drops what no longer exists', () => {
     // Ids are position-derived, so a delete renames layers nobody touched. An

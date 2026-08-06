@@ -56,7 +56,7 @@ const COLUMN_RECTS = new Map<string, Rect>([
 ]);
 
 function drop(pointer: { x: number; y: number }, draggedId = 'none', direction: 1 | -1 = 1): DropTarget | null {
-  return resolveDrop({ pointer, rects: COLUMN_RECTS, design: COLUMN, draggedId, previous: null }, direction);
+  return resolveDrop({ pointer, rects: COLUMN_RECTS, design: COLUMN, draggedId }, direction);
 }
 
 describe('the axis comes from the document, not from geometry', () => {
@@ -131,9 +131,42 @@ describe('choosing the slot', () => {
       rects,
       design: empty,
       draggedId: 'none',
-      previous: null,
     });
     expect(target).toEqual({ parentId: 'l_0_0', index: 0 });
+  });
+});
+
+describe('a wrapped container runs in reading order', () => {
+  // The case a single-line container hides completely: comparing only the main
+  // axis puts the indicator a whole row away from the hand, because every child
+  // on a later line is "past" the pointer's x by list order alone.
+  const wrapped = design(
+    [
+      '<design name="x">',
+      '  <frame width="220" class="flex flex-wrap">',
+      '    <box name="A" class="flex"></box>',
+      '    <box name="B" class="flex"></box>',
+      '    <box name="C" class="flex"></box>',
+      '    <box name="D" class="flex"></box>',
+      '  </frame>',
+      '</design>',
+    ].join('\n'),
+  );
+  const rects = new Map<string, Rect>([
+    ['l_0', { x: 0, y: 0, width: 220, height: 220 }],
+    ['l_0_0', { x: 0, y: 0, width: 100, height: 100 }],
+    ['l_0_1', { x: 110, y: 0, width: 100, height: 100 }],
+    ['l_0_2', { x: 0, y: 110, width: 100, height: 100 }],
+    ['l_0_3', { x: 110, y: 110, width: 100, height: 100 }],
+  ]);
+
+  it.each([
+    ['between C and D, on the second line', 105, 160, 3],
+    ['between A and B, on the first line', 105, 50, 1],
+    ['before everything', 5, 5, 0],
+    ['past the last', 215, 215, 4],
+  ])('resolves a pointer %s', (_name, x, y, expected) => {
+    expect(resolveDrop({ pointer: { x, y }, rects, design: wrapped, draggedId: 'none' })?.index).toBe(expected);
   });
 });
 
@@ -163,7 +196,6 @@ describe('a layer cannot land inside itself', () => {
       rects,
       design: nested,
       draggedId: 'l_0_0',
-      previous: null,
     });
     expect(target?.parentId).toBe('l_0');
   });

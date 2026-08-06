@@ -36,8 +36,6 @@ export interface DropInput {
   readonly design: DesignDocument;
   /** The layer being dragged. It cannot land inside itself. */
   readonly draggedId: LayerId;
-  /** The slot resolved on the previous frame, for hysteresis. */
-  readonly previous: DropTarget | null;
   /**
    * The edge band, in canvas units. The caller divides `EDGE_INSET` by the zoom
    * so the band stays the same size under the hand at every magnification —
@@ -171,6 +169,8 @@ export function resolveDrop(input: DropInput, direction: 1 | -1 = 1): DropTarget
  */
 function indexIn(input: DropInput, parent: Holder, direction: 1 | -1): number {
   const axis = axisOf(parent);
+  const cross = axis === 'x' ? 'y' : 'x';
+  const wraps = parent.classes.includes('flex-wrap');
   const children = childrenOf(parent);
 
   // Positions are expressed against the *live* child list, so the caller can
@@ -186,6 +186,23 @@ function indexIn(input: DropInput, parent: Holder, direction: 1 | -1): number {
     // Biased in the direction of travel, so a resting hand on a boundary does
     // not flip the answer every frame.
     const midpoint = start + extent / 2 + direction * extent * MIDPOINT_BIAS;
+
+    // A wrapped container runs in reading order, so one axis cannot answer the
+    // question: on a wrapped row, everything on a later line comes after the
+    // pointer no matter where its x is, and everything on an earlier line comes
+    // before it no matter what. Comparing only the main axis puts the indicator
+    // a whole row away from the hand — the failure `flex-wrap` makes reachable
+    // and a single-line container hides completely.
+    if (wraps) {
+      const lineStart = cross === 'x' ? rect.x : rect.y;
+      const lineEnd = lineStart + (cross === 'x' ? rect.width : rect.height);
+      if (input.pointer[cross] >= lineEnd) continue; // an earlier line
+      if (input.pointer[cross] < lineStart) {
+        slot = i; // a later line: this child is the first past the pointer
+        break;
+      }
+    }
+
     if (input.pointer[axis] < midpoint) {
       slot = i;
       break;
@@ -243,7 +260,12 @@ export function dropLine(
 
   const axis = axisOf(parent);
   const children = childrenOf(parent);
-  const measured = children.map((child) => rects.get(child.id)).filter((rect): rect is Rect => rect !== undefined);
+  // Kept aligned with the live child list rather than compacted: `target.index`
+  // counts every child, measured or not, so indexing a filtered array with it
+  // draws the line at the wrong gap while the drop lands at the right one —
+  // the one thing a drop indicator must never do.
+  const slots = children.map((child) => rects.get(child.id) ?? null);
+  const measured = slots.filter((rect): rect is Rect => rect !== null);
 
   // An empty container has no gap to point at, so the line goes across its
   // middle: the honest picture of "it will be the only thing in here".
@@ -254,12 +276,12 @@ export function dropLine(
       : { x1: parentRect.x + inset, y1: parentRect.y + parentRect.height / 2, x2: parentRect.x + parentRect.width - inset, y2: parentRect.y + parentRect.height / 2 };
   }
 
-  // Before child N, or after the last one. Clamped rather than trusted: the
-  // index is expressed against the live child list, which may contain layers
-  // whose rects have not been measured yet.
-  const at = Math.max(0, Math.min(target.index, measured.length));
-  const before = at < measured.length ? measured[at]! : null;
-  const after = measured[Math.max(0, at - 1)]!;
+  // Before child N, or after the last one measured before it. Both searches
+  // walk the live list, so an unmeasured neighbour is skipped rather than
+  // shifting every index past it.
+  const at = Math.max(0, Math.min(target.index, slots.length));
+  const before = slots.slice(at).find((rect): rect is Rect => rect !== null) ?? null;
+  const after = slots.slice(0, at).reverse().find((rect): rect is Rect => rect !== null) ?? measured[0]!;
   const along = before ? (axis === 'x' ? before.x : before.y) : axis === 'x' ? after.x + after.width : after.y + after.height;
 
   // Spanning the parent's cross extent rather than the child's, so the line

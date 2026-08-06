@@ -89,6 +89,23 @@ function atLevel(design: DesignDocument, id: LayerId, focus: LayerId | null): bo
   return parentId === null || design.frames.some((frame) => frame.id === parentId);
 }
 
+/**
+ * The level a layer is selected *at*.
+ *
+ * Focus is **derived from the selection**, never carried alongside it, and that
+ * is the fix for a whole family of bugs where the two drifted apart: clicking a
+ * layer in the tree, landing a drag, or clicking past the container you were
+ * inside all used to leave a focus pointing somewhere the selection was not.
+ * The overlay then drew "you are in here" around one box and the selection ring
+ * around a box outside it.
+ *
+ * A frame normalises to null, because a frame is not a level — see `atLevel`.
+ */
+export function focusFor(design: DesignDocument, id: LayerId): LayerId | null {
+  const parent = parentOf(design, id);
+  return parent && !isFrame(parent) ? parent.id : null;
+}
+
 /** What a click produces, all four modifier combinations in one place. */
 export function clickSelect(
   design: DesignDocument,
@@ -98,16 +115,17 @@ export function clickSelect(
 ): Selection {
   if (modifiers.deep) {
     // ⌘-click reaches past the focus model entirely — the escape hatch that
-    // makes the model tolerable when you already know what you want. The focus
-    // moves with it, so the *next* plain click behaves consistently with what
-    // is now selected rather than snapping back out.
-    return { focus: parentOf(design, hitId)?.id ?? null, ids: [hitId] };
+    // makes the model tolerable when you already know what you want.
+    return { focus: focusFor(design, hitId), ids: [hitId] };
   }
 
   const target = resolveClick(design, hitId, selection.focus);
   if (!target) return selection;
   if (modifiers.extend) return { ...selection, ids: addToSelection(design, selection.ids, target) };
-  return { focus: selection.focus, ids: [target] };
+  // Not `selection.focus`: a click can resolve *outside* what we were inside —
+  // clicking the next card over while inside this one — and keeping the old
+  // focus then describes a level the selection is not on.
+  return { focus: focusFor(design, target), ids: [target] };
 }
 
 /**
@@ -198,12 +216,20 @@ export function marqueeSelect(
   // children — and an empty frame, which has nothing to catch instead.
   const candidates: readonly { id: LayerId }[] =
     focus === null
-      ? design.frames.flatMap((frame) => (frame.children.length > 0 ? [...frame.children] : [frame]))
+      ? design.frames.flatMap<{ id: LayerId }>((frame) =>
+          frame.children.length > 0 ? [...frame.children] : [frame],
+        )
       : childrenOf(find(design, focus));
-  const ids = candidates.filter((node) => {
+  const caught = candidates.filter((node) => {
     const rect = rects.get(node.id);
     return rect !== undefined && intersects(rect, box);
   });
+  // Siblings only, same as a shift-click. At the top level a brush across two
+  // frames catches children of both, and a selection spanning parents is one
+  // the inspector, the reorder keys and every bulk gesture would have to
+  // refuse. The first one caught decides which family wins.
+  const family = caught[0] ? (parentOf(design, caught[0].id)?.id ?? null) : null;
+  const ids = caught.filter((node) => (parentOf(design, node.id)?.id ?? null) === family);
   return { focus, ids: ids.map((node) => node.id) };
 }
 

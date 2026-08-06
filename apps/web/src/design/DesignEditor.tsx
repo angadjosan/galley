@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type JSX } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type Ref } from 'react';
 import {
   VOCABULARY,
   applyOps,
@@ -15,8 +15,8 @@ import {
   type NewLayer,
 } from '@galley/design';
 import { Stage } from './Stage.js';
-import { NOTHING, reconcile, type Selection } from './selection.js';
-import { parentOf } from './tree.js';
+import { NOTHING, focusFor, reconcile, type Selection } from './selection.js';
+import { parentOf as holderOf } from './tree.js';
 
 /**
  * The design editor.
@@ -63,6 +63,10 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
    */
   const [rawSelection, setSelection] = useState<Selection>(NOTHING);
   const [showSource, setShowSource] = useState(false);
+  /** The inspector's Words field, so a double-click on the canvas can reach it. */
+  const wordsRef = useRef<HTMLTextAreaElement>(null);
+  /** The last markup this editor emitted, to tell its own edits from everyone else's. */
+  const mine = useRef<string | null>(null);
   /**
    * Which mode the canvas is drawing in.
    *
@@ -85,12 +89,32 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
   const selected = selection.ids.length === 1 ? selection.ids[0]! : null;
   const current = layers.find((entry) => entry.layer.id === selected)?.layer ?? null;
 
+  /**
+   * A change that came from somewhere else clears the selection.
+   *
+   * Layer ids are derived from position, so when a collaborator or an accepted
+   * suggestion deletes an earlier sibling, every id after it shifts down one —
+   * and a retained id now resolves to a *different* layer. `reconcile` cannot
+   * see that, because the id still exists; the inspector would go on editing,
+   * pointed at the wrong thing. Only this component knows which edits are its
+   * own, so only this component can tell the difference.
+   */
+  useEffect(() => {
+    // Compared with the trailing whitespace ignored: the document that comes
+    // back has been through a fence, and a fence does not promise to preserve
+    // a final newline. Comparing byte-for-byte made the editor treat its own
+    // every edit as somebody else's and drop the selection each keystroke.
+    if (mine.current === null || props.source.trimEnd() === mine.current.trimEnd()) return;
+    mine.current = null;
+    setSelection((current) => (current.ids.length > 0 || current.focus ? NOTHING : current));
+  }, [props.source]);
+
   /** Select one layer from outside the canvas — the tree, a lint finding. */
   const reveal = useCallback(
     (id: string): void => {
       // The focus follows, so the canvas will let the next click land on the
       // same layer instead of resolving up to its container.
-      setSelection({ focus: design ? (parentOf(design, id)?.id ?? null) : null, ids: [id] });
+      setSelection({ focus: design ? focusFor(design, id) : null, ids: [id] });
     },
     [design],
   );
@@ -115,7 +139,9 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
         console.error('[galley] design ops refused', result.errors);
         return null;
       }
-      props.onChange(serializeDesign(result.design, { durable: props.anchored ?? new Set() }));
+      const next = serializeDesign(result.design, { durable: props.anchored ?? new Set() });
+      mine.current = next;
+      props.onChange(next);
       return result.design;
     },
     [design, props],
@@ -170,7 +196,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
         // from the design that came back: appending puts the new layer past the
         // end of the list the old one had, where there is no id to ask for.
         const id = idAfter(grown, where.parent, where.index);
-        if (id) setSelection({ focus: where.parent, ids: [id] });
+        if (id) setSelection({ focus: focusFor(grown, id), ids: [id] });
       }
     },
     [design, run, selected],
@@ -195,7 +221,10 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
       // Read the name from the design that came *back* — asking the old one
       // gives the id of whatever used to be in that slot, or nothing at all,
       // and either way the selection quietly disappears.
-      if (moved) setSelection({ focus: parent, ids: [idAfter(moved, parent, index) ?? id] });
+      if (moved) {
+        const landed = idAfter(moved, parent, index) ?? id;
+        setSelection({ focus: focusFor(moved, landed), ids: [landed] });
+      }
     },
     [run],
   );
@@ -303,6 +332,12 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
               onSelection={setSelection}
               onEscape={props.onClose}
               onMove={moveLayer}
+              onEditText={(id) => {
+                reveal(id);
+                // The words live in the inspector, so "edit the text" means
+                // put the caret where the text actually is.
+                queueMicrotask(() => wordsRef.current?.focus());
+              }}
               onDelete={(id) => run([{ op: 'delete', id }]) && setSelection((at) => ({ focus: at.focus, ids: [] }))}
             />
           )}
@@ -312,6 +347,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
           {current ? (
             <Inspector
               layer={current}
+              wordsRef={wordsRef}
               // Which way this layer's siblings run, so "Fill" can write the
               // class that actually fills: `grow` along the flow, stretch
               // across it. Without it the control would have to guess, and a
@@ -376,12 +412,14 @@ const MODES = ['light', 'dark'] as const;
 function Inspector({
   layer,
   flow,
+  wordsRef,
   readOnly,
   findings,
   onEdit,
 }: {
   layer: Layer | { id: string; name: string; classes: readonly string[] };
   flow: 'x' | 'y' | null;
+  wordsRef?: Ref<HTMLTextAreaElement>;
   readOnly: boolean;
   findings: readonly LintFinding[];
   onEdit(change: (layer: Layer) => Layer): void;
@@ -456,6 +494,7 @@ function Inspector({
         <label className="inspector-field">
           <span>Words</span>
           <textarea
+            ref={wordsRef}
             value={layer.content}
             disabled={readOnly}
             rows={3}
@@ -691,7 +730,7 @@ function Size({
  * question, and it must not get two answers.
  */
 function flowOf(design: DesignDocument, id: string): 'x' | 'y' | null {
-  const parent = parentOf(design, id);
+  const parent = holderOf(design, id);
   if (!parent) return null;
   if (parent.classes.includes('flex-col')) return 'y';
   if (parent.classes.includes('flex-row') || parent.classes.includes('flex')) return 'x';
