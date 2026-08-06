@@ -8,6 +8,9 @@
       "path": "packages/markdown"
     },
     {
+      "path": "packages/design"
+    },
+    {
       "path": "packages/anchor"
     },
     {
