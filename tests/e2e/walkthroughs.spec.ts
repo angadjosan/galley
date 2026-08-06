@@ -674,6 +674,54 @@ test.describe('history', () => {
  * does something visual with a mouse, and an agent then reads the file with the
  * agent's own credentials and finds exactly the change.
  */
+test.describe('images', () => {
+  /**
+   * Pasting an image is the gesture people try first, without being told to.
+   *
+   * The claim under test is the same one every other walkthrough makes: what
+   * the writer does with their hands is what the agent reads. A paste has to
+   * end up as an ordinary `![](…)` in the stored Markdown, not as a blob the
+   * document merely points at from some parallel store.
+   */
+  test('a pasted image lands in the document as ordinary Markdown', async ({ page }) => {
+    await openSpec(page);
+    const paragraphs = await page.locator('.prose > p[data-block-id]').count();
+    await caretAtEndOf(page, '.prose > p[data-block-id]', paragraphs - 1);
+
+    // A real 1×1 PNG, pasted the way a screenshot is.
+    await page.evaluate(async () => {
+      const png = Uint8Array.from(
+        atob(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        ),
+        (c) => c.charCodeAt(0),
+      );
+      const file = new File([png], 'a screenshot.png', { type: 'image/png' });
+      const data = new DataTransfer();
+      data.items.add(file);
+      document
+        .querySelector('.ProseMirror')!
+        .dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    });
+
+    const image = page.locator('.prose img').first();
+    await expect(image).toBeVisible({ timeout: 15_000 });
+    // Content-addressed, so the same paste twice is the same URL and the same
+    // bytes on disk.
+    await expect(image).toHaveAttribute('src', /\/v1\/assets\//);
+    // The filename becomes the description, because an image with none is a
+    // hole in the document for every agent that reads it.
+    await expect(image).toHaveAttribute('alt', 'a screenshot');
+
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    const asAgent = await readAsAgent('specs/checkout-v2');
+    expect(asAgent, 'the image did not reach the stored document').toMatch(
+      /!\[a screenshot\]\(\/v1\/assets\/[0-9a-f]+\)/,
+    );
+  });
+});
+
 test.describe('designs', () => {
   test('a design made with the mouse is what an agent reads', async ({ page }) => {
     await openWorkspace(page);
