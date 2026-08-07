@@ -1615,3 +1615,69 @@ trades a blank page for a friendlier blank page; wrapping the canvas means a
 broken inspector leaves the document list, the header and the source view
 standing — and the source view is precisely the escape hatch that lets someone
 rescue a design the canvas cannot draw.
+
+## D55 — A component is defined once and drawn everywhere, and those are two trees
+
+`<define name="Button">` at the top of a design; `<use component="Button"
+label="Pay">` wherever it belongs. This is what makes a design system a system
+rather than a folder: twelve buttons that are the *same* button. Without it
+"our button" is a convention nobody can enforce and every agent quietly
+reinvents it.
+
+**The authored tree and the drawn tree are different trees.** The file holds
+twelve `<use>` lines; the browser needs twelve copies. Expanding at *render*
+time rather than at parse time is what keeps the definition the single place a
+button is described — expand at parse and an edit to the definition has nowhere
+to land. Selection, dragging, the inspector and the ops all work on the authored
+tree; only the renderer sees the other, and an expanded id contains a character
+the parser can never produce, so one reaching an op is a crash rather than a
+silent edit of the wrong layer.
+
+Three smaller decisions, each with an obvious wrong answer:
+
+- **Only text varies.** A component whose every property can be overridden is a
+  shape with extra steps. What genuinely differs between two buttons is the
+  words on them.
+- **A `<use>` carries its own classes, and they win over the definition's.**
+  Where a thing sits is not part of what it is; forcing `grow` into the
+  definition means a second definition per position.
+- **A definition is drawn nowhere.** On the canvas it would be a card in no
+  frame, and there is no honest place to put it. It gets its own section in the
+  layer tree instead.
+
+Clicking a button on the canvas selects the **use**, never a piece of the
+definition — editing one of those through an instance would change every other
+instance without saying so.
+
+## D56 — Four states, and they are the one thing that cannot be an inline style
+
+`hover:`, `press:`, `focus:`, `disabled:`. Closed at the prefix for the same
+reason the palette is closed at the value: a prefix that accepts anything is one
+a model will invent `:nth-child(2n+1)` for. Four is what a static picture can
+honestly show; past that is behaviour, and behaviour belongs in code.
+
+Everything else about a layer is inline, because the format has no cascade. A
+`style` attribute has no selectors, so these become real rules — and that forces
+three things that are only obvious once the page is on screen:
+
+- **`!important`.** An inline declaration outranks every normal rule in every
+  stylesheet, so a `:hover` rule written normally loses to the exact colour it
+  is replacing. An important author declaration is the one thing that beats a
+  normal inline one, which is precisely the case `!important` exists for.
+- **Two selectors per state**: the pseudo-class, so a design embedded in a
+  document responds when you hover it, and a `data-state` attribute, so the
+  editor can show a state nobody can hold. You cannot keep a button pressed
+  while reading the inspector, and `disabled` has no gesture at all.
+- **Scoped per mounted instance**, because one page shows the same design on the
+  canvas and in a preview, and layer ids are only unique within a design.
+
+The editor uses **one control for both questions**: the state you are looking at
+is the state you are editing. Splitting them into "preview this" and "edit that"
+is how a panel ends up silently changing something other than what is on screen.
+
+The palette gained `accent-hover` and `accent-pressed` — a design that can
+describe a hover state but not a hover colour describes half of one. Darker in
+light mode and *lighter* in dark, because hover means "closer to the light" and
+on a dark surface that is up; going darker there reads as disabled. Both are
+contrast-checked, since a colour that fails only while the pointer is over it is
+one nobody screenshots.
