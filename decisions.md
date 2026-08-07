@@ -1552,3 +1552,66 @@ and nobody had checked what that was.
 Cost of the omission, in one line: build output under `apps/web/dist-types` is
 tracked in git and now regenerates on every build. Worth untracking, and out of
 scope for the change that found it.
+
+## D52 — Undo is a stack of snapshots, not a stack of inverses
+
+The design canvas shipped with no undo at all, which an adversarial pass found
+in about four minutes: a six-pixel mis-aim reparents a card into a text label,
+the change saves itself immediately, and ⌘Z did nothing. Every structural
+gesture was destructive, instant and irreversible.
+
+The obvious implementation is an inverse for each op. It is also the wrong one
+here. There are eight ops and each needs its own inverse; the inverse of a
+`move` has to account for **position-derived ids renaming its own neighbours**,
+which is exactly the class of bug that stays subtly wrong for months and
+corrupts a file when it fires. A design is a few kilobytes of text. A hundred
+snapshots cost less than one wrong inverse, and a snapshot cannot disagree with
+what it restores.
+
+Three properties it needs and gets:
+
+- **Consecutive keystrokes collapse.** One op per keystroke means undoing a
+  renamed button would take fourteen presses — the behaviour every text field
+  learned not to have decades ago.
+- **A field keeps its own ⌘Z.** The Words box's undo works on words and is
+  better than this one; taking it away would be a regression from having none.
+- **A collaborator's edit clears the stack.** Undo that reverts somebody else's
+  work is not undo, it is a silent overwrite.
+
+It is deliberately local to the editor and not the document's history: the
+history is a record of *saved versions* and belongs to everyone; this is the
+last thing your hand did.
+
+## D53 — Hug and Fill mean different things on the two axes, and the panel has to say so
+
+The size control reported **Hug** for a box the browser was visibly stretching,
+and its **Fill** option wrote a class that changed nothing. Both are the same
+mistake: assuming one meaning for both axes.
+
+Along the flow, the default is hug and `grow` is fill. Across the flow, flexbox
+already defaults to `stretch` — so a box with no size class at all *is* filling,
+and hugging requires an explicit `self-start`. Fill is therefore the default
+across the flow, and the control has to know which way the parent runs.
+
+That asymmetry is not CSS leaking into the interface. It is why the control
+takes the parent's direction as an input, and the alternative — one mapping for
+both axes — is a panel that is wrong half the time, which teaches people to
+distrust every number in it.
+
+Related, and the same principle: switching to **Fixed** seeds from what the
+browser actually drew, not from a constant. Jumping a 508px button to 120px
+because somebody opened a menu is a destructive default when the layout has
+already answered the question.
+
+## D54 — A pane may fail; the document may not
+
+A render error anywhere replaced the whole application with a blank white page —
+no message, and no recovery but a reload, which in a writing surface means
+reloading somebody's work in progress. Twice this session a `ReferenceError` in
+the inspector did exactly that.
+
+Boundaries go around **panes**, not around the application. Wrapping everything
+trades a blank page for a friendlier blank page; wrapping the canvas means a
+broken inspector leaves the document list, the header and the source view
+standing — and the source view is precisely the escape hatch that lets someone
+rescue a design the canvas cannot draw.
