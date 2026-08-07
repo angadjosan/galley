@@ -1681,3 +1681,36 @@ light mode and *lighter* in dark, because hover means "closer to the light" and
 on a dark surface that is up; going darker there reads as disabled. Both are
 contrast-checked, since a colour that fails only while the pointer is over it is
 one nobody screenshots.
+
+## D57 — The editing happens on the canvas; the right rail is for paint
+
+A design tool where changing a label means finding a field in a side panel is a
+form with a picture attached. Three moves, all the same argument:
+
+**The words are typed on the thing.** Double-click a label and type. It is
+`contentEditable` on the span itself rather than an overlaid input, because the
+text has to keep its exact typography, width and wrapping — an input would have
+to reproduce the font, the size, the line height and the flex context, and would
+be subtly wrong at every zoom. Uncontrolled for the duration, since React
+re-rendering a focused editable on every keystroke moves the caret to the end;
+the DOM owns the text and the document is told on the way out, which is the same
+bargain the prose editor makes.
+
+Double-clicking a **button** goes straight to its label rather than one level
+in. A button is a box with one word in it, and two double-clicks to reach the
+only word there is is friction with no decision in it.
+
+**Arrangement floats over the shape it arranges.** Direction, gap, padding,
+alignment, duplicate and delete sit on a bar above the selection. They are all
+answers to "how do these sit together", and the sitting-together is right there.
+The steppers have no zero: "none" already means zero, so stepping up to `gap-0`
+would be a press that visibly does nothing, and a control whose first press
+looks broken is one people stop trusting.
+
+**What stays on the right is paint** — colour, ink, type, corners, border,
+shadow. Those are choices from a palette rather than manipulations of a shape,
+and a palette is a list that wants a column with room for names.
+
+The line, stated once so it settles future questions: *if a control changes how
+something looks, it goes on the right; if it changes what something is or where
+it sits, it goes on the canvas.*
