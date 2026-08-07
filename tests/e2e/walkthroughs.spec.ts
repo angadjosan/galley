@@ -105,6 +105,27 @@ async function readAsAgent(path: string): Promise<string> {
   return body.content;
 }
 
+/**
+ * Insert a design from a starter and return the path it landed at.
+ *
+ * By difference, not by position. These tests share one spec document, so it
+ * may already hold a design — and a new one lands at the caret, which is not
+ * necessarily after the old one. Neither `.first()` nor `.last()` is the one
+ * this test just made.
+ */
+async function insertDesign(page: Page, starter: string): Promise<string> {
+  const chips = page.locator('.prose a[title="design"]');
+  const before = new Set(await chips.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('href'))));
+  await page.getByRole('button', { name: 'Insert design', exact: true }).click();
+  await page.getByTestId(starter).click();
+  await expect(chips).not.toHaveCount(before.size);
+  const after = await chips.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('href')));
+  const made = after.find((href) => href && !before.has(href));
+  expect(made, 'the design reference has no target').toBeTruthy();
+  await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+  return made!;
+}
+
 test.describe('the writing surface', () => {
   test('shows a document as rich text, with no Markdown anywhere', async ({ page }) => {
     await openSpec(page);
@@ -817,16 +838,62 @@ test.describe('designs', () => {
     expect(source).toContain('```design');
   });
 
+  test('one edit to a component changes every use of it', async ({ page }) => {
+    // The whole argument for having components: twelve buttons that are the
+    // *same* button. Without this, "our button" is a convention nobody can
+    // enforce and every agent quietly reinvents it.
+    await openWorkspace(page);
+    await page.getByTestId('doc-specs/checkout-v2').click();
+    await caretAtEndOf(page, '.prose > p[data-block-id]');
+    const designPath = await insertDesign(page, 'design-kit');
+
+    await page.reload();
+    await page.getByTestId(`doc-${designPath}`).click();
+    await expect(page.getByTestId('design-stage')).toBeVisible();
+    // It starts clean, which is what makes the findings bar mean anything.
+    await expect(page.getByTestId('design-findings')).toHaveText('Nothing to fix.');
+
+    // Four buttons on the canvas, from two definitions and no repetition.
+    const before = await readAsAgent(designPath);
+    expect((before.match(/<use /g) ?? []).length).toBe(4);
+    expect((before.match(/<define /g) ?? []).length).toBe(2);
+
+    // Clicking a button selects the *use*, not a piece of the definition —
+    // editing one of those through an instance would change every other
+    // instance without saying so.
+    await page.locator('.design-layer').filter({ hasText: 'Pay $42.00' }).last().click();
+    await expect(page.locator('.design-inspector')).toContainText('label');
+
+    // One slot changes one button.
+    await page.locator('.inspector-group input').first().fill('Pay now');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    expect(await readAsAgent(designPath)).toContain('label="Pay now"');
+
+    // One edit to the definition changes all three that use it — and leaves
+    // the fourth, which uses a different one, alone.
+    await page.locator('.design-tree-row').filter({ hasText: 'Button' }).first().click();
+    await page.locator('.inspector-choice', { hasText: 'Corners' }).locator('select').selectOption('rounded-full');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    const radii = await page.evaluate(() =>
+      [...document.querySelectorAll('.design-surface [data-layer-id]')]
+        .map((node) => getComputedStyle(node).borderRadius)
+        .filter((radius) => radius !== '0px'),
+    );
+    expect(radii.filter((radius) => radius === '999px'), 'the definition did not reach its uses').toHaveLength(3);
+    expect(radii.filter((radius) => radius !== '999px'), 'the other component changed too').toHaveLength(1);
+
+    // And the file still says it once.
+    const after = await readAsAgent(designPath);
+    expect((after.match(/rounded-full/g) ?? []).length, 'the change was written per use').toBe(1);
+    expect((after.match(/<use /g) ?? []).length).toBe(4);
+  });
+
   test('the canvas selects the way a design tool does, and a drag is a move', async ({ page }) => {
     await openWorkspace(page);
     await page.getByTestId('doc-specs/checkout-v2').click();
     await caretAtEndOf(page, '.prose > p[data-block-id]');
-    await page.getByRole('button', { name: 'Insert design', exact: true }).click();
-    await page.getByTestId('design-form').click();
-    const chip = page.locator('.prose a[title="design"]');
-    await expect(chip).toBeVisible();
-    const designPath = (await chip.first().getAttribute('href')) ?? '';
-    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    const designPath = await insertDesign(page, 'design-form');
 
     await page.reload();
     // By path, not by name: this suite creates more than one design and they

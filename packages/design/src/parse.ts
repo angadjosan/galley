@@ -1,5 +1,5 @@
 import { defaultFrameName, defaultLayerName } from './names.js';
-import type { DesignDocument, Frame, ImageLayer, Layer, LayerId } from './types.js';
+import type { Component, DesignDocument, Frame, ImageLayer, Layer, LayerId } from './types.js';
 
 /**
  * Reading a design.
@@ -34,7 +34,17 @@ interface Token {
   readonly selfClosing: boolean;
 }
 
-const ELEMENTS = new Set(['design', 'frame', 'box', 'text', 'image']);
+const ELEMENTS = new Set(['design', 'frame', 'box', 'text', 'image', 'define', 'use']);
+
+/**
+ * A `<use>`'s own attributes. Everything else it carries is a slot value.
+ *
+ * An open set is right here and wrong everywhere else in this format: the slot
+ * names come from the definition, and the *linter* checks them against it. The
+ * parser cannot, because a use may appear before the define it names — and a
+ * parser that refused a forward reference would make file order load-bearing.
+ */
+const USE_ATTRS = new Set(['id', 'name', 'class', 'component']);
 
 /** The five XML entities, and nothing else — an unknown one is an error. */
 const ENTITIES: Record<string, string> = {
@@ -215,7 +225,7 @@ function splitClasses(value: string | undefined): string[] {
  * which is exactly the guarantee a *provisional* id should make. The moment a
  * layer needs to survive being moved, it has earned a durable id in the file.
  */
-function provisional(path: readonly number[], taken: ReadonlySet<string>): LayerId {
+function provisional(path: readonly (number | string)[], taken: ReadonlySet<string>): LayerId {
   const derived = `l_${path.join('_')}`;
   if (!taken.has(derived)) return derived;
   // A layer the file names explicitly has already claimed this string — which
@@ -246,6 +256,7 @@ export function parseDesign(source: string): ParseResult {
   let name = 'Untitled design';
   let seenDesign = false;
   const frames: Frame[] = [];
+  const components: Component[] = [];
 
   // An explicit stack rather than recursion: the error messages need to name
   // the element that was left open, and a recursive descent loses that.
@@ -262,9 +273,23 @@ export function parseDesign(source: string): ParseResult {
   const pathOf = (): number[] =>
     stack.filter((entry) => entry.name !== 'design').map((entry) => entry.children.length);
 
+  /**
+   * Where the layer being finished sits, for the id it is about to be given.
+   *
+   * Definitions are numbered in their own namespace — `l_c0_1` rather than
+   * `l_0_1` — because a definition is not inside any frame, and reusing the
+   * frame numbering would give a component's root the same id as the first
+   * frame's first child. That collision makes a design unparseable, which is
+   * the failure this codebase has already had once.
+   */
+  const idPath = (): (number | string)[] =>
+    stack.some((entry) => entry.name === 'define')
+      ? [`c${components.length}`, ...pathOf()]
+      : [frames.length, ...pathOf()];
+
   const finishLayer = (
     frame: { name: string; attrs: Record<string, string>; children: Layer[]; line: number },
-    path: readonly number[],
+    path: readonly (number | string)[],
   ): Layer | null => {
     const attrs = frame.attrs;
     const base = {
@@ -282,6 +307,22 @@ export function parseDesign(source: string): ParseResult {
         return null;
       }
       return { ...base, kind: 'image', src: attrs.src, alt: attrs.alt ?? '' } satisfies ImageLayer;
+    }
+    if (frame.name === 'use') {
+      const component = attrs.component ?? '';
+      if (!component) {
+        errors.push({ line: frame.line, message: 'A `<use>` needs a `component`, naming a `<define>`.' });
+        return null;
+      }
+      // Everything that is not a structural attribute is a slot value. An open
+      // set here is right where it is wrong elsewhere: the slot names come from
+      // the definition, and the linter checks them against it — the parser
+      // cannot, because the definition may be written after the use.
+      const slots: Record<string, string> = Object.create(null) as Record<string, string>;
+      for (const [key, value] of Object.entries(attrs)) {
+        if (!USE_ATTRS.has(key) && !key.startsWith('#')) slots[key] = value;
+      }
+      return { ...base, name: attrs.name || component, kind: 'use', component, slots };
     }
     return null;
   };
@@ -314,6 +355,20 @@ export function parseDesign(source: string): ParseResult {
       }
       const enclosing = stack[stack.length - 1];
 
+      if (token.name === 'define') {
+        if (enclosing?.name !== 'design') {
+          errors.push({
+            line: token.line,
+            message: '`<define>` goes at the top of the design, not inside a frame. A definition is not drawn anywhere.',
+          });
+          continue;
+        }
+        if (!token.attrs.name) {
+          errors.push({ line: token.line, message: 'A `<define>` needs a `name`, which is what a `<use>` refers to.' });
+          continue;
+        }
+      }
+
       // Three nestings the grammar does not have. Each one used to be accepted
       // and quietly flattened — a nested frame was hoisted to the top level and
       // emitted *first*, so frames reordered on save.
@@ -344,10 +399,10 @@ export function parseDesign(source: string): ParseResult {
         continue;
       }
       const entry = { name: token.name, line: token.line, attrs: token.attrs, children: [] as Layer[] };
-      if (token.selfClosing || token.name === 'image') {
+      if (token.selfClosing || token.name === 'image' || token.name === 'use') {
         // `<image>` never has children, so it closes itself whether or not the
         // author wrote the slash.
-        const layer = finishLayer(entry, [frames.length, ...pathOf()]);
+        const layer = finishLayer(entry, idPath());
         const parent = stack[stack.length - 1];
         if (layer && parent) parent.children.push(layer);
         else if (layer) errors.push({ line: token.line, message: 'A layer outside any frame.' });
@@ -362,7 +417,7 @@ export function parseDesign(source: string): ParseResult {
     // never reaches the stack. A written-out `</image>` would therefore pop its
     // *parent*, and the resulting cascade reported four errors, none of which
     // named the actual mistake.
-    if (token.name === 'image') continue;
+    if (token.name === 'image' || token.name === 'use') continue;
 
     const top = stack.pop();
     if (!top) {
@@ -376,6 +431,21 @@ export function parseDesign(source: string): ParseResult {
       });
     }
     if (top.name === 'design') continue;
+    if (top.name === 'define') {
+      if (top.children.length !== 1) {
+        errors.push({
+          line: top.line,
+          message: `\`<define name="${top.attrs.name}">\` holds ${top.children.length} layers. A component has exactly one root — two roots is two components.`,
+        });
+        continue;
+      }
+      if (components.some((one) => one.name === top.attrs.name)) {
+        errors.push({ line: top.line, message: `Two components are called \`${top.attrs.name}\`.` });
+        continue;
+      }
+      components.push({ name: top.attrs.name!, layer: top.children[0]! });
+      continue;
+    }
     if (top.name === 'frame') {
       // Digits only. `Number()` swallows `0x10`, `1e3` and ` 10 ` and the file
       // was then rewritten with the coerced value — a save that silently
@@ -405,7 +475,7 @@ export function parseDesign(source: string): ParseResult {
       });
       continue;
     }
-    const layer = finishLayer(top, [frames.length, ...pathOf()]);
+    const layer = finishLayer(top, idPath());
     const parent = stack[stack.length - 1];
     if (!layer) continue;
     if (!parent || parent.name === 'design') {
@@ -432,11 +502,15 @@ export function parseDesign(source: string): ParseResult {
     collide(layer.id, 0);
     if (layer.kind === 'box') layer.children.forEach(visit);
   };
+  for (const component of components) visit(component.layer);
   for (const frame of frames) {
     collide(frame.id, 0);
     frame.children.forEach(visit);
   }
 
   if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, design: { name, frames } };
+  return {
+    ok: true,
+    design: { name, frames, ...(components.length > 0 ? { components } : {}) },
+  };
 }

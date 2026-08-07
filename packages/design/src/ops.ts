@@ -44,7 +44,16 @@ export type DesignOp =
   | { readonly op: 'set-frame'; readonly id: LayerId; readonly width?: number; readonly height?: number | 'auto' }
   | { readonly op: 'insert'; readonly parent: LayerId; readonly index: number; readonly layer: NewLayer }
   | { readonly op: 'delete'; readonly id: LayerId }
-  | { readonly op: 'move'; readonly id: LayerId; readonly parent: LayerId; readonly index: number };
+  | { readonly op: 'move'; readonly id: LayerId; readonly parent: LayerId; readonly index: number }
+  /**
+   * What this one use of a component says.
+   *
+   * Separate from `set-text` because the target is different in kind: the text
+   * lives in the *definition*, and this records that this instance differs.
+   * Sending `set-text` at a layer inside a definition changes every use of it,
+   * which is right when that is what you meant and a disaster when it is not.
+   */
+  | { readonly op: 'set-slot'; readonly id: LayerId; readonly slot: string; readonly value: string | null };
 
 /**
  * Why the op was made.
@@ -80,7 +89,7 @@ export type ApplyResult =
  */
 interface Working {
   id: LayerId;
-  kind: 'frame' | 'box' | 'text' | 'image';
+  kind: 'frame' | 'box' | 'text' | 'image' | 'use';
   name: string;
   classes: string[];
   children: Working[];
@@ -90,9 +99,15 @@ interface Working {
   alt?: string;
   width?: number;
   height?: number | 'auto';
+  component?: string;
+  slots?: Record<string, string>;
 }
 
-function toWorking(design: DesignDocument): { roots: Working[]; byId: Map<LayerId, Working> } {
+function toWorking(design: DesignDocument): {
+  roots: Working[];
+  definitions: { name: string; root: Working }[];
+  byId: Map<LayerId, Working>;
+} {
   const byId = new Map<LayerId, Working>();
 
   const descend = (layer: Layer, parent: Working | null): Working => {
@@ -105,11 +120,20 @@ function toWorking(design: DesignDocument): { roots: Working[]; byId: Map<LayerI
       parent,
       ...(layer.kind === 'text' ? { content: layer.content } : {}),
       ...(layer.kind === 'image' ? { src: layer.src, alt: layer.alt } : {}),
+      ...(layer.kind === 'use' ? { component: layer.component, slots: { ...layer.slots } } : {}),
     };
     byId.set(layer.id, node);
     if (layer.kind === 'box') node.children = layer.children.map((child) => descend(child, node));
     return node;
   };
+
+  // Definitions are ordinary subtrees addressed by ordinary ids, so an op that
+  // restyles a component's root is the same op that restyles any box — which is
+  // the whole reason "change the button" is one edit and not twelve.
+  const definitions = (design.components ?? []).map((component) => ({
+    name: component.name,
+    root: descend(component.layer, null),
+  }));
 
   const roots = design.frames.map((frame) => {
     const node: Working = {
@@ -127,19 +151,30 @@ function toWorking(design: DesignDocument): { roots: Working[]; byId: Map<LayerI
     return node;
   });
 
-  return { roots, byId };
+  return { roots, definitions, byId };
 }
 
-function fromWorking(name: string, roots: readonly Working[]): DesignDocument {
-  const descend = (node: Working): Layer => {
-    const base = { id: node.id, name: node.name, classes: node.classes };
-    if (node.kind === 'text') return { ...base, kind: 'text', content: node.content ?? '' };
-    if (node.kind === 'image') return { ...base, kind: 'image', src: node.src ?? '', alt: node.alt ?? '' };
-    return { ...base, kind: 'box', children: node.children.map(descend) };
-  };
+/** One working node, back to the layer it came from. */
+function layerFrom(node: Working): Layer {
+  const base = { id: node.id, name: node.name, classes: node.classes };
+  if (node.kind === 'text') return { ...base, kind: 'text', content: node.content ?? '' };
+  if (node.kind === 'image') return { ...base, kind: 'image', src: node.src ?? '', alt: node.alt ?? '' };
+  if (node.kind === 'use') {
+    return { ...base, kind: 'use', component: node.component ?? '', slots: { ...node.slots } };
+  }
+  return { ...base, kind: 'box', children: node.children.map(layerFrom) };
+}
+
+function fromWorking(
+  name: string,
+  roots: readonly Working[],
+  components?: DesignDocument['components'],
+): DesignDocument {
+  const descend = layerFrom;
 
   return {
     name,
+    ...(components && components.length > 0 ? { components } : {}),
     frames: roots.map(
       (root): Frame => ({
         id: root.id,
@@ -179,7 +214,7 @@ function detach(node: Working): void {
  * either outcome.
  */
 export function applyOps(design: DesignDocument, ops: readonly DesignOp[]): ApplyResult {
-  const { roots, byId } = toWorking(design);
+  const { roots, definitions, byId } = toWorking(design);
   const errors: string[] = [];
 
   // Resolve every target first, against the tree as it was. Doing this per-op
@@ -224,6 +259,18 @@ export function applyOps(design: DesignDocument, ops: readonly DesignOp[]): Appl
         }
         if (op.src !== undefined) target!.src = op.src;
         if (op.alt !== undefined) target!.alt = op.alt;
+        break;
+      case 'set-slot':
+        if (target!.kind !== 'use') {
+          errors.push(`\`${op.id}\` is not a use of a component, so it has no slots.`);
+          break;
+        }
+        // A null clears the override, which is not the same as setting it to
+        // the empty string: one says "whatever the component says", the other
+        // says "nothing at all", and a component whose label you cleared by
+        // accident should be recoverable by clearing the override.
+        if (op.value === null) delete target!.slots![op.slot];
+        else target!.slots![op.slot] = op.value;
         break;
       case 'set-frame':
         if (target!.kind !== 'frame') {
@@ -274,7 +321,16 @@ export function applyOps(design: DesignDocument, ops: readonly DesignOp[]): Appl
   }
 
   if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, design: fromWorking(design.name, roots) };
+  return {
+    ok: true,
+    design: fromWorking(
+      design.name,
+      roots,
+      // Rebuilt from the working tree rather than copied from the input, so an
+      // op that restyled a component's root actually lands.
+      definitions.map((one) => ({ name: one.name, layer: layerFrom(one.root) })),
+    ),
+  };
 }
 
 function clamp(index: number, length: number): number {

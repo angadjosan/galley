@@ -134,6 +134,40 @@ vocabulary. Two rules follow, and both matter more than they look:
 Run \`galley design lint\` before you propose a design. It exits non-zero on an
 error and its messages carry the fix.
 
+### Components
+
+A design says a thing once and uses it many times:
+
+\`\`\`
+<design name="Kit">
+  <define name="Button">
+    <box class="flex items-center justify-center h-40 px-4 bg-accent rounded-md hover:bg-accent-hover">
+      <text name="slot:label" class="text-body text-on-accent">Button</text>
+    </box>
+  </define>
+  <frame name="Screen" width="390" class="flex flex-col gap-3 p-6 bg-canvas">
+    <use component="Button" label="Pay $42.00" />
+    <use class="grow" component="Button" label="Cancel" />
+  </frame>
+</design>
+\`\`\`
+
+- A \`<define>\` goes at the top and is **drawn nowhere**. It holds exactly one
+  layer; two roots is two components.
+- A layer named \`slot:something\` is what a \`<use>\` can override, by writing
+  \`something="..."\` on it. Only text varies — a component whose every property
+  can be overridden is a shape with extra steps.
+- A \`<use>\` carries its own \`class\`, because where a thing sits is not part of
+  what it is. Those classes win over the definition's.
+- Change the definition to change every use. Change a slot to change one.
+
+### States
+
+Four prefixes describe what a thing looks like when you touch it:
+\`hover:\`, \`press:\`, \`focus:\`, \`disabled:\`. They take the same class names
+everything else does — \`hover:bg-accent-hover\`, \`focus:border\`. There are no
+others; anything past these four is behaviour, and behaviour belongs in code.
+
 ### Changing one
 
 Do not rewrite the fence. Send **ops** -- the same eight operations the canvas
@@ -154,7 +188,7 @@ galley design apply designs/checkout --ops changes.json             # propose it
 \`\`\`
 
 The ops are \`set-classes\`, \`set-text\`, \`set-name\`, \`set-image\`,
-\`set-frame\`, \`insert\`, \`delete\` and \`move\`. Ids come from
+\`set-frame\`, \`set-slot\`, \`insert\`, \`delete\` and \`move\`. Ids come from
 \`galley design outline\`. Every op takes an \`intent\`, and you should write
 one: a reviewer reading eleven class changes cannot tell from the diff what you
 were trying to do.

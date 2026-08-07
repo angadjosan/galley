@@ -1,4 +1,4 @@
-import { designCss, hasStates, resolveClasses, type DesignDocument, type Layer } from '@galley/design';
+import { designCss, expandDesign, hasStates, resolveClasses, type DesignDocument, type Layer } from '@galley/design';
 
 /**
  * A design as plain DOM.
@@ -15,7 +15,10 @@ import { designCss, hasStates, resolveClasses, type DesignDocument, type Layer }
  */
 let previews = 0;
 
-export function designToDom(design: DesignDocument, mode?: string): HTMLElement {
+export function designToDom(authored: DesignDocument, mode?: string): HTMLElement {
+  // Components are expanded here too, so a design referenced from prose draws
+  // the same picture the canvas does.
+  const design = expandDesign(authored);
   const wrapper = document.createElement('div');
   wrapper.className = 'design-preview-frames';
   // A preview is interactive in exactly one way: the states resolve. Hovering a
@@ -60,7 +63,10 @@ function layerToDom(layer: Layer): HTMLElement {
   }
   const box = document.createElement('div');
   apply(box, layer.classes);
-  for (const child of layer.children) box.append(layerToDom(child));
+  // A `<use>` that reached here was not expanded, which is a bug upstream. An
+  // empty box keeps the preview drawable rather than throwing inside a
+  // ProseMirror decoration, where a throw takes the document view with it.
+  if (layer.kind === 'box') for (const child of layer.children) box.append(layerToDom(child));
   return box;
 }
 

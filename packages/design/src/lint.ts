@@ -1,5 +1,6 @@
 import { THEME_ROLES, resolveClasses } from './classes.js';
 import { DEFAULT_THEME, contrastRatio, modeOf, type ThemeDocument } from './theme.js';
+import { expandDesign, slotsOf, useOf } from './expand.js';
 import { find, walk, type DesignDocument, type Layer, type LintFinding } from './types.js';
 
 /**
@@ -37,7 +38,7 @@ export interface LintOptions {
 }
 
 export function lintDesign(design: DesignDocument, options: LintOptions = {}): LintFinding[] {
-  const findings: LintFinding[] = [...contrastFindings(design, options)];
+  const findings: LintFinding[] = [...contrastFindings(design, options), ...componentFindings(design)];
   const seenIds = new Map<string, number>();
 
   if (design.frames.length === 0) {
@@ -122,6 +123,9 @@ export function outline(design: DesignDocument, options: OutlineOptions = {}): s
   if (!scoped) return `no layer \`${options.under}\`\n`;
 
   const lines: string[] = [`${scoped.name}`];
+  for (const component of scoped.components ?? []) {
+    lines.push(`  component ${component.name} (${slotsOf(component).join(', ') || 'no slots'})`);
+  }
   for (const { layer, depth } of walk(scoped)) {
     if (options.depth != null && depth > options.depth) continue;
     const indent = '  '.repeat(depth + 1);
@@ -131,7 +135,11 @@ export function outline(design: DesignDocument, options: OutlineOptions = {}): s
         ? ` "${layer.content.slice(0, 48)}"`
         : 'kind' in layer && layer.kind === 'image'
           ? ` ${layer.src}`
-          : '';
+          : 'kind' in layer && layer.kind === 'use'
+            ? ` ${layer.component}${Object.entries(layer.slots)
+                .map(([name, value]) => ` ${name}="${value}"`)
+                .join('')}`
+            : '';
     const size = 'width' in layer ? ` ${layer.width}×${layer.height}` : '';
     lines.push(`${indent}${kind} ${layer.id} ${layer.name}${size}${detail}`);
   }
@@ -178,6 +186,102 @@ function contains(layers: readonly Layer[], id: string): boolean {
   return layers.some((layer) => layer.id === id || (layer.kind === 'box' && contains(layer.children, id)));
 }
 
+/**
+ * What goes wrong with components, and only with components.
+ *
+ * Three failures, and each is invisible in the markup — which is exactly the
+ * kind of thing a linter is for. A `<use>` naming a component nobody defined
+ * draws nothing; a slot nobody declared is a typo that silently does nothing;
+ * and a component that uses itself is an infinite tree. All three parse fine.
+ */
+function componentFindings(design: DesignDocument): LintFinding[] {
+  const components = design.components ?? [];
+  if (components.length === 0 && !hasUse(design)) return [];
+  const findings: LintFinding[] = [];
+  const byName = new Map(components.map((one) => [one.name, one]));
+
+  const check = (layer: Layer): void => {
+    if (layer.kind === 'box') {
+      layer.children.forEach(check);
+      return;
+    }
+    if (layer.kind !== 'use') return;
+    const component = byName.get(layer.component);
+    if (!component) {
+      findings.push({
+        layerId: layer.id,
+        severity: 'error',
+        message:
+          `No component is called \`${layer.component}\`. ` +
+          (components.length > 0
+            ? `The ones defined here are ${components.map((one) => `\`${one.name}\``).join(', ')}.`
+            : 'Define one with `<define name="…">` at the top of the design.'),
+      });
+      return;
+    }
+    const offered = slotsOf(component);
+    for (const slot of Object.keys(layer.slots)) {
+      if (offered.includes(slot)) continue;
+      findings.push({
+        layerId: layer.id,
+        severity: 'error',
+        message:
+          `\`${layer.component}\` has no slot called \`${slot}\`. ` +
+          (offered.length > 0
+            ? `It offers ${offered.map((one) => `\`${one}\``).join(', ')}.`
+            : 'It offers none — name a layer inside the definition `slot:something` to make one.'),
+      });
+    }
+  };
+
+  for (const frame of design.frames) frame.children.forEach(check);
+  for (const component of components) {
+    check(component.layer);
+    // A component that reaches itself, however many steps around. The expander
+    // survives it by drawing an empty box; this is what says why.
+    const cycle = reaches(component.name, component.name, byName, new Set());
+    if (cycle) {
+      findings.push({
+        layerId: component.layer.id,
+        severity: 'error',
+        message: `\`${component.name}\` uses itself, ${cycle}. A component cannot contain itself — it would never finish drawing.`,
+      });
+    }
+  }
+  return findings;
+}
+
+function hasUse(design: DesignDocument): boolean {
+  for (const { layer } of walk(design)) {
+    if ('kind' in layer && layer.kind === 'use') return true;
+  }
+  return false;
+}
+
+/** Whether `from` reaches `goal`, and the path it took, for the message. */
+function reaches(
+  from: string,
+  goal: string,
+  byName: ReadonlyMap<string, { layer: Layer }>,
+  seen: Set<string>,
+): string | null {
+  const component = byName.get(from);
+  if (!component || seen.has(from)) return null;
+  seen.add(from);
+  const uses: string[] = [];
+  const descend = (layer: Layer): void => {
+    if (layer.kind === 'use') uses.push(layer.component);
+    if (layer.kind === 'box') layer.children.forEach(descend);
+  };
+  descend(component.layer);
+  for (const next of uses) {
+    if (next === goal) return `directly`;
+    const deeper = reaches(next, goal, byName, seen);
+    if (deeper) return `through \`${next}\``;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Contrast
 // ---------------------------------------------------------------------------
@@ -200,8 +304,21 @@ function contains(layers: readonly Layer[], id: string): boolean {
  * WCAG 2.2 §1.4.3: 4.5:1 for body text, 3:1 for large text — ≥24px, or ≥18.66px
  * when bold.
  */
-function contrastFindings(design: DesignDocument, options: LintOptions): LintFinding[] {
+function contrastFindings(authored: DesignDocument, options: LintOptions): LintFinding[] {
   const theme = options.theme ?? DEFAULT_THEME;
+  /**
+   * Checked on the **drawn** tree, not the authored one.
+   *
+   * A definition sits outside every frame, so on its own it has no background
+   * to contrast against — and checking it against the default canvas reported
+   * every white-on-accent label in every component as unreadable, which is both
+   * wrong and the most annoying possible kind of wrong.
+   *
+   * The drawn tree has the answer, because a use is somewhere. The finding is
+   * then attributed to the use rather than to the invented layer inside it, so
+   * clicking it selects something that exists.
+   */
+  const design = expandDesign(authored);
   const modes = options.mode ? [modeOf(theme, options.mode)] : theme.modes;
   const findings: LintFinding[] = [];
 
@@ -221,8 +338,18 @@ function contrastFindings(design: DesignDocument, options: LintOptions): LintFin
     for (const child of frame.children) descend(child, here);
   }
 
-  for (const { layer } of walk(design)) {
-    if (!('kind' in layer) || layer.kind !== 'text' || !layer.content.trim()) continue;
+  // Frames only. A definition is checked where it is *used*, above — on its own
+  // it has no background, and checking it against the default canvas reported
+  // every white-on-accent label in every component as unreadable.
+  const onCanvas: Layer[] = [];
+  const gather = (layer: Layer): void => {
+    onCanvas.push(layer);
+    if (layer.kind === 'box') layer.children.forEach(gather);
+  };
+  for (const frame of design.frames) frame.children.forEach(gather);
+
+  for (const layer of onCanvas) {
+    if (layer.kind !== 'text' || !layer.content.trim()) continue;
     const ink = roleOf(layer.classes, 'text') ?? 'fg';
     const paper = backgrounds.get(layer.id) ?? 'canvas';
     const { size, bold } = typeOf(layer.classes);
@@ -237,7 +364,7 @@ function contrastFindings(design: DesignDocument, options: LintOptions): LintFin
       const ratio = contrastRatio(front, back);
       if (ratio >= required) continue;
       findings.push({
-        layerId: layer.id,
+        layerId: useOf(layer.id),
         severity: 'error',
         message:
           `“${layer.name}” is ${ratio.toFixed(2)}:1 in ${mode.name} — \`text-${ink}\` on \`bg-${paper}\`. ` +

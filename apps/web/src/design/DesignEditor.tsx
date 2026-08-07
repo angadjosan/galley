@@ -8,6 +8,7 @@ import {
   lintDesign,
   parseDesign,
   serializeDesign,
+  slotsOf,
   splitState,
   walk,
   type DesignDocument,
@@ -15,8 +16,10 @@ import {
   type Frame,
   type Layer,
   type LintFinding,
+  type Component,
   type NewLayer,
   type State,
+  type UseLayer,
 } from '@galley/design';
 import { Stage } from './Stage.js';
 import { NOTHING, addToSelection, focusFor, reconcile, type Selection } from './selection.js';
@@ -114,13 +117,31 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
   const design = parsed.ok ? parsed.design : null;
   const findings = useMemo(() => (design ? lintDesign(design) : []), [design]);
 
-  const layers = useMemo(() => (design ? [...walk(design)] : []), [design]);
+  /**
+   * The tree, without the definitions.
+   *
+   * `walk` yields them — an id lookup has to find a layer inside one — but they
+   * are not on any frame, so listing them among the frame's layers would show a
+   * card that is nowhere. They get their own section instead.
+   */
+  const everything = useMemo(() => (design ? [...walk(design)] : []), [design]);
+  const layers = useMemo(() => {
+    if (!design) return [];
+    const inComponents = new Set(
+      (design.components ?? []).flatMap((component) => componentRows(component).map((row) => row.layer.id)),
+    );
+    return everything.filter((entry) => !inComponents.has(entry.layer.id));
+  }, [design, everything]);
   // Ids are position-derived, so a delete or a move renames layers nobody
   // touched. Anything that no longer exists is dropped rather than left
   // dangling, which is how an inspector ends up editing the wrong layer.
   const selection = useMemo(() => (design ? reconcile(design, rawSelection) : rawSelection), [design, rawSelection]);
   const selected = selection.ids.length === 1 ? selection.ids[0]! : null;
-  const current = layers.find((entry) => entry.layer.id === selected)?.layer ?? null;
+  // Looked up in *everything*, not in the tree's list. A definition's layers are
+  // deliberately kept out of the frame's tree — they are on no frame — but they
+  // are still perfectly ordinary layers, and selecting one has to reach the
+  // inspector or a component cannot be edited at all.
+  const current = everything.find((entry) => entry.layer.id === selected)?.layer ?? null;
   /**
    * Everything selected, in tree order.
    *
@@ -129,7 +150,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
    * editor denies — and the three gestures a multiple selection is *for*
    * (restyle, align, wrap) are all ones the panel already has controls for.
    */
-  const chosen = layers
+  const chosen = everything
     .filter((entry) => selection.ids.includes(entry.layer.id))
     .map((entry) => entry.layer);
 
@@ -438,6 +459,30 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
               Delete
             </button>
           </div>
+          {(design?.components ?? []).length > 0 && (
+            <p className="design-tree-heading">Components</p>
+          )}
+          {(design?.components ?? []).flatMap((component) =>
+            componentRows(component).map(({ layer, depth }) => (
+              <button
+                key={layer.id}
+                type="button"
+                className={`design-tree-row ${selection.ids.includes(layer.id) ? 'is-selected' : ''} ${
+                  selection.focus === layer.id ? 'is-focus' : ''
+                }`}
+                style={{ paddingLeft: 10 + depth * 14 }}
+                onClick={(event) => reveal(layer.id, event.shiftKey || event.metaKey || event.ctrlKey)}
+              >
+                <span className="design-tree-kind" aria-hidden="true">
+                  {depth === 0 ? '◈' : KIND_GLYPH[layer.kind]}
+                </span>
+                <span className="design-tree-name">
+                  {depth === 0 ? component.name : layer.name}
+                </span>
+              </button>
+            )),
+          )}
+          {(design?.components ?? []).length > 0 && <p className="design-tree-heading">Layers</p>}
           {layers.map(({ layer, depth }) => (
             <button
               key={layer.id}
@@ -527,6 +572,14 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
               flow={design && current ? flowOf(design, current.id) : null}
               measured={(current && rects.get(current.id)) ?? null}
               onFrame={(change) => current && run([{ op: 'set-frame', id: current.id, ...change }])}
+              slots={
+                design && current && 'kind' in current && current.kind === 'use'
+                  ? (design.components ?? [])
+                      .filter((one) => one.name === current.component)
+                      .flatMap((one) => slotsOf(one))
+                  : []
+              }
+              onSlot={(slot, value) => current && run([{ op: 'set-slot', id: current.id, slot, value }])}
               readOnly={props.readOnly ?? false}
               findings={findings.filter((finding) => finding.layerId && selection.ids.includes(finding.layerId))}
               onEdit={(change) => edit(selection.ids, change)}
@@ -612,6 +665,8 @@ function Inspector({
   findings,
   onEdit,
   onFrame,
+  slots = [],
+  onSlot,
 }: {
   layers: readonly (Layer | Frame)[];
   /**
@@ -632,6 +687,10 @@ function Inspector({
   onEdit(change: (layer: Layer) => Layer): void;
   /** A frame's own dimensions, which are attributes rather than classes. */
   onFrame?(change: { width?: number; height?: number | 'auto' }): void;
+  /** The slots a component offers, when the selection is one use of one. */
+  slots?: readonly string[];
+  /** A `null` clears the override, which is not the same as blanking it. */
+  onSlot?(slot: string, value: string | null): void;
 }): JSX.Element {
   const layer = layers[0]!;
   const many = layers.length > 1;
@@ -753,6 +812,30 @@ function Inspector({
             onChange={(event) => onEdit((current) => ({ ...current, content: event.target.value } as Layer))}
           />
         </label>
+      )}
+
+      {!many && 'kind' in layer && layer.kind === 'use' && onSlot && (
+        <fieldset className="inspector-group" disabled={readOnly}>
+          <legend>{layer.component}</legend>
+          {slots.length === 0 ? (
+            // Not an error: a component with nothing that varies is a perfectly
+            // good component. The panel says so rather than showing an empty
+            // box that looks broken.
+            <p className="inspector-count">Nothing about this one differs. Edit “{layer.component}” to change it.</p>
+          ) : (
+            slots.map((slot) => (
+              <label className="inspector-field" key={slot}>
+                <span>{slot}</span>
+                <input
+                  value={(layer as UseLayer).slots[slot] ?? ''}
+                  placeholder="as defined"
+                  disabled={readOnly}
+                  onChange={(event) => onSlot(slot, event.target.value || null)}
+                />
+              </label>
+            ))
+          )}
+        </fieldset>
       )}
 
       {!many && 'kind' in layer && layer.kind === 'image' && (
@@ -1053,6 +1136,17 @@ function Size({
 
 /** Classes that make a layer hug its content across the flow. */
 const HUGGERS = new Set(['self-start', 'self-center', 'self-end', 'self-baseline']);
+
+/** A definition's layers, flattened for the tree, its root at depth 0. */
+function componentRows(component: Component): { layer: Layer; depth: number }[] {
+  const rows: { layer: Layer; depth: number }[] = [];
+  const descend = (layer: Layer, depth: number): void => {
+    rows.push({ layer, depth });
+    if (layer.kind === 'box') layer.children.forEach((child) => descend(child, depth + 1));
+  };
+  descend(component.layer, 0);
+  return rows;
+}
 
 /**
  * The chain from the design down to the container we are inside.

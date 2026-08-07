@@ -58,6 +58,7 @@ const OPS = new Set([
   'set-name',
   'set-image',
   'set-frame',
+  'set-slot',
   'insert',
   'delete',
   'move',
@@ -206,6 +207,18 @@ function readOp(
             ...(height === 'auto' || typeof height === 'number' ? { height: height as number | 'auto' } : {}),
           }
         : null;
+    }
+    case 'set-slot': {
+      const target = id();
+      if (typeof body.slot !== 'string' || !body.slot) {
+        errors.push(`${at} (set-slot): \`slot\` must name a slot the component offers.`);
+        return null;
+      }
+      if (body.value !== null && typeof body.value !== 'string') {
+        errors.push(`${at} (set-slot): \`value\` must be a string, or null to use what the component says.`);
+        return null;
+      }
+      return target ? { op: 'set-slot', id: target, slot: body.slot, value: body.value as string | null } : null;
     }
     case 'insert': {
       const parent = typeof body.parent === 'string' ? body.parent : null;

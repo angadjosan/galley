@@ -134,6 +134,13 @@ function LayerView({ layer, options }: { layer: Layer; options: RenderOptions })
   if (layer.kind === 'image') {
     return <img {...shared} src={layer.src} alt={layer.alt} />;
   }
+  if (layer.kind === 'use') {
+    // An unexpanded `<use>` is a bug upstream, not a thing to draw — every path
+    // into this renderer goes through `expandDesign` first. Drawn as an empty
+    // box so the layer still has a rect and can be selected and told what is
+    // wrong with it.
+    return <div {...shared} />;
+  }
   return (
     <div {...shared}>
       {layer.children.map((child) => (

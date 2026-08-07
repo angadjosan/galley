@@ -66,6 +66,14 @@ describe('is this an op', () => {
     expect(!result.ok && result.errors.join(' ')).toMatch(message);
   });
 
+  it('takes a slot override, and a null to clear one', () => {
+    const set = parseOps([{ op: 'set-slot', id: 'l_0_1', slot: 'label', value: 'Pay' }]);
+    const clear = parseOps([{ op: 'set-slot', id: 'l_0_1', slot: 'label', value: null }]);
+    expect(set.ok && set.ops[0]!.op).toEqual({ op: 'set-slot', id: 'l_0_1', slot: 'label', value: 'Pay' });
+    // Null is "whatever the component says", which is not the empty string.
+    expect(clear.ok && (clear.ops[0]!.op as { value: unknown }).value).toBeNull();
+  });
+
   it('refuses an image with no description, rather than merely warning', () => {
     // A lint warning is for something already in the file. An image being
     // *added* right now with no alt is a hole nobody will come back and fill,

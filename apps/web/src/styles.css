@@ -3279,3 +3279,15 @@ kbd {
   display: block;
   margin-top: 3px;
 }
+
+/* Definitions are not on any frame, so they get their own section rather than
+   appearing among the layers of a frame they are not in. */
+.design-tree-heading {
+  margin: 10px 0 2px;
+  padding: 0 10px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}

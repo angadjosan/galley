@@ -8,7 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { find, type DesignDocument, type LayerId } from '@galley/design';
+import { expandDesign, find, useOf, type DesignDocument, type LayerId } from '@galley/design';
 import {
   IDENTITY,
   MAX_ZOOM,
@@ -112,7 +112,17 @@ export function Stage(props: StageProps): JSX.Element {
   const [target, setTarget] = useState<DropTarget | null>(null);
   const [spacePan, setSpacePan] = useState(false);
 
-  const rects = useLayerRects(content, camera, props.design);
+  /**
+   * The design as it is drawn.
+   *
+   * Every `<use>` replaced by a copy of what it draws. This is the *only* place
+   * the expanded tree exists — selection, dragging, the inspector and the ops
+   * all work on the authored one, and the two are kept apart by `useOf`, which
+   * maps an id the expander invented back to the layer somebody wrote.
+   */
+  const drawn = useMemo(() => expandDesign(props.design), [props.design]);
+
+  const rects = useLayerRects(content, camera, drawn);
 
   const onMeasure = props.onMeasure;
   useEffect(() => {
@@ -405,7 +415,12 @@ export function Stage(props: StageProps): JSX.Element {
   const layerUnder = (event: { clientX: number; clientY: number }): LayerId | null => {
     const at = document.elementFromPoint(event.clientX, event.clientY);
     const element = (at as HTMLElement | null)?.closest<HTMLElement>('[data-layer-id]');
-    return element?.dataset.layerId ?? null;
+    const id = element?.dataset.layerId;
+    // Mapped back to the authored layer. Inside a component's copy the only
+    // thing anybody wrote is the `<use>` itself, so that is what a click means
+    // — the pieces inside it belong to the definition, and editing one of them
+    // through an instance would change every other instance without saying so.
+    return id ? useOf(id) : null;
   };
 
   const onPointerDown = (event: ReactPointerEvent): void => {
@@ -613,7 +628,7 @@ export function Stage(props: StageProps): JSX.Element {
         }}
       >
         <DesignView
-          design={props.design}
+          design={drawn}
           options={{
             mode: props.mode,
             state: props.state,

@@ -34,6 +34,14 @@ export function serializeDesign(design: DesignDocument, options: SerializeOption
   const lines: string[] = [];
 
   lines.push(`<design name="${attribute(design.name)}">`);
+  // Definitions first, because that is the order a reader needs them in: a
+  // `<use component="Button">` twenty lines down means nothing until you have
+  // seen the button.
+  for (const component of design.components ?? []) {
+    lines.push(`  <define name="${attribute(component.name)}">`);
+    lines.push(...serializeLayer(component.layer, durable, 2));
+    lines.push('  </define>');
+  }
   design.frames.forEach((frame, index) => {
     lines.push(...serializeFrame(frame, index, durable));
   });
@@ -75,6 +83,12 @@ function serializeLayer(layer: Layer, durable: ReadonlySet<string>, depth: numbe
     // whitespace part of the content.
     return [`${pad}<text${head}>${encode(layer.content)}</text>`];
   }
+  if (layer.kind === 'use') {
+    // Slots after the component, in the order they were written, so re-saving
+    // a design nobody edited does not reorder a line.
+    const slots = Object.entries(layer.slots).map(([name, value]) => `${name}="${attribute(value)}"`);
+    return [`${pad}<use${head} component="${attribute(layer.component)}"${slots.length > 0 ? ` ${slots.join(' ')}` : ''} />`];
+  }
   if (layer.children.length === 0) return [`${pad}<box${head}></box>`];
   return [
     `${pad}<box${head}>`,
@@ -96,6 +110,9 @@ function idAttribute(id: string, durable: ReadonlySet<string>): string {
  * layer, so an author who genuinely names something "Box" keeps that name.
  */
 function nameAttribute(layer: Layer): string {
+  // A `<use>` is named after what it uses, so repeating the component's name in
+  // a `name` attribute says nothing twice.
+  if (layer.kind === 'use') return layer.name === layer.component ? '' : `name="${attribute(layer.name)}"`;
   const invented = defaultLayerName(layer.kind, layer.kind === 'box' ? layer.children.length : 0);
   return layer.name === invented ? '' : `name="${attribute(layer.name)}"`;
 }

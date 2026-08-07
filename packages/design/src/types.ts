@@ -44,7 +44,7 @@
 /** A layer's identity. Materialized into the file only when it becomes durable. */
 export type LayerId = string;
 
-export type LayerKind = 'box' | 'text' | 'image';
+export type LayerKind = 'box' | 'text' | 'image' | 'use';
 
 export interface LayerBase {
   readonly id: LayerId;
@@ -78,7 +78,47 @@ export interface ImageLayer extends LayerBase {
   readonly alt: string;
 }
 
-export type Layer = BoxLayer | TextLayer | ImageLayer;
+/**
+ * One use of a defined component.
+ *
+ * The reason a design system is a system rather than a folder: twelve buttons
+ * that are the *same* button, so changing the definition changes all twelve.
+ * Without this, "our button" is a convention nobody can enforce and every
+ * agent quietly reinvents.
+ *
+ * It carries its own `classes` because where a thing sits is not part of what
+ * it is — `grow` on this instance and not that one is a fact about the layout
+ * around it, and forcing it into the definition would mean a second definition
+ * per position.
+ */
+export interface UseLayer extends LayerBase {
+  readonly kind: 'use';
+  /** The name of a `<define>`. Checked by the linter, not by the parser. */
+  readonly component: string;
+  /**
+   * What differs about this one, by slot name.
+   *
+   * Only text, deliberately. A component whose every property can be
+   * overridden is not a component, it is a shape with extra steps — and the
+   * thing that genuinely varies between two buttons is the words on them.
+   */
+  readonly slots: Readonly<Record<string, string>>;
+}
+
+export type Layer = BoxLayer | TextLayer | ImageLayer | UseLayer;
+
+/**
+ * A named piece of a design, defined once.
+ *
+ * Defined at the top of the file and drawn nowhere: a definition is not part of
+ * any frame, which is what stops it appearing on the canvas as a stray card
+ * floating beside the design.
+ */
+export interface Component {
+  readonly name: string;
+  /** Exactly one layer. A component with two roots is two components. */
+  readonly layer: Layer;
+}
 
 export interface Frame {
   readonly id: LayerId;
@@ -94,6 +134,8 @@ export interface Frame {
 export interface DesignDocument {
   readonly name: string;
   readonly frames: readonly Frame[];
+  /** Definitions, by declaration order. Empty for a design that has none. */
+  readonly components?: readonly Component[];
 }
 
 /** Where a problem is, and what to do about it. */
@@ -114,6 +156,20 @@ export function isContainer(layer: Layer): layer is BoxLayer {
   return layer.kind === 'box';
 }
 
+/**
+ * The slot a layer fills, if it is part of a definition and meant to vary.
+ *
+ * Held on the name rather than as a separate attribute, so a slot is visible in
+ * the layer tree without a special column: a text layer named `slot:label` is
+ * obviously the label. It also means no new field on every layer for a property
+ * that only exists inside a definition.
+ */
+export const SLOT_PREFIX = 'slot:';
+
+export function slotName(layer: Layer): string | null {
+  return layer.name.startsWith(SLOT_PREFIX) ? layer.name.slice(SLOT_PREFIX.length) : null;
+}
+
 /** Depth-first walk, parents before children. */
 export function* walk(design: DesignDocument): Generator<{ layer: Layer | Frame; depth: number }> {
   function* descend(layer: Layer, depth: number): Generator<{ layer: Layer | Frame; depth: number }> {
@@ -122,6 +178,10 @@ export function* walk(design: DesignDocument): Generator<{ layer: Layer | Frame;
       for (const child of layer.children) yield* descend(child, depth + 1);
     }
   }
+  // Definitions come first, because they are what the frames are made of — and
+  // because an id lookup has to find a layer inside a definition just as
+  // readily as one on the canvas.
+  for (const component of design.components ?? []) yield* descend(component.layer, 0);
   for (const frame of design.frames) {
     yield { layer: frame, depth: 0 };
     for (const child of frame.children) yield* descend(child, 1);

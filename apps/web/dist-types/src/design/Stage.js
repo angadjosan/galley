@@ -1,6 +1,6 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useCallback, useEffect, useMemo, useRef, useState, } from 'react';
-import { find } from '@galley/design';
+import { expandDesign, find, useOf } from '@galley/design';
 import { IDENTITY, MAX_ZOOM, MIN_ZOOM, fit, toViewport, unionOf, useLayerRects, zoomAbout, } from './camera.js';
 import { DIRECTION_WINDOW, DRAG_ACTIVATE, EDGE_INSET, axisOf, dropLine, moveIndex, resolveDrop, sameTarget, slotOf, } from './drop.js';
 import { Overlay } from './Overlay.js';
@@ -15,7 +15,16 @@ export function Stage(props) {
     const [hovered, setHovered] = useState(null);
     const [target, setTarget] = useState(null);
     const [spacePan, setSpacePan] = useState(false);
-    const rects = useLayerRects(content, camera, props.design);
+    /**
+     * The design as it is drawn.
+     *
+     * Every `<use>` replaced by a copy of what it draws. This is the *only* place
+     * the expanded tree exists — selection, dragging, the inspector and the ops
+     * all work on the authored one, and the two are kept apart by `useOf`, which
+     * maps an id the expander invented back to the layer somebody wrote.
+     */
+    const drawn = useMemo(() => expandDesign(props.design), [props.design]);
+    const rects = useLayerRects(content, camera, drawn);
     const onMeasure = props.onMeasure;
     useEffect(() => {
         onMeasure?.(rects);
@@ -306,7 +315,12 @@ export function Stage(props) {
     const layerUnder = (event) => {
         const at = document.elementFromPoint(event.clientX, event.clientY);
         const element = at?.closest('[data-layer-id]');
-        return element?.dataset.layerId ?? null;
+        const id = element?.dataset.layerId;
+        // Mapped back to the authored layer. Inside a component's copy the only
+        // thing anybody wrote is the `<use>` itself, so that is what a click means
+        // — the pieces inside it belong to the definition, and editing one of them
+        // through an instance would change every other instance without saying so.
+        return id ? useOf(id) : null;
     };
     const onPointerDown = (event) => {
         // The zoom controls sit inside the stage so they float over the design.
@@ -485,7 +499,7 @@ export function Stage(props) {
         onContextMenu: (event) => event.preventDefault(), children: [_jsx("div", { className: "design-stage-content", ref: content, style: {
                     transform: `scale(${camera.zoom}) translate(${-camera.x}px, ${-camera.y}px)`,
                     transformOrigin: '0 0',
-                }, children: _jsx(DesignView, { design: props.design, options: {
+                }, children: _jsx(DesignView, { design: drawn, options: {
                         mode: props.mode,
                         state: props.state,
                         anchored: props.anchored,

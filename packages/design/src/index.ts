@@ -47,10 +47,13 @@ export {
 } from './theme.js';
 export { lintDesign, outline, subtree, type LintOptions, type OutlineOptions } from './lint.js';
 export {
+  SLOT_PREFIX,
   find,
   isContainer,
+  slotName,
   walk,
   type BoxLayer,
+  type Component,
   type DesignDocument,
   type Frame,
   type ImageLayer,
@@ -59,6 +62,7 @@ export {
   type LayerKind,
   type LintFinding,
   type TextLayer,
+  type UseLayer,
 } from './types.js';
 export {
   applyOps,
@@ -79,5 +83,13 @@ export {
   type Vetted,
 } from './proposal.js';
 export { designCss, hasStates } from './css.js';
+export {
+  EXPANDED,
+  expandDesign,
+  isExpanded,
+  slotsOf,
+  useOf,
+  usesOf,
+} from './expand.js';
 export { STARTERS, type DesignStarter } from './starters.js';
 export { DESIGN_FENCE, extractDesign, embedDesign, isDesignDocument } from './embed.js';

@@ -55,6 +55,13 @@ function LayerView({ layer, options }) {
     if (layer.kind === 'image') {
         return _jsx("img", { ...shared, src: layer.src, alt: layer.alt });
     }
+    if (layer.kind === 'use') {
+        // An unexpanded `<use>` is a bug upstream, not a thing to draw — every path
+        // into this renderer goes through `expandDesign` first. Drawn as an empty
+        // box so the layer still has a rect and can be selected and told what is
+        // wrong with it.
+        return _jsx("div", { ...shared });
+    }
     return (_jsx("div", { ...shared, children: layer.children.map((child) => (_jsx(LayerView, { layer: child, options: options }, child.id))) }));
 }
 function layerClass(base, id, options) {

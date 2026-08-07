@@ -1,6 +1,6 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { STATES, VOCABULARY, applyOps, find, idAfter, lintDesign, parseDesign, serializeDesign, splitState, walk, } from '@galley/design';
+import { STATES, VOCABULARY, applyOps, find, idAfter, lintDesign, parseDesign, serializeDesign, slotsOf, splitState, walk, } from '@galley/design';
 import { Stage } from './Stage.js';
 import { NOTHING, addToSelection, focusFor, reconcile } from './selection.js';
 import { parentOf as holderOf } from './tree.js';
@@ -59,13 +59,30 @@ export function DesignEditor(props) {
     const parsed = useMemo(() => parseDesign(props.source), [props.source]);
     const design = parsed.ok ? parsed.design : null;
     const findings = useMemo(() => (design ? lintDesign(design) : []), [design]);
-    const layers = useMemo(() => (design ? [...walk(design)] : []), [design]);
+    /**
+     * The tree, without the definitions.
+     *
+     * `walk` yields them — an id lookup has to find a layer inside one — but they
+     * are not on any frame, so listing them among the frame's layers would show a
+     * card that is nowhere. They get their own section instead.
+     */
+    const everything = useMemo(() => (design ? [...walk(design)] : []), [design]);
+    const layers = useMemo(() => {
+        if (!design)
+            return [];
+        const inComponents = new Set((design.components ?? []).flatMap((component) => componentRows(component).map((row) => row.layer.id)));
+        return everything.filter((entry) => !inComponents.has(entry.layer.id));
+    }, [design, everything]);
     // Ids are position-derived, so a delete or a move renames layers nobody
     // touched. Anything that no longer exists is dropped rather than left
     // dangling, which is how an inspector ends up editing the wrong layer.
     const selection = useMemo(() => (design ? reconcile(design, rawSelection) : rawSelection), [design, rawSelection]);
     const selected = selection.ids.length === 1 ? selection.ids[0] : null;
-    const current = layers.find((entry) => entry.layer.id === selected)?.layer ?? null;
+    // Looked up in *everything*, not in the tree's list. A definition's layers are
+    // deliberately kept out of the frame's tree — they are on no frame — but they
+    // are still perfectly ordinary layers, and selecting one has to reach the
+    // inspector or a component cannot be edited at all.
+    const current = everything.find((entry) => entry.layer.id === selected)?.layer ?? null;
     /**
      * Everything selected, in tree order.
      *
@@ -74,7 +91,7 @@ export function DesignEditor(props) {
      * editor denies — and the three gestures a multiple selection is *for*
      * (restyle, align, wrap) are all ones the panel already has controls for.
      */
-    const chosen = layers
+    const chosen = everything
         .filter((entry) => selection.ids.includes(entry.layer.id))
         .map((entry) => entry.layer);
     /**
@@ -279,7 +296,7 @@ export function DesignEditor(props) {
                                         // is disabled rather than enabled and inert. An affordance that
                                         // appears and does nothing is the failure this codebase keeps
                                         // finding in its own work.
-                                        disabled: props.readOnly || !selected || design?.frames.some((frame) => frame.id === selected) === true, title: "Delete the selected layer", className: "design-tree-delete", children: "Delete" })] }), layers.map(({ layer, depth }) => (_jsxs("button", { type: "button", className: `design-tree-row ${selection.ids.includes(layer.id) ? 'is-selected' : ''} ${selection.focus === layer.id ? 'is-focus' : ''} ${findings.some((f) => f.layerId === layer.id) ? 'has-problem' : ''}`, style: { paddingLeft: 10 + depth * 14 }, onClick: (event) => reveal(layer.id, event.shiftKey || event.metaKey || event.ctrlKey), children: [_jsx("span", { className: "design-tree-kind", "aria-hidden": "true", children: 'kind' in layer ? KIND_GLYPH[layer.kind] : '▦' }), _jsx("span", { className: "design-tree-name", children: layer.name }), props.anchored?.has(layer.id) && (_jsx("span", { className: "design-tree-anchor", title: "Something is anchored here", children: "\u25CF" }))] }, layer.id)))] }), _jsxs("div", { className: "design-canvas", children: [design && selection.focus && (
+                                        disabled: props.readOnly || !selected || design?.frames.some((frame) => frame.id === selected) === true, title: "Delete the selected layer", className: "design-tree-delete", children: "Delete" })] }), (design?.components ?? []).length > 0 && (_jsx("p", { className: "design-tree-heading", children: "Components" })), (design?.components ?? []).flatMap((component) => componentRows(component).map(({ layer, depth }) => (_jsxs("button", { type: "button", className: `design-tree-row ${selection.ids.includes(layer.id) ? 'is-selected' : ''} ${selection.focus === layer.id ? 'is-focus' : ''}`, style: { paddingLeft: 10 + depth * 14 }, onClick: (event) => reveal(layer.id, event.shiftKey || event.metaKey || event.ctrlKey), children: [_jsx("span", { className: "design-tree-kind", "aria-hidden": "true", children: depth === 0 ? '◈' : KIND_GLYPH[layer.kind] }), _jsx("span", { className: "design-tree-name", children: depth === 0 ? component.name : layer.name })] }, layer.id)))), (design?.components ?? []).length > 0 && _jsx("p", { className: "design-tree-heading", children: "Layers" }), layers.map(({ layer, depth }) => (_jsxs("button", { type: "button", className: `design-tree-row ${selection.ids.includes(layer.id) ? 'is-selected' : ''} ${selection.focus === layer.id ? 'is-focus' : ''} ${findings.some((f) => f.layerId === layer.id) ? 'has-problem' : ''}`, style: { paddingLeft: 10 + depth * 14 }, onClick: (event) => reveal(layer.id, event.shiftKey || event.metaKey || event.ctrlKey), children: [_jsx("span", { className: "design-tree-kind", "aria-hidden": "true", children: 'kind' in layer ? KIND_GLYPH[layer.kind] : '▦' }), _jsx("span", { className: "design-tree-name", children: layer.name }), props.anchored?.has(layer.id) && (_jsx("span", { className: "design-tree-anchor", title: "Something is anchored here", children: "\u25CF" }))] }, layer.id)))] }), _jsxs("div", { className: "design-canvas", children: [design && selection.focus && (
                             /**
                              * Where you are, and the way back out.
                              *
@@ -305,7 +322,11 @@ export function DesignEditor(props) {
                             // class that actually fills: `grow` along the flow, stretch
                             // across it. Without it the control would have to guess, and a
                             // size control that guesses is one that silently does nothing.
-                            state: state, flow: design && current ? flowOf(design, current.id) : null, measured: (current && rects.get(current.id)) ?? null, onFrame: (change) => current && run([{ op: 'set-frame', id: current.id, ...change }]), readOnly: props.readOnly ?? false, findings: findings.filter((finding) => finding.layerId && selection.ids.includes(finding.layerId)), onEdit: (change) => edit(selection.ids, change) })) : (_jsx("p", { className: "design-inspector-empty", children: "Select a layer to change it." })) })] }), showSource && (_jsx("div", { className: "design-source", children: _jsxs("label", { children: [_jsx("span", { className: "visually-hidden", children: "Design source" }), _jsx("textarea", { spellCheck: false, value: props.source, readOnly: props.readOnly, onChange: (event) => props.onChange(event.target.value) })] }) })), _jsx("footer", { className: `design-findings ${findings.length === 0 ? 'is-clean' : ''}`, "data-testid": "design-findings", children: findings.length === 0 ? (_jsx("span", { children: "Nothing to fix." })) : (_jsx("ul", { children: findings.slice(0, 6).map((finding, index) => (_jsx("li", { className: `design-finding is-${finding.severity}`, children: _jsx("button", { type: "button", onClick: () => finding.layerId && reveal(finding.layerId), children: finding.message }) }, index))) })) })] }));
+                            state: state, flow: design && current ? flowOf(design, current.id) : null, measured: (current && rects.get(current.id)) ?? null, onFrame: (change) => current && run([{ op: 'set-frame', id: current.id, ...change }]), slots: design && current && 'kind' in current && current.kind === 'use'
+                                ? (design.components ?? [])
+                                    .filter((one) => one.name === current.component)
+                                    .flatMap((one) => slotsOf(one))
+                                : [], onSlot: (slot, value) => current && run([{ op: 'set-slot', id: current.id, slot, value }]), readOnly: props.readOnly ?? false, findings: findings.filter((finding) => finding.layerId && selection.ids.includes(finding.layerId)), onEdit: (change) => edit(selection.ids, change) })) : (_jsx("p", { className: "design-inspector-empty", children: "Select a layer to change it." })) })] }), showSource && (_jsx("div", { className: "design-source", children: _jsxs("label", { children: [_jsx("span", { className: "visually-hidden", children: "Design source" }), _jsx("textarea", { spellCheck: false, value: props.source, readOnly: props.readOnly, onChange: (event) => props.onChange(event.target.value) })] }) })), _jsx("footer", { className: `design-findings ${findings.length === 0 ? 'is-clean' : ''}`, "data-testid": "design-findings", children: findings.length === 0 ? (_jsx("span", { children: "Nothing to fix." })) : (_jsx("ul", { children: findings.slice(0, 6).map((finding, index) => (_jsx("li", { className: `design-finding is-${finding.severity}`, children: _jsx("button", { type: "button", onClick: () => finding.layerId && reveal(finding.layerId), children: finding.message }) }, index))) })) })] }));
 }
 const KIND_GLYPH = { box: '▢', text: 'T', image: '🖼' };
 /**
@@ -333,7 +354,7 @@ const MODES = ['light', 'dark'];
  * that could express something the format cannot store would be a control that
  * silently loses work on save.
  */
-function Inspector({ layers, state, flow, measured, wordsRef, readOnly, findings, onEdit, onFrame, }) {
+function Inspector({ layers, state, flow, measured, wordsRef, readOnly, findings, onEdit, onFrame, slots = [], onSlot, }) {
     const layer = layers[0];
     const many = layers.length > 1;
     /**
@@ -422,7 +443,11 @@ function Inspector({ layers, state, flow, measured, wordsRef, readOnly, findings
             // for "set all three of these to the same name" to mean. The panel says
             // what it is editing instead of showing a field that would flatten
             // three labels into one.
-            _jsxs("p", { className: "inspector-count", children: [layers.length, " layers selected"] })) : (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Name" }), _jsx("input", { value: layer.name, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, name: event.target.value })) })] })), !many && 'kind' in layer && layer.kind === 'text' && (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Words" }), _jsx("textarea", { ref: wordsRef, value: layer.content, disabled: readOnly, rows: 3, onChange: (event) => onEdit((current) => ({ ...current, content: event.target.value })) })] })), !many && 'kind' in layer && layer.kind === 'image' && (_jsxs(_Fragment, { children: [_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Address" }), _jsx("input", { value: layer.src, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, src: event.target.value })) })] }), _jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Description" }), _jsx("input", { value: layer.alt, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, alt: event.target.value })) })] })] })), !many && !('kind' in layer) && onFrame && (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Frame width" }), _jsx("input", { type: "number", min: 80, max: 4000, value: layer.width, disabled: readOnly, onChange: (event) => onFrame({ width: Math.max(80, Math.min(4000, Number(event.target.value) || 80)) }) })] })), layers.some((one) => !('kind' in one) || one.kind !== 'text') && (_jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Arrangement" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Direction", options: [
+            _jsxs("p", { className: "inspector-count", children: [layers.length, " layers selected"] })) : (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Name" }), _jsx("input", { value: layer.name, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, name: event.target.value })) })] })), !many && 'kind' in layer && layer.kind === 'text' && (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Words" }), _jsx("textarea", { ref: wordsRef, value: layer.content, disabled: readOnly, rows: 3, onChange: (event) => onEdit((current) => ({ ...current, content: event.target.value })) })] })), !many && 'kind' in layer && layer.kind === 'use' && onSlot && (_jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: layer.component }), slots.length === 0 ? (
+                    // Not an error: a component with nothing that varies is a perfectly
+                    // good component. The panel says so rather than showing an empty
+                    // box that looks broken.
+                    _jsxs("p", { className: "inspector-count", children: ["Nothing about this one differs. Edit \u201C", layer.component, "\u201D to change it."] })) : (slots.map((slot) => (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: slot }), _jsx("input", { value: layer.slots[slot] ?? '', placeholder: "as defined", disabled: readOnly, onChange: (event) => onSlot(slot, event.target.value || null) })] }, slot))))] })), !many && 'kind' in layer && layer.kind === 'image' && (_jsxs(_Fragment, { children: [_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Address" }), _jsx("input", { value: layer.src, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, src: event.target.value })) })] }), _jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Description" }), _jsx("input", { value: layer.alt, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, alt: event.target.value })) })] })] })), !many && !('kind' in layer) && onFrame && (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Frame width" }), _jsx("input", { type: "number", min: 80, max: 4000, value: layer.width, disabled: readOnly, onChange: (event) => onFrame({ width: Math.max(80, Math.min(4000, Number(event.target.value) || 80)) }) })] })), layers.some((one) => !('kind' in one) || one.kind !== 'text') && (_jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Arrangement" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Direction", options: [
                                     { value: null, label: 'None' },
                                     { value: 'flex-col', label: 'Column' },
                                     { value: 'flex-row', label: 'Row' },
@@ -527,6 +552,17 @@ function Size({ axis, flow, classes, measured, stated, onEdit, }) {
 }
 /** Classes that make a layer hug its content across the flow. */
 const HUGGERS = new Set(['self-start', 'self-center', 'self-end', 'self-baseline']);
+/** A definition's layers, flattened for the tree, its root at depth 0. */
+function componentRows(component) {
+    const rows = [];
+    const descend = (layer, depth) => {
+        rows.push({ layer, depth });
+        if (layer.kind === 'box')
+            layer.children.forEach((child) => descend(child, depth + 1));
+    };
+    descend(component.layer, 0);
+    return rows;
+}
 /**
  * The chain from the design down to the container we are inside.
  *
