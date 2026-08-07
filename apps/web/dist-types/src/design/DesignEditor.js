@@ -2,7 +2,7 @@ import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-run
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { VOCABULARY, applyOps, find, idAfter, lintDesign, parseDesign, serializeDesign, walk, } from '@galley/design';
 import { Stage } from './Stage.js';
-import { NOTHING, focusFor, reconcile } from './selection.js';
+import { NOTHING, addToSelection, focusFor, reconcile } from './selection.js';
 import { parentOf as holderOf } from './tree.js';
 export function DesignEditor(props) {
     /**
@@ -58,6 +58,17 @@ export function DesignEditor(props) {
     const selected = selection.ids.length === 1 ? selection.ids[0] : null;
     const current = layers.find((entry) => entry.layer.id === selected)?.layer ?? null;
     /**
+     * Everything selected, in tree order.
+     *
+     * The inspector edits all of them. A marquee that selects three cards and
+     * then shows an empty panel is the canvas asserting something the rest of the
+     * editor denies — and the three gestures a multiple selection is *for*
+     * (restyle, align, wrap) are all ones the panel already has controls for.
+     */
+    const chosen = layers
+        .filter((entry) => selection.ids.includes(entry.layer.id))
+        .map((entry) => entry.layer);
+    /**
      * A change that came from somewhere else clears the selection.
      *
      * Layer ids are derived from position, so when a collaborator or an accepted
@@ -82,11 +93,22 @@ export function DesignEditor(props) {
         future.current = [];
         setSelection((current) => (current.ids.length > 0 || current.focus ? NOTHING : current));
     }, [props.source]);
-    /** Select one layer from outside the canvas — the tree, a lint finding. */
-    const reveal = useCallback((id) => {
+    /**
+     * Select one layer from outside the canvas — the tree, a lint finding.
+     *
+     * `extend` is the tree's ⇧-click, and it goes through the same
+     * siblings-only rule the canvas uses. A tree that builds selections the
+     * canvas would refuse is a second selection model, which is the thing this
+     * codebase keeps finding out the hard way.
+     */
+    const reveal = useCallback((id, extend = false) => {
+        if (!design)
+            return;
         // The focus follows, so the canvas will let the next click land on the
         // same layer instead of resolving up to its container.
-        setSelection({ focus: design ? focusFor(design, id) : null, ids: [id] });
+        setSelection((at) => extend
+            ? { focus: at.focus, ids: addToSelection(design, at.ids, id) }
+            : { focus: focusFor(design, id), ids: [id] });
     }, [design]);
     /**
      * Every change this editor makes, expressed as ops.
@@ -164,23 +186,30 @@ export function DesignEditor(props) {
         return () => window.removeEventListener('keydown', onKey);
     }, [step]);
     /** Rewrite one layer, as an op. */
-    const edit = useCallback((id, change) => {
-        const layer = design ? find(design, id) : null;
-        if (!layer)
+    const edit = useCallback((ids, change) => {
+        if (!design)
             return;
-        const next = change(layer);
+        // One batch for the whole selection, so restyling three cards is one undo
+        // step and one save. `applyOps` resolves every target against the tree as
+        // it was before any of them ran, which is what makes that safe.
         const ops = [];
-        if (next.name !== layer.name)
-            ops.push({ op: 'set-name', id, name: next.name });
-        if (next.classes.join(' ') !== layer.classes.join(' ')) {
-            ops.push({ op: 'set-classes', id, classes: next.classes });
-        }
-        if (next.kind === 'text' && layer.kind === 'text' && next.content !== layer.content) {
-            ops.push({ op: 'set-text', id, content: next.content });
-        }
-        if (next.kind === 'image' && layer.kind === 'image') {
-            if (next.src !== layer.src || next.alt !== layer.alt) {
-                ops.push({ op: 'set-image', id, src: next.src, alt: next.alt });
+        for (const id of ids) {
+            const layer = find(design, id);
+            if (!layer)
+                continue;
+            const next = change(layer);
+            if (next.name !== layer.name)
+                ops.push({ op: 'set-name', id, name: next.name });
+            if (next.classes.join(' ') !== layer.classes.join(' ')) {
+                ops.push({ op: 'set-classes', id, classes: next.classes });
+            }
+            if (next.kind === 'text' && layer.kind === 'text' && next.content !== layer.content) {
+                ops.push({ op: 'set-text', id, content: next.content });
+            }
+            if (next.kind === 'image' && layer.kind === 'image') {
+                if (next.src !== layer.src || next.alt !== layer.alt) {
+                    ops.push({ op: 'set-image', id, src: next.src, alt: next.alt });
+                }
             }
         }
         run(ops);
@@ -241,7 +270,7 @@ export function DesignEditor(props) {
                                         // is disabled rather than enabled and inert. An affordance that
                                         // appears and does nothing is the failure this codebase keeps
                                         // finding in its own work.
-                                        disabled: props.readOnly || !selected || design?.frames.some((frame) => frame.id === selected) === true, title: "Delete the selected layer", className: "design-tree-delete", children: "Delete" })] }), layers.map(({ layer, depth }) => (_jsxs("button", { type: "button", className: `design-tree-row ${selection.ids.includes(layer.id) ? 'is-selected' : ''} ${selection.focus === layer.id ? 'is-focus' : ''} ${findings.some((f) => f.layerId === layer.id) ? 'has-problem' : ''}`, style: { paddingLeft: 10 + depth * 14 }, onClick: () => reveal(layer.id), children: [_jsx("span", { className: "design-tree-kind", "aria-hidden": "true", children: 'kind' in layer ? KIND_GLYPH[layer.kind] : '▦' }), _jsx("span", { className: "design-tree-name", children: layer.name }), props.anchored?.has(layer.id) && (_jsx("span", { className: "design-tree-anchor", title: "Something is anchored here", children: "\u25CF" }))] }, layer.id)))] }), _jsxs("div", { className: "design-canvas", children: [design && selection.focus && (
+                                        disabled: props.readOnly || !selected || design?.frames.some((frame) => frame.id === selected) === true, title: "Delete the selected layer", className: "design-tree-delete", children: "Delete" })] }), layers.map(({ layer, depth }) => (_jsxs("button", { type: "button", className: `design-tree-row ${selection.ids.includes(layer.id) ? 'is-selected' : ''} ${selection.focus === layer.id ? 'is-focus' : ''} ${findings.some((f) => f.layerId === layer.id) ? 'has-problem' : ''}`, style: { paddingLeft: 10 + depth * 14 }, onClick: (event) => reveal(layer.id, event.shiftKey || event.metaKey || event.ctrlKey), children: [_jsx("span", { className: "design-tree-kind", "aria-hidden": "true", children: 'kind' in layer ? KIND_GLYPH[layer.kind] : '▦' }), _jsx("span", { className: "design-tree-name", children: layer.name }), props.anchored?.has(layer.id) && (_jsx("span", { className: "design-tree-anchor", title: "Something is anchored here", children: "\u25CF" }))] }, layer.id)))] }), _jsxs("div", { className: "design-canvas", children: [design && selection.focus && (
                             /**
                              * Where you are, and the way back out.
                              *
@@ -262,12 +291,12 @@ export function DesignEditor(props) {
                                     if (run(ids.map((id) => ({ op: 'delete', id })))) {
                                         setSelection((at) => ({ focus: at.focus, ids: [] }));
                                     }
-                                } }))] }), _jsx("aside", { className: "design-inspector", "aria-label": "Properties", children: current ? (_jsx(Inspector, { layer: current, wordsRef: wordsRef, 
+                                } }))] }), _jsx("aside", { className: "design-inspector", "aria-label": "Properties", children: chosen.length > 0 ? (_jsx(Inspector, { layers: chosen, wordsRef: wordsRef, 
                             // Which way this layer's siblings run, so "Fill" can write the
                             // class that actually fills: `grow` along the flow, stretch
                             // across it. Without it the control would have to guess, and a
                             // size control that guesses is one that silently does nothing.
-                            flow: design ? flowOf(design, current.id) : null, measured: rects.get(current.id) ?? null, onFrame: (change) => run([{ op: 'set-frame', id: current.id, ...change }]), readOnly: props.readOnly ?? false, findings: findings.filter((finding) => finding.layerId === current.id), onEdit: (change) => edit(current.id, change) })) : (_jsx("p", { className: "design-inspector-empty", children: "Select a layer to change it." })) })] }), showSource && (_jsx("div", { className: "design-source", children: _jsxs("label", { children: [_jsx("span", { className: "visually-hidden", children: "Design source" }), _jsx("textarea", { spellCheck: false, value: props.source, readOnly: props.readOnly, onChange: (event) => props.onChange(event.target.value) })] }) })), _jsx("footer", { className: `design-findings ${findings.length === 0 ? 'is-clean' : ''}`, "data-testid": "design-findings", children: findings.length === 0 ? (_jsx("span", { children: "Nothing to fix." })) : (_jsx("ul", { children: findings.slice(0, 6).map((finding, index) => (_jsx("li", { className: `design-finding is-${finding.severity}`, children: _jsx("button", { type: "button", onClick: () => finding.layerId && reveal(finding.layerId), children: finding.message }) }, index))) })) })] }));
+                            flow: design && current ? flowOf(design, current.id) : null, measured: (current && rects.get(current.id)) ?? null, onFrame: (change) => current && run([{ op: 'set-frame', id: current.id, ...change }]), readOnly: props.readOnly ?? false, findings: findings.filter((finding) => finding.layerId && selection.ids.includes(finding.layerId)), onEdit: (change) => edit(selection.ids, change) })) : (_jsx("p", { className: "design-inspector-empty", children: "Select a layer to change it." })) })] }), showSource && (_jsx("div", { className: "design-source", children: _jsxs("label", { children: [_jsx("span", { className: "visually-hidden", children: "Design source" }), _jsx("textarea", { spellCheck: false, value: props.source, readOnly: props.readOnly, onChange: (event) => props.onChange(event.target.value) })] }) })), _jsx("footer", { className: `design-findings ${findings.length === 0 ? 'is-clean' : ''}`, "data-testid": "design-findings", children: findings.length === 0 ? (_jsx("span", { children: "Nothing to fix." })) : (_jsx("ul", { children: findings.slice(0, 6).map((finding, index) => (_jsx("li", { className: `design-finding is-${finding.severity}`, children: _jsx("button", { type: "button", onClick: () => finding.layerId && reveal(finding.layerId), children: finding.message }) }, index))) })) })] }));
 }
 const KIND_GLYPH = { box: '▢', text: 'T', image: '🖼' };
 /**
@@ -295,9 +324,29 @@ const MODES = ['light', 'dark'];
  * that could express something the format cannot store would be a control that
  * silently loses work on save.
  */
-function Inspector({ layer, flow, measured, wordsRef, readOnly, findings, onEdit, onFrame, }) {
+function Inspector({ layers, flow, measured, wordsRef, readOnly, findings, onEdit, onFrame, }) {
+    const layer = layers[0];
+    const many = layers.length > 1;
+    /**
+     * What the selection agrees on.
+     *
+     * `null` means they disagree, and the control shows **Mixed** rather than
+     * picking one arbitrarily — a panel that silently reports the first layer's
+     * value is a panel that will silently apply it to the rest.
+     */
+    const agreed = (pick) => {
+        const first = pick(layer);
+        return layers.every((one) => Object.is(pick(one), first)) ? first : null;
+    };
     const classes = layer.classes;
-    const has = (name) => classes.includes(name);
+    const has = (name) => layers.every((one) => one.classes.includes(name));
+    /** Whichever member of a family this selection agrees on, or null for mixed. */
+    const family = (names) => agreed((one) => one.classes.find((name) => names.includes(name)) ?? null);
+    const mixed = (names) => !layers.every((one) => {
+        const here = one.classes.find((name) => names.includes(name)) ?? null;
+        const there = layer.classes.find((name) => names.includes(name)) ?? null;
+        return here === there;
+    });
     /** Where each class family sat before it was cleared, so it can go back. */
     const removed = useRef({});
     /**
@@ -348,11 +397,16 @@ function Inspector({ layer, flow, measured, wordsRef, readOnly, findings, onEdit
     const inks = VOCABULARY.colors.map((role) => `text-${role}`);
     const scales = VOCABULARY.type.map((scale) => `text-${scale}`);
     const radii = VOCABULARY.radius.map((step) => `rounded-${step}`);
-    return (_jsxs("div", { className: "inspector", children: [_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Name" }), _jsx("input", { value: layer.name, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, name: event.target.value })) })] }), 'kind' in layer && layer.kind === 'text' && (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Words" }), _jsx("textarea", { ref: wordsRef, value: layer.content, disabled: readOnly, rows: 3, onChange: (event) => onEdit((current) => ({ ...current, content: event.target.value })) })] })), 'kind' in layer && layer.kind === 'image' && (_jsxs(_Fragment, { children: [_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Address" }), _jsx("input", { value: layer.src, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, src: event.target.value })) })] }), _jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Description" }), _jsx("input", { value: layer.alt, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, alt: event.target.value })) })] })] })), !('kind' in layer) && onFrame && (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Frame width" }), _jsx("input", { type: "number", min: 80, max: 4000, value: layer.width, disabled: readOnly, onChange: (event) => onFrame({ width: Math.max(80, Math.min(4000, Number(event.target.value) || 80)) }) })] })), (!('kind' in layer) || layer.kind !== 'text') && (_jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Arrangement" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Direction", options: [
+    return (_jsxs("div", { className: "inspector", children: [many ? (
+            // Names and words are per-layer by nature: there is no sensible thing
+            // for "set all three of these to the same name" to mean. The panel says
+            // what it is editing instead of showing a field that would flatten
+            // three labels into one.
+            _jsxs("p", { className: "inspector-count", children: [layers.length, " layers selected"] })) : (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Name" }), _jsx("input", { value: layer.name, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, name: event.target.value })) })] })), !many && 'kind' in layer && layer.kind === 'text' && (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Words" }), _jsx("textarea", { ref: wordsRef, value: layer.content, disabled: readOnly, rows: 3, onChange: (event) => onEdit((current) => ({ ...current, content: event.target.value })) })] })), !many && 'kind' in layer && layer.kind === 'image' && (_jsxs(_Fragment, { children: [_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Address" }), _jsx("input", { value: layer.src, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, src: event.target.value })) })] }), _jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Description" }), _jsx("input", { value: layer.alt, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, alt: event.target.value })) })] })] })), !many && !('kind' in layer) && onFrame && (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Frame width" }), _jsx("input", { type: "number", min: 80, max: 4000, value: layer.width, disabled: readOnly, onChange: (event) => onFrame({ width: Math.max(80, Math.min(4000, Number(event.target.value) || 80)) }) })] })), layers.some((one) => !('kind' in one) || one.kind !== 'text') && (_jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Arrangement" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Direction", options: [
                                     { value: null, label: 'None' },
                                     { value: 'flex-col', label: 'Column' },
                                     { value: 'flex-row', label: 'Row' },
-                                ], current: directions.find(has) ?? null, onChange: (next) => {
+                                ], current: family(directions), mixed: mixed(directions), onChange: (next) => {
                                     // `flex` and the direction always travel together: a direction
                                     // without `flex` is the single most common way a design ends
                                     // up looking nothing like its source. Written back in place,
@@ -369,12 +423,12 @@ function Inspector({ layer, flow, measured, wordsRef, readOnly, findings, onEdit
                                             classes: [...without.slice(0, insertAt), 'flex', next, ...without.slice(insertAt)],
                                         };
                                     });
-                                } }), _jsx(Choice, { label: "Gap", options: [{ value: null, label: 'None' }, ...gaps.map((name) => ({ value: name, label: name.slice(4) }))], current: gaps.find(has) ?? null, onChange: (next) => setFamily(gaps, next) })] }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Padding", options: [{ value: null, label: 'None' }, ...pads.map((name) => ({ value: name, label: name.slice(2) }))], current: pads.find(has) ?? null, onChange: (next) => setFamily(pads, next) }), _jsx(Choice, { label: "Align", options: [
+                                } }), _jsx(Choice, { label: "Gap", options: [{ value: null, label: 'None' }, ...gaps.map((name) => ({ value: name, label: name.slice(4) }))], current: family(gaps), mixed: mixed(gaps), onChange: (next) => setFamily(gaps, next) })] }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Padding", options: [{ value: null, label: 'None' }, ...pads.map((name) => ({ value: name, label: name.slice(2) }))], current: family(pads), mixed: mixed(pads), onChange: (next) => setFamily(pads, next) }), _jsx(Choice, { label: "Align", options: [
                                     { value: null, label: 'Default' },
                                     { value: 'items-start', label: 'Start' },
                                     { value: 'items-center', label: 'Centre' },
                                     { value: 'items-end', label: 'End' },
-                                ], current: ['items-start', 'items-center', 'items-end'].find(has) ?? null, onChange: (next) => setFamily(['items-start', 'items-center', 'items-end'], next) })] })] })), 'kind' in layer && layer.kind !== 'text' && (_jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Size" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Size, { axis: "w", flow: flow, classes: classes, measured: measured, onEdit: onEdit }), _jsx(Size, { axis: "h", flow: flow, classes: classes, measured: measured, onEdit: onEdit })] })] })), _jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Paint" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Background", options: [{ value: null, label: 'None' }, ...backgrounds.map((name) => ({ value: name, label: name.slice(3) }))], current: backgrounds.find(has) ?? null, onChange: (next) => setFamily(backgrounds, next) }), _jsx(Choice, { label: "Ink", options: [{ value: null, label: 'Default' }, ...inks.map((name) => ({ value: name, label: name.slice(5) }))], current: inks.find(has) ?? null, onChange: (next) => setFamily(inks, next) })] }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Type", options: [{ value: null, label: 'Default' }, ...scales.map((name) => ({ value: name, label: name.slice(5) }))], current: scales.find(has) ?? null, onChange: (next) => setFamily(scales, next) }), _jsx(Choice, { label: "Corners", options: [{ value: null, label: 'Square' }, ...radii.map((name) => ({ value: name, label: name.slice(8) }))], current: radii.find(has) ?? null, onChange: (next) => setFamily(radii, next) })] }), _jsxs("div", { className: "inspector-row inspector-toggles", children: [_jsx(Toggle, { label: "Border", on: has('border'), onChange: () => toggle('border') }), _jsx(Toggle, { label: "Shadow", on: has('shadow-sm'), onChange: () => toggle('shadow-sm') })] })] }), findings.length > 0 && (_jsx("ul", { className: "inspector-findings", children: findings.map((finding, index) => (_jsx("li", { className: `is-${finding.severity}`, children: finding.message }, index))) })), _jsxs("details", { className: "inspector-raw", children: [_jsx("summary", { children: "All classes" }), _jsx("code", { children: classes.join(' ') || 'none' })] })] }));
+                                ], current: family(ALIGNMENTS), mixed: mixed(ALIGNMENTS), onChange: (next) => setFamily(ALIGNMENTS, next) })] })] })), !many && 'kind' in layer && layer.kind !== 'text' && (_jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Size" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Size, { axis: "w", flow: flow, classes: classes, measured: measured, onEdit: onEdit }), _jsx(Size, { axis: "h", flow: flow, classes: classes, measured: measured, onEdit: onEdit })] })] })), _jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Paint" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Background", options: [{ value: null, label: 'None' }, ...backgrounds.map((name) => ({ value: name, label: name.slice(3) }))], current: family(backgrounds), mixed: mixed(backgrounds), onChange: (next) => setFamily(backgrounds, next) }), _jsx(Choice, { label: "Ink", options: [{ value: null, label: 'Default' }, ...inks.map((name) => ({ value: name, label: name.slice(5) }))], current: family(inks), mixed: mixed(inks), onChange: (next) => setFamily(inks, next) })] }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Type", options: [{ value: null, label: 'Default' }, ...scales.map((name) => ({ value: name, label: name.slice(5) }))], current: family(scales), mixed: mixed(scales), onChange: (next) => setFamily(scales, next) }), _jsx(Choice, { label: "Corners", options: [{ value: null, label: 'Square' }, ...radii.map((name) => ({ value: name, label: name.slice(8) }))], current: family(radii), mixed: mixed(radii), onChange: (next) => setFamily(radii, next) })] }), _jsxs("div", { className: "inspector-row inspector-toggles", children: [_jsx(Toggle, { label: "Border", on: has('border'), mixed: layers.some((one) => one.classes.includes('border')) && !has('border'), onChange: () => toggle('border') }), _jsx(Toggle, { label: "Shadow", on: has('shadow-sm'), mixed: layers.some((one) => one.classes.includes('shadow-sm')) && !has('shadow-sm'), onChange: () => toggle('shadow-sm') })] })] }), findings.length > 0 && (_jsx("ul", { className: "inspector-findings", children: findings.map((finding, index) => (_jsx("li", { className: `is-${finding.severity}`, children: finding.message }, index))) })), _jsxs("details", { className: "inspector-raw", children: [_jsx("summary", { children: "All classes" }), layers.map((one) => (_jsx("code", { children: one.classes.join(' ') || 'none' }, one.id)))] })] }));
 }
 /**
  * Fixed, Hug, or Fill — the three things a size can be.
@@ -476,11 +530,27 @@ function flowOf(design, id) {
         return 'x';
     return 'y';
 }
-function Choice({ label, options, current, onChange, }) {
-    return (_jsxs("label", { className: "inspector-choice", children: [_jsx("span", { children: label }), _jsx("select", { value: current ?? '', onChange: (event) => onChange(event.target.value || null), children: options.map((option) => (_jsx("option", { value: option.value ?? '', children: option.label }, option.value ?? ''))) })] }));
+function Choice({ label, options, current, mixed = false, onChange, }) {
+    return (_jsxs("label", { className: `inspector-choice ${mixed ? 'is-mixed' : ''}`, children: [_jsx("span", { children: label }), _jsxs("select", { value: mixed ? MIXED : (current ?? ''), onChange: (event) => {
+                    // Choosing "Mixed" is choosing nothing: it is a report, not a value,
+                    // and applying it would mean inventing one.
+                    if (event.target.value === MIXED)
+                        return;
+                    onChange(event.target.value || null);
+                }, children: [mixed && (_jsx("option", { value: MIXED, disabled: true, children: "Mixed" })), options.map((option) => (_jsx("option", { value: option.value ?? '', children: option.label }, option.value ?? '')))] })] }));
 }
-function Toggle({ label, on, onChange }) {
-    return (_jsxs("label", { className: "inspector-toggle", children: [_jsx("input", { type: "checkbox", checked: on, onChange: onChange }), _jsx("span", { children: label })] }));
+/** A value no class name can be, so it cannot collide with a real one. */
+const MIXED = '\u0000mixed';
+const ALIGNMENTS = ['items-start', 'items-center', 'items-end'];
+function Toggle({ label, on, mixed = false, onChange, }) {
+    return (_jsxs("label", { className: `inspector-toggle ${mixed ? 'is-mixed' : ''}`, children: [_jsx("input", { type: "checkbox", checked: on, 
+                // The browser's own third state, rather than a lookalike. A screen
+                // reader announces it, and clicking it resolves to "on for everything",
+                // which is the only unambiguous move from a mixed one.
+                ref: (node) => {
+                    if (node)
+                        node.indeterminate = mixed && !on;
+                }, onChange: onChange }), _jsx("span", { children: label })] }));
 }
 /**
  * Where "add" means, given what is selected.

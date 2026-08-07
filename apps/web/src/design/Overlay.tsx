@@ -41,6 +41,17 @@ export interface OverlayProps {
   /** Layers something is anchored to — a comment, a citation. */
   readonly anchored?: ReadonlySet<LayerId>;
   readonly dropLine?: DropLine | null;
+  /**
+   * The container that would claim the drop, and what it is called.
+   *
+   * The line alone says *where in a list*, never *which list* — and "beside
+   * this card" and "inside its text column" are 13 screen pixels apart with
+   * indicators that look almost identical. Naming the destination is the
+   * difference between a drag you can aim and one you find out about
+   * afterwards. Webflow tints the target container and names it; this does the
+   * same thing with the vocabulary already on screen.
+   */
+  readonly dropInto?: { readonly id: LayerId; readonly name: string } | null;
   /** In canvas space, like everything else here. */
   readonly marquee?: Rect | null;
 }
@@ -60,6 +71,8 @@ export function Overlay(props: OverlayProps): JSX.Element {
   const anchors = [...(props.anchored ?? [])].map(box).filter((rect): rect is Rect => rect !== null);
   const line = props.dropLine;
   const marquee = props.marquee;
+  const intoRect = props.dropInto ? box(props.dropInto.id) : null;
+  const into = props.dropInto && intoRect ? { rect: intoRect, name: props.dropInto.name } : null;
 
   return (
     <svg className="design-overlay" aria-hidden="true">
@@ -112,6 +125,20 @@ export function Overlay(props: OverlayProps): JSX.Element {
           {selection.length === 1 && <Ticks rect={rect} />}
         </g>
       ))}
+
+      {into && (
+        <g className="design-overlay-into">
+          <rect x={into.rect.x} y={into.rect.y} width={into.rect.width} height={into.rect.height} />
+          {/* Placed at the top-left of the container, nudged inside so it does
+              not float off the edge of a frame at the corner of the canvas. */}
+          <g transform={`translate(${into.rect.x + 4}, ${Math.max(12, into.rect.y - 6)})`}>
+            <rect className="design-overlay-tag-back" x={0} y={-11} width={into.name.length * 6.2 + 12} height={15} rx={3} />
+            <text className="design-overlay-tag" x={6} y={0}>
+              {into.name}
+            </text>
+          </g>
+        </g>
+      )}
 
       {line && (
         <line

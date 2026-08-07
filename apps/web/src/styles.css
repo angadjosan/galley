@@ -2757,6 +2757,29 @@ kbd {
   stroke-dasharray: 2 2;
 }
 
+/* Which container claims the drop. The line says where in a list; this says
+   which list, and the two questions are 13 screen pixels apart. */
+.design-overlay-into rect {
+  fill: var(--accent);
+  fill-opacity: 0.06;
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+}
+
+.design-overlay-tag-back {
+  fill: var(--accent);
+  fill-opacity: 1;
+  stroke: none;
+}
+
+.design-overlay-tag {
+  fill: #fff;
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 500;
+}
+
 /* Between two children, never around one: "inside this box" and "after this
    box" look identical when both are drawn as a highlight. */
 .design-overlay-drop {
@@ -3234,4 +3257,25 @@ kbd {
   font-size: var(--fs-micro);
   color: var(--text-3);
   word-break: break-word;
+}
+
+/* What the selection is, when it is more than one thing. */
+.inspector-count {
+  font-size: var(--fs-small);
+  color: var(--text-2);
+  margin: 0;
+}
+
+/* The selection disagrees here. Marked rather than resolved: a control that
+   silently reports the first layer's value is one that will silently apply it
+   to the rest. */
+.inspector-choice.is-mixed select,
+.inspector-toggle.is-mixed {
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.inspector-raw code {
+  display: block;
+  margin-top: 3px;
 }

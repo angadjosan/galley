@@ -39,6 +39,20 @@ export interface OverlayProps {
     /** Layers something is anchored to — a comment, a citation. */
     readonly anchored?: ReadonlySet<LayerId>;
     readonly dropLine?: DropLine | null;
+    /**
+     * The container that would claim the drop, and what it is called.
+     *
+     * The line alone says *where in a list*, never *which list* — and "beside
+     * this card" and "inside its text column" are 13 screen pixels apart with
+     * indicators that look almost identical. Naming the destination is the
+     * difference between a drag you can aim and one you find out about
+     * afterwards. Webflow tints the target container and names it; this does the
+     * same thing with the vocabulary already on screen.
+     */
+    readonly dropInto?: {
+        readonly id: LayerId;
+        readonly name: string;
+    } | null;
     /** In canvas space, like everything else here. */
     readonly marquee?: Rect | null;
 }

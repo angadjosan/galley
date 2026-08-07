@@ -16,7 +16,7 @@ import {
   type NewLayer,
 } from '@galley/design';
 import { Stage } from './Stage.js';
-import { NOTHING, focusFor, reconcile, type Selection } from './selection.js';
+import { NOTHING, addToSelection, focusFor, reconcile, type Selection } from './selection.js';
 import { parentOf as holderOf } from './tree.js';
 
 /**
@@ -109,6 +109,17 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
   const selection = useMemo(() => (design ? reconcile(design, rawSelection) : rawSelection), [design, rawSelection]);
   const selected = selection.ids.length === 1 ? selection.ids[0]! : null;
   const current = layers.find((entry) => entry.layer.id === selected)?.layer ?? null;
+  /**
+   * Everything selected, in tree order.
+   *
+   * The inspector edits all of them. A marquee that selects three cards and
+   * then shows an empty panel is the canvas asserting something the rest of the
+   * editor denies — and the three gestures a multiple selection is *for*
+   * (restyle, align, wrap) are all ones the panel already has controls for.
+   */
+  const chosen = layers
+    .filter((entry) => selection.ids.includes(entry.layer.id))
+    .map((entry) => entry.layer);
 
   /**
    * A change that came from somewhere else clears the selection.
@@ -135,12 +146,24 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
     setSelection((current) => (current.ids.length > 0 || current.focus ? NOTHING : current));
   }, [props.source]);
 
-  /** Select one layer from outside the canvas — the tree, a lint finding. */
+  /**
+   * Select one layer from outside the canvas — the tree, a lint finding.
+   *
+   * `extend` is the tree's ⇧-click, and it goes through the same
+   * siblings-only rule the canvas uses. A tree that builds selections the
+   * canvas would refuse is a second selection model, which is the thing this
+   * codebase keeps finding out the hard way.
+   */
   const reveal = useCallback(
-    (id: string): void => {
+    (id: string, extend = false): void => {
+      if (!design) return;
       // The focus follows, so the canvas will let the next click land on the
       // same layer instead of resolving up to its container.
-      setSelection({ focus: design ? focusFor(design, id) : null, ids: [id] });
+      setSelection((at) =>
+        extend
+          ? { focus: at.focus, ids: addToSelection(design, at.ids, id) }
+          : { focus: focusFor(design, id), ids: [id] },
+      );
     },
     [design],
   );
@@ -227,21 +250,27 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
 
   /** Rewrite one layer, as an op. */
   const edit = useCallback(
-    (id: string, change: (layer: Layer) => Layer): void => {
-      const layer = design ? (find(design, id) as Layer | null) : null;
-      if (!layer) return;
-      const next = change(layer);
+    (ids: readonly string[], change: (layer: Layer) => Layer): void => {
+      if (!design) return;
+      // One batch for the whole selection, so restyling three cards is one undo
+      // step and one save. `applyOps` resolves every target against the tree as
+      // it was before any of them ran, which is what makes that safe.
       const ops: DesignOp[] = [];
-      if (next.name !== layer.name) ops.push({ op: 'set-name', id, name: next.name });
-      if (next.classes.join(' ') !== layer.classes.join(' ')) {
-        ops.push({ op: 'set-classes', id, classes: next.classes });
-      }
-      if (next.kind === 'text' && layer.kind === 'text' && next.content !== layer.content) {
-        ops.push({ op: 'set-text', id, content: next.content });
-      }
-      if (next.kind === 'image' && layer.kind === 'image') {
-        if (next.src !== layer.src || next.alt !== layer.alt) {
-          ops.push({ op: 'set-image', id, src: next.src, alt: next.alt });
+      for (const id of ids) {
+        const layer = find(design, id) as Layer | null;
+        if (!layer) continue;
+        const next = change(layer);
+        if (next.name !== layer.name) ops.push({ op: 'set-name', id, name: next.name });
+        if (next.classes.join(' ') !== layer.classes.join(' ')) {
+          ops.push({ op: 'set-classes', id, classes: next.classes });
+        }
+        if (next.kind === 'text' && layer.kind === 'text' && next.content !== layer.content) {
+          ops.push({ op: 'set-text', id, content: next.content });
+        }
+        if (next.kind === 'image' && layer.kind === 'image') {
+          if (next.src !== layer.src || next.alt !== layer.alt) {
+            ops.push({ op: 'set-image', id, src: next.src, alt: next.alt });
+          }
         }
       }
       run(ops);
@@ -386,7 +415,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
                 findings.some((f) => f.layerId === layer.id) ? 'has-problem' : ''
               }`}
               style={{ paddingLeft: 10 + depth * 14 }}
-              onClick={() => reveal(layer.id)}
+              onClick={(event) => reveal(layer.id, event.shiftKey || event.metaKey || event.ctrlKey)}
             >
               <span className="design-tree-kind" aria-hidden="true">
                 {'kind' in layer ? KIND_GLYPH[layer.kind] : '▦'}
@@ -452,20 +481,20 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
         </div>
 
         <aside className="design-inspector" aria-label="Properties">
-          {current ? (
+          {chosen.length > 0 ? (
             <Inspector
-              layer={current}
+              layers={chosen}
               wordsRef={wordsRef}
               // Which way this layer's siblings run, so "Fill" can write the
               // class that actually fills: `grow` along the flow, stretch
               // across it. Without it the control would have to guess, and a
               // size control that guesses is one that silently does nothing.
-              flow={design ? flowOf(design, current.id) : null}
-              measured={rects.get(current.id) ?? null}
-              onFrame={(change) => run([{ op: 'set-frame', id: current.id, ...change }])}
+              flow={design && current ? flowOf(design, current.id) : null}
+              measured={(current && rects.get(current.id)) ?? null}
+              onFrame={(change) => current && run([{ op: 'set-frame', id: current.id, ...change }])}
               readOnly={props.readOnly ?? false}
-              findings={findings.filter((finding) => finding.layerId === current.id)}
-              onEdit={(change) => edit(current.id, change)}
+              findings={findings.filter((finding) => finding.layerId && selection.ids.includes(finding.layerId))}
+              onEdit={(change) => edit(selection.ids, change)}
             />
           ) : (
             <p className="design-inspector-empty">Select a layer to change it.</p>
@@ -539,7 +568,7 @@ const MODES = ['light', 'dark'] as const;
  * silently loses work on save.
  */
 function Inspector({
-  layer,
+  layers,
   flow,
   measured,
   wordsRef,
@@ -548,7 +577,7 @@ function Inspector({
   onEdit,
   onFrame,
 }: {
-  layer: Layer | Frame;
+  layers: readonly (Layer | Frame)[];
   flow: 'x' | 'y' | null;
   /** What the browser actually laid this layer out as, for seeding a fixed size. */
   measured?: { width: number; height: number } | null;
@@ -559,8 +588,30 @@ function Inspector({
   /** A frame's own dimensions, which are attributes rather than classes. */
   onFrame?(change: { width?: number; height?: number | 'auto' }): void;
 }): JSX.Element {
+  const layer = layers[0]!;
+  const many = layers.length > 1;
+  /**
+   * What the selection agrees on.
+   *
+   * `null` means they disagree, and the control shows **Mixed** rather than
+   * picking one arbitrarily — a panel that silently reports the first layer's
+   * value is a panel that will silently apply it to the rest.
+   */
+  const agreed = <T,>(pick: (one: Layer | Frame) => T): T | null => {
+    const first = pick(layer);
+    return layers.every((one) => Object.is(pick(one), first)) ? first : null;
+  };
   const classes = layer.classes;
-  const has = (name: string): boolean => classes.includes(name);
+  const has = (name: string): boolean => layers.every((one) => one.classes.includes(name));
+  /** Whichever member of a family this selection agrees on, or null for mixed. */
+  const family = (names: readonly string[]): string | null =>
+    agreed((one) => one.classes.find((name) => names.includes(name)) ?? null);
+  const mixed = (names: readonly string[]): boolean =>
+    !layers.every((one) => {
+      const here = one.classes.find((name) => names.includes(name)) ?? null;
+      const there = layer.classes.find((name) => names.includes(name)) ?? null;
+      return here === there;
+    });
   /** Where each class family sat before it was cleared, so it can go back. */
   const removed = useRef<Record<string, number>>({});
 
@@ -616,16 +667,24 @@ function Inspector({
 
   return (
     <div className="inspector">
-      <label className="inspector-field">
-        <span>Name</span>
-        <input
-          value={layer.name}
-          disabled={readOnly}
-          onChange={(event) => onEdit((current) => ({ ...current, name: event.target.value }))}
-        />
-      </label>
+      {many ? (
+        // Names and words are per-layer by nature: there is no sensible thing
+        // for "set all three of these to the same name" to mean. The panel says
+        // what it is editing instead of showing a field that would flatten
+        // three labels into one.
+        <p className="inspector-count">{layers.length} layers selected</p>
+      ) : (
+        <label className="inspector-field">
+          <span>Name</span>
+          <input
+            value={layer.name}
+            disabled={readOnly}
+            onChange={(event) => onEdit((current) => ({ ...current, name: event.target.value }))}
+          />
+        </label>
+      )}
 
-      {'kind' in layer && layer.kind === 'text' && (
+      {!many && 'kind' in layer && layer.kind === 'text' && (
         <label className="inspector-field">
           <span>Words</span>
           <textarea
@@ -638,7 +697,7 @@ function Inspector({
         </label>
       )}
 
-      {'kind' in layer && layer.kind === 'image' && (
+      {!many && 'kind' in layer && layer.kind === 'image' && (
         <>
           <label className="inspector-field">
             <span>Address</span>
@@ -659,7 +718,7 @@ function Inspector({
         </>
       )}
 
-      {!('kind' in layer) && onFrame && (
+      {!many && !('kind' in layer) && onFrame && (
         <label className="inspector-field">
           <span>Frame width</span>
           <input
@@ -673,7 +732,7 @@ function Inspector({
         </label>
       )}
 
-      {(!('kind' in layer) || layer.kind !== 'text') && (
+      {layers.some((one) => !('kind' in one) || one.kind !== 'text') && (
         <fieldset className="inspector-group" disabled={readOnly}>
           <legend>Arrangement</legend>
           <div className="inspector-row">
@@ -684,7 +743,8 @@ function Inspector({
                 { value: 'flex-col', label: 'Column' },
                 { value: 'flex-row', label: 'Row' },
               ]}
-              current={directions.find(has) ?? null}
+              current={family(directions)}
+              mixed={mixed(directions)}
               onChange={(next) => {
                 // `flex` and the direction always travel together: a direction
                 // without `flex` is the single most common way a design ends
@@ -706,7 +766,8 @@ function Inspector({
             <Choice
               label="Gap"
               options={[{ value: null, label: 'None' }, ...gaps.map((name) => ({ value: name, label: name.slice(4) }))]}
-              current={gaps.find(has) ?? null}
+              current={family(gaps)}
+              mixed={mixed(gaps)}
               onChange={(next) => setFamily(gaps, next)}
             />
           </div>
@@ -714,7 +775,8 @@ function Inspector({
             <Choice
               label="Padding"
               options={[{ value: null, label: 'None' }, ...pads.map((name) => ({ value: name, label: name.slice(2) }))]}
-              current={pads.find(has) ?? null}
+              current={family(pads)}
+              mixed={mixed(pads)}
               onChange={(next) => setFamily(pads, next)}
             />
             <Choice
@@ -725,14 +787,15 @@ function Inspector({
                 { value: 'items-center', label: 'Centre' },
                 { value: 'items-end', label: 'End' },
               ]}
-              current={['items-start', 'items-center', 'items-end'].find(has) ?? null}
-              onChange={(next) => setFamily(['items-start', 'items-center', 'items-end'], next)}
+              current={family(ALIGNMENTS)}
+              mixed={mixed(ALIGNMENTS)}
+              onChange={(next) => setFamily(ALIGNMENTS, next)}
             />
           </div>
         </fieldset>
       )}
 
-      {'kind' in layer && layer.kind !== 'text' && (
+      {!many && 'kind' in layer && layer.kind !== 'text' && (
         <fieldset className="inspector-group" disabled={readOnly}>
           <legend>Size</legend>
           <div className="inspector-row">
@@ -748,13 +811,15 @@ function Inspector({
           <Choice
             label="Background"
             options={[{ value: null, label: 'None' }, ...backgrounds.map((name) => ({ value: name, label: name.slice(3) }))]}
-            current={backgrounds.find(has) ?? null}
+            current={family(backgrounds)}
+              mixed={mixed(backgrounds)}
             onChange={(next) => setFamily(backgrounds, next)}
           />
           <Choice
             label="Ink"
             options={[{ value: null, label: 'Default' }, ...inks.map((name) => ({ value: name, label: name.slice(5) }))]}
-            current={inks.find(has) ?? null}
+            current={family(inks)}
+              mixed={mixed(inks)}
             onChange={(next) => setFamily(inks, next)}
           />
         </div>
@@ -762,19 +827,31 @@ function Inspector({
           <Choice
             label="Type"
             options={[{ value: null, label: 'Default' }, ...scales.map((name) => ({ value: name, label: name.slice(5) }))]}
-            current={scales.find(has) ?? null}
+            current={family(scales)}
+              mixed={mixed(scales)}
             onChange={(next) => setFamily(scales, next)}
           />
           <Choice
             label="Corners"
             options={[{ value: null, label: 'Square' }, ...radii.map((name) => ({ value: name, label: name.slice(8) }))]}
-            current={radii.find(has) ?? null}
+            current={family(radii)}
+              mixed={mixed(radii)}
             onChange={(next) => setFamily(radii, next)}
           />
         </div>
         <div className="inspector-row inspector-toggles">
-          <Toggle label="Border" on={has('border')} onChange={() => toggle('border')} />
-          <Toggle label="Shadow" on={has('shadow-sm')} onChange={() => toggle('shadow-sm')} />
+          <Toggle
+            label="Border"
+            on={has('border')}
+            mixed={layers.some((one) => one.classes.includes('border')) && !has('border')}
+            onChange={() => toggle('border')}
+          />
+          <Toggle
+            label="Shadow"
+            on={has('shadow-sm')}
+            mixed={layers.some((one) => one.classes.includes('shadow-sm')) && !has('shadow-sm')}
+            onChange={() => toggle('shadow-sm')}
+          />
         </div>
       </fieldset>
 
@@ -790,7 +867,9 @@ function Inspector({
 
       <details className="inspector-raw">
         <summary>All classes</summary>
-        <code>{classes.join(' ') || 'none'}</code>
+        {layers.map((one) => (
+          <code key={one.id}>{one.classes.join(' ') || 'none'}</code>
+        ))}
       </details>
     </div>
   );
@@ -938,17 +1017,33 @@ function Choice({
   label,
   options,
   current,
+  mixed = false,
   onChange,
 }: {
   label: string;
   options: readonly { value: string | null; label: string }[];
   current: string | null;
+  /** The selection disagrees. Shown rather than resolved — see `agreed`. */
+  mixed?: boolean;
   onChange(next: string | null): void;
 }): JSX.Element {
   return (
-    <label className="inspector-choice">
+    <label className={`inspector-choice ${mixed ? 'is-mixed' : ''}`}>
       <span>{label}</span>
-      <select value={current ?? ''} onChange={(event) => onChange(event.target.value || null)}>
+      <select
+        value={mixed ? MIXED : (current ?? '')}
+        onChange={(event) => {
+          // Choosing "Mixed" is choosing nothing: it is a report, not a value,
+          // and applying it would mean inventing one.
+          if (event.target.value === MIXED) return;
+          onChange(event.target.value || null);
+        }}
+      >
+        {mixed && (
+          <option value={MIXED} disabled>
+            Mixed
+          </option>
+        )}
         {options.map((option) => (
           <option key={option.value ?? ''} value={option.value ?? ''}>
             {option.label}
@@ -959,10 +1054,35 @@ function Choice({
   );
 }
 
-function Toggle({ label, on, onChange }: { label: string; on: boolean; onChange(): void }): JSX.Element {
+/** A value no class name can be, so it cannot collide with a real one. */
+const MIXED = '\u0000mixed';
+
+const ALIGNMENTS = ['items-start', 'items-center', 'items-end'];
+
+function Toggle({
+  label,
+  on,
+  mixed = false,
+  onChange,
+}: {
+  label: string;
+  on: boolean;
+  mixed?: boolean;
+  onChange(): void;
+}): JSX.Element {
   return (
-    <label className="inspector-toggle">
-      <input type="checkbox" checked={on} onChange={onChange} />
+    <label className={`inspector-toggle ${mixed ? 'is-mixed' : ''}`}>
+      <input
+        type="checkbox"
+        checked={on}
+        // The browser's own third state, rather than a lookalike. A screen
+        // reader announces it, and clicking it resolves to "on for everything",
+        // which is the only unambiguous move from a mixed one.
+        ref={(node) => {
+          if (node) node.indeterminate = mixed && !on;
+        }}
+        onChange={onChange}
+      />
       <span>{label}</span>
     </label>
   );

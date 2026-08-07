@@ -340,15 +340,18 @@ export function Stage(props) {
         if (event.button !== 0)
             return;
         event.currentTarget.setPointerCapture(event.pointerId);
-        // Nothing under the pointer, or the container we are already inside —
-        // its background is not a thing to select, it is the empty space of this
-        // level. Both start a marquee, which is what makes the children of a
-        // full-bleed frame reachable at all.
+        // Three things brush rather than select: nothing under the pointer, the
+        // container we are already inside, and a **frame's own background**. A
+        // frame fills the whole design, so without the third one a brush is
+        // impossible anywhere except the desk outside it — which is exactly where
+        // there is nothing to catch. Figma draws the same line: dragging on an
+        // artboard marquees its children, clicking selects the artboard.
         const hit = layerUnder(event);
         const claimed = hit ? resolveClick(props.design, hit, props.selection.focus) : null;
-        if (!claimed) {
+        const onBackground = claimed !== null && hit === claimed && isFrameId(props.design, claimed);
+        if (!claimed || onBackground) {
             const from = pointAt(event);
-            setGesture({ kind: 'marquee', from, to: from });
+            setGesture({ kind: 'marquee', from, to: from, fallback: claimed });
             return;
         }
         const next = clickSelect(props.design, props.selection, hit, {
@@ -424,6 +427,10 @@ export function Stage(props) {
             if (grew) {
                 props.onSelection(marqueeSelect(props.design, props.selection.focus, rects, box));
             }
+            else if (gesture.fallback) {
+                // It never grew, so it was a click after all — on the frame.
+                props.onSelection({ focus: focusFor(props.design, gesture.fallback), ids: [gesture.fallback] });
+            }
             else {
                 props.onSelection({ focus: props.selection.focus, ids: [] });
             }
@@ -465,6 +472,12 @@ export function Stage(props) {
         props.onSelection(enterSelection(props.design, props.selection, hit));
     };
     const line = useMemo(() => (target ? dropLine(props.design, rects, target) : null), [props.design, rects, target]);
+    const into = useMemo(() => {
+        if (!target)
+            return null;
+        const parent = find(props.design, target.parentId);
+        return parent ? { id: parent.id, name: parent.name } : null;
+    }, [props.design, target]);
     const marquee = gesture.kind === 'marquee' ? boxOf(gesture.from, gesture.to) : null;
     return (_jsxs("div", { className: `design-stage ${spacePan ? 'is-panning' : ''} ${gesture.kind === 'drag' ? 'is-dragging' : ''}`, ref: viewport, "data-testid": "design-stage", "data-gesture": gesture.kind, "data-focus": props.selection.focus ?? '', "data-selected": props.selection.ids.join(' '), onPointerDown: onPointerDown, onPointerMove: onPointerMove, onPointerUp: onPointerUp, onPointerCancel: onPointerCancel, onPointerLeave: () => setHovered(null), onDoubleClick: onDoubleClick, 
         // The browser's own menu over a design canvas offers Reload and Save As,
@@ -476,7 +489,7 @@ export function Stage(props) {
                         mode: props.mode,
                         anchored: props.anchored,
                         ghostId: gesture.kind === 'drag' ? gesture.id : null,
-                    } }) }), _jsx(Overlay, { camera: camera, rects: rects, selected: props.selection.ids, hovered: gesture.kind === 'drag' ? null : hovered, focus: props.selection.focus, anchored: props.anchored, dropLine: line, marquee: marquee }), _jsxs("div", { className: "design-zoom", role: "group", "aria-label": "Zoom", children: [_jsx("button", { type: "button", onClick: () => zoomBy(1 / 1.2), disabled: camera.zoom <= MIN_ZOOM, "aria-label": "Zoom out", children: "\u2212" }), _jsxs("button", { type: "button", onClick: fitAll, title: "Fit the design in the window", children: [Math.round(camera.zoom * 100), "%"] }), _jsx("button", { type: "button", onClick: () => zoomBy(1.2), disabled: camera.zoom >= MAX_ZOOM, "aria-label": "Zoom in", children: "+" })] })] }));
+                    } }) }), _jsx(Overlay, { camera: camera, rects: rects, selected: props.selection.ids, hovered: gesture.kind === 'drag' ? null : hovered, focus: props.selection.focus, anchored: props.anchored, dropLine: line, dropInto: into, marquee: marquee }), _jsxs("div", { className: "design-zoom", role: "group", "aria-label": "Zoom", children: [_jsx("button", { type: "button", onClick: () => zoomBy(1 / 1.2), disabled: camera.zoom <= MIN_ZOOM, "aria-label": "Zoom out", children: "\u2212" }), _jsxs("button", { type: "button", onClick: fitAll, title: "Fit the design in the window", children: [Math.round(camera.zoom * 100), "%"] }), _jsx("button", { type: "button", onClick: () => zoomBy(1.2), disabled: camera.zoom >= MAX_ZOOM, "aria-label": "Zoom in", children: "+" })] })] }));
 }
 /**
  * The slot, resolved with the direction that matters for *this* parent.

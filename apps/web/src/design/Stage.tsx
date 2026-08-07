@@ -93,7 +93,13 @@ type Gesture =
   | { readonly kind: 'pan'; readonly from: { x: number; y: number }; readonly camera: Camera }
   | { readonly kind: 'press'; readonly id: LayerId; readonly from: { x: number; y: number } }
   | { readonly kind: 'drag'; readonly id: LayerId }
-  | { readonly kind: 'marquee'; readonly from: { x: number; y: number }; readonly to: { x: number; y: number } };
+  | {
+      readonly kind: 'marquee';
+      readonly from: { x: number; y: number };
+      readonly to: { x: number; y: number };
+      /** What to select if the brush never grew, i.e. this was a click. */
+      readonly fallback: LayerId | null;
+    };
 
 export function Stage(props: StageProps): JSX.Element {
   const viewport = useRef<HTMLDivElement>(null);
@@ -430,15 +436,18 @@ export function Stage(props: StageProps): JSX.Element {
     if (event.button !== 0) return;
     event.currentTarget.setPointerCapture(event.pointerId);
 
-    // Nothing under the pointer, or the container we are already inside —
-    // its background is not a thing to select, it is the empty space of this
-    // level. Both start a marquee, which is what makes the children of a
-    // full-bleed frame reachable at all.
+    // Three things brush rather than select: nothing under the pointer, the
+    // container we are already inside, and a **frame's own background**. A
+    // frame fills the whole design, so without the third one a brush is
+    // impossible anywhere except the desk outside it — which is exactly where
+    // there is nothing to catch. Figma draws the same line: dragging on an
+    // artboard marquees its children, clicking selects the artboard.
     const hit = layerUnder(event);
     const claimed = hit ? resolveClick(props.design, hit, props.selection.focus) : null;
-    if (!claimed) {
+    const onBackground = claimed !== null && hit === claimed && isFrameId(props.design, claimed);
+    if (!claimed || onBackground) {
       const from = pointAt(event);
-      setGesture({ kind: 'marquee', from, to: from });
+      setGesture({ kind: 'marquee', from, to: from, fallback: claimed });
       return;
     }
 
@@ -519,6 +528,9 @@ export function Stage(props: StageProps): JSX.Element {
       const grew = Math.max(box.width, box.height) * camera.zoom > 2;
       if (grew) {
         props.onSelection(marqueeSelect(props.design, props.selection.focus, rects, box));
+      } else if (gesture.fallback) {
+        // It never grew, so it was a click after all — on the frame.
+        props.onSelection({ focus: focusFor(props.design, gesture.fallback), ids: [gesture.fallback] });
       } else {
         props.onSelection({ focus: props.selection.focus, ids: [] });
       }
@@ -563,6 +575,11 @@ export function Stage(props: StageProps): JSX.Element {
     () => (target ? dropLine(props.design, rects, target) : null),
     [props.design, rects, target],
   );
+  const into = useMemo(() => {
+    if (!target) return null;
+    const parent = find(props.design, target.parentId);
+    return parent ? { id: parent.id, name: parent.name } : null;
+  }, [props.design, target]);
   const marquee = gesture.kind === 'marquee' ? boxOf(gesture.from, gesture.to) : null;
 
   return (
@@ -611,6 +628,7 @@ export function Stage(props: StageProps): JSX.Element {
         focus={props.selection.focus}
         anchored={props.anchored}
         dropLine={line}
+        dropInto={into}
         marquee={marquee}
       />
 
