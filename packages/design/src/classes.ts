@@ -72,6 +72,8 @@ const COLOR: Record<string, string> = {
   'border-strong': 'var(--d-border-strong)',
   // Meaning.
   accent: 'var(--d-accent)',
+  'accent-hover': 'var(--d-accent-hover)',
+  'accent-pressed': 'var(--d-accent-pressed)',
   'accent-soft': 'var(--d-accent-soft)',
   danger: 'var(--d-danger)',
   'danger-soft': 'var(--d-danger-soft)',
@@ -358,22 +360,74 @@ function list(keys: readonly string[], prefix: string): string {
   return keys.slice(0, 4).map((key) => `\`${prefix}${key}\``).join(', ');
 }
 
-/** Expand a whole class list. Later classes win, as in a stylesheet. */
+/**
+ * The four moments a design has to be able to describe.
+ *
+ * Not an open set, for the same reason the colours are not: a prefix that
+ * accepts anything is a prefix a model will invent `:nth-child(2n+1)` for. Four
+ * covers what a static design can honestly show — the pointer over it, the
+ * pointer down on it, the keyboard on it, and the control switched off — and
+ * anything past that is behaviour, which belongs in code rather than in a
+ * picture of a screen.
+ *
+ * The selector for each is the accessible one rather than the obvious one:
+ * `:focus-visible` and not `:focus`, so a mouse click does not draw a focus
+ * ring nobody asked for.
+ */
+export const STATES = ['hover', 'press', 'focus', 'disabled'] as const;
+export type State = (typeof STATES)[number];
+
+export const STATE_SELECTOR: Record<State, string> = {
+  hover: ':hover',
+  press: ':active',
+  focus: ':focus-visible',
+  disabled: '[data-disabled]',
+};
+
+const STATE_SET: ReadonlySet<string> = new Set(STATES);
+
+/** A class and the state it applies in, if it carries one. */
+export function splitState(name: string): { state: State | null; base: string } {
+  const at = name.indexOf(':');
+  if (at === -1) return { state: null, base: name };
+  const prefix = name.slice(0, at);
+  return STATE_SET.has(prefix) ? { state: prefix as State, base: name.slice(at + 1) } : { state: null, base: name };
+}
+
+/**
+ * Expand a whole class list. Later classes win, as in a stylesheet.
+ *
+ * State-prefixed classes come back separately rather than merged, because they
+ * cannot be expressed as an inline style at all — `:hover` is a selector, and a
+ * `style` attribute has no selectors. The renderer turns them into real rules;
+ * everything else stays inline, where it cannot be overridden by a stylesheet
+ * nobody can see from the design.
+ */
 export function resolveClasses(classes: readonly string[]): {
   css: Declarations;
+  states: Partial<Record<State, Declarations>>;
   problems: string[];
 } {
   const css: Declarations = {};
+  const states: Partial<Record<State, Declarations>> = {};
   const problems: string[] = [];
   for (const name of classes) {
-    const resolved = resolveClass(name);
-    if (!resolved.ok) {
-      problems.push(resolved.message);
+    const { state, base } = splitState(name);
+    if (name.includes(':') && state === null) {
+      problems.push(
+        `\`${name}\` is not a state. The states are ${STATES.map((one) => `\`${one}:\``).join(', ')}.`,
+      );
       continue;
     }
-    Object.assign(css, resolved.css);
+    const resolved = resolveClass(base);
+    if (!resolved.ok) {
+      problems.push(state ? `${resolved.message} (in \`${state}:\`)` : resolved.message);
+      continue;
+    }
+    if (state) states[state] = { ...states[state], ...resolved.css };
+    else Object.assign(css, resolved.css);
   }
-  return { css, problems };
+  return { css, states, problems };
 }
 
 /** Everything the vocabulary accepts, for `galley design classes` and the UI. */
@@ -384,4 +438,5 @@ export const VOCABULARY = {
   radius: Object.keys(RADIUS),
   shadow: Object.keys(SHADOW),
   weight: Object.keys(WEIGHT),
+  states: STATES,
 } as const;

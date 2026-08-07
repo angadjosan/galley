@@ -1,5 +1,6 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { resolveClasses } from '@galley/design';
+import { designCss, hasStates, resolveClasses } from '@galley/design';
+import { useId } from 'react';
 /**
  * Utility classes, resolved to an inline style object.
  *
@@ -20,7 +21,16 @@ function styleOf(classes) {
     ]));
 }
 export function DesignView({ design, options = {}, }) {
-    return (_jsx("div", { className: "design-frames", children: design.frames.map((frame) => (_jsx(FrameView, { frame: frame, options: options }, frame.id))) }));
+    // Scoped per mounted view, because one page can show the same design twice —
+    // the canvas and a preview embedded in prose — and layer ids are only unique
+    // within a design. Without this, hovering a card in the preview would light
+    // up the same card on the canvas.
+    // Stripped of punctuation: React's ids contain colons, which are legal in an
+    // attribute value and a menace in a selector. A generated id that has to be
+    // escaped is a generated id waiting to be escaped wrong.
+    const instance = useId().replace(/[^\w-]/g, '');
+    const css = hasStates(design) ? designCss(design, instance) : '';
+    return (_jsxs("div", { className: "design-frames", "data-design": instance, "data-state": options.state ?? undefined, children: [css && _jsx("style", { children: css }), design.frames.map((frame) => (_jsx(FrameView, { frame: frame, options: options }, frame.id)))] }));
 }
 function FrameView({ frame, options }) {
     return (_jsxs("figure", { className: "design-frame", children: [_jsx("figcaption", { className: "design-frame-name", children: frame.name }), _jsx("div", { className: layerClass('design-surface', frame.id, options), "data-layer-id": frame.id, "data-mode": options.mode, style: {

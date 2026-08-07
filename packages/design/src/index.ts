@@ -15,11 +15,15 @@ export { serializeDesign, type SerializeOptions } from './serialize.js';
 export {
   resolveClass,
   resolveClasses,
+  splitState,
   SHADOW_ROLES,
+  STATES,
+  STATE_SELECTOR,
   THEME_ROLES,
   VOCABULARY,
   type Declarations,
   type Resolution,
+  type State,
 } from './classes.js';
 export {
   DEFAULT_THEME,
@@ -74,5 +78,6 @@ export {
   type VetResult,
   type Vetted,
 } from './proposal.js';
+export { designCss, hasStates } from './css.js';
 export { STARTERS, type DesignStarter } from './starters.js';
 export { DESIGN_FENCE, extractDesign, embedDesign, isDesignDocument } from './embed.js';

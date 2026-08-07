@@ -1,4 +1,4 @@
-import { resolveClasses, type DesignDocument, type Layer } from '@galley/design';
+import { designCss, hasStates, resolveClasses, type DesignDocument, type Layer } from '@galley/design';
 
 /**
  * A design as plain DOM.
@@ -13,9 +13,21 @@ import { resolveClasses, type DesignDocument, type Layer } from '@galley/design'
  * It is also why nothing here is interactive. A preview is a picture of a
  * design that lives somewhere else; the place to change it is that document.
  */
+let previews = 0;
+
 export function designToDom(design: DesignDocument, mode?: string): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'design-preview-frames';
+  // A preview is interactive in exactly one way: the states resolve. Hovering a
+  // button in a document and seeing it respond is the cheapest possible proof
+  // that the design describes a real thing.
+  if (hasStates(design)) {
+    const instance = `p${(previews += 1)}`;
+    wrapper.dataset.design = instance;
+    const style = document.createElement('style');
+    style.textContent = designCss(design, instance);
+    wrapper.append(style);
+  }
   for (const frame of design.frames) {
     const surface = document.createElement('div');
     surface.className = 'design-surface';

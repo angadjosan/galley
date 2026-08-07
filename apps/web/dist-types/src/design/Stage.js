@@ -487,6 +487,7 @@ export function Stage(props) {
                     transformOrigin: '0 0',
                 }, children: _jsx(DesignView, { design: props.design, options: {
                         mode: props.mode,
+                        state: props.state,
                         anchored: props.anchored,
                         ghostId: gesture.kind === 'drag' ? gesture.id : null,
                     } }) }), _jsx(Overlay, { camera: camera, rects: rects, selected: props.selection.ids, hovered: gesture.kind === 'drag' ? null : hovered, focus: props.selection.focus, anchored: props.anchored, dropLine: line, dropInto: into, marquee: marquee }), _jsxs("div", { className: "design-zoom", role: "group", "aria-label": "Zoom", children: [_jsx("button", { type: "button", onClick: () => zoomBy(1 / 1.2), disabled: camera.zoom <= MIN_ZOOM, "aria-label": "Zoom out", children: "\u2212" }), _jsxs("button", { type: "button", onClick: fitAll, title: "Fit the design in the window", children: [Math.round(camera.zoom * 100), "%"] }), _jsx("button", { type: "button", onClick: () => zoomBy(1.2), disabled: camera.zoom >= MAX_ZOOM, "aria-label": "Zoom in", children: "+" })] })] }));

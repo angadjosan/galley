@@ -34,6 +34,14 @@ export interface RenderOptions {
      * exist if the drag is cancelled.
      */
     readonly ghostId?: string | null;
+    /**
+     * A state to show without having to hold it.
+     *
+     * Nobody can keep a button pressed while reading the inspector, and
+     * `disabled` has no gesture at all — so the editor forces the state on and
+     * the same rules that answer `:hover` answer this.
+     */
+    readonly state?: string | null;
 }
 export declare function DesignView({ design, options, }: {
     design: DesignDocument;

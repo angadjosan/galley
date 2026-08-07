@@ -56,7 +56,7 @@ export const STARTERS: readonly DesignStarter[] = [
       '        </box>',
       '      </box>',
       '    </box>',
-      '    <box name="Pay button" class="flex items-center justify-center h-48 bg-accent rounded-md">',
+      '    <box name="Pay button" class="flex items-center justify-center h-48 bg-accent rounded-md hover:bg-accent-hover press:bg-accent-pressed">',
       '      <text class="text-body font-semibold text-on-accent">Pay $42.00</text>',
       '    </box>',
       '  </frame>',

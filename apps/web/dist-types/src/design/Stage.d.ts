@@ -24,6 +24,8 @@ import { type Selection } from './selection.js';
 export interface StageProps {
     readonly design: DesignDocument;
     readonly mode: string;
+    /** A state to show on the canvas without having to hold it. */
+    readonly state?: string | null;
     readonly readOnly: boolean;
     readonly anchored?: ReadonlySet<LayerId>;
     readonly selection: Selection;

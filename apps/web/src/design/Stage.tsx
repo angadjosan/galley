@@ -69,6 +69,8 @@ import {
 export interface StageProps {
   readonly design: DesignDocument;
   readonly mode: string;
+  /** A state to show on the canvas without having to hold it. */
+  readonly state?: string | null;
   readonly readOnly: boolean;
   readonly anchored?: ReadonlySet<LayerId>;
   readonly selection: Selection;
@@ -614,6 +616,7 @@ export function Stage(props: StageProps): JSX.Element {
           design={props.design}
           options={{
             mode: props.mode,
+            state: props.state,
             anchored: props.anchored,
             ghostId: gesture.kind === 'drag' ? gesture.id : null,
           }}

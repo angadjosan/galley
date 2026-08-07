@@ -95,6 +95,13 @@ export const DEFAULT_THEME: ThemeDocument = {
         border: '#dfe2e8',
         'border-strong': '#7d8593',
         accent: '#2f6df0',
+        // A hover and a pressed shade, because a design that can describe a
+        // hover state and not a hover *colour* can only describe half of one.
+        // Darker in light mode, which is the near-universal convention and the
+        // one that keeps `on-accent` legible: both stay above 4.5:1 on white
+        // ink, and the checker enforces it.
+        'accent-hover': '#2359cf',
+        'accent-pressed': '#1b46a6',
         'accent-soft': '#e5ecfd',
         danger: '#d0392f',
         'danger-soft': '#fbeae9',
@@ -125,6 +132,11 @@ export const DEFAULT_THEME: ThemeDocument = {
         border: '#2c313a',
         'border-strong': '#6b7382',
         accent: '#5b8cf5',
+        // *Lighter* in dark mode, not darker. Hover means "closer to the
+        // light", and on a dark surface that is up rather than down — going
+        // darker reads as disabled.
+        'accent-hover': '#7ba4f8',
+        'accent-pressed': '#9dbcfa',
         'accent-soft': '#1b2740',
         danger: '#e5695f',
         'danger-soft': '#3a1d1b',
@@ -346,6 +358,11 @@ const CONTRAST_PAIRS: readonly { fg: string; bg: string; ratio: number; what: st
   { fg: 'fg-muted', bg: 'canvas', ratio: 4.5, what: 'muted text on the canvas' },
   { fg: 'fg-muted', bg: 'surface', ratio: 4.5, what: 'muted text on a surface' },
   { fg: 'on-accent', bg: 'accent', ratio: 4.5, what: 'text on an accent fill' },
+  // The interaction shades are checked too. A hover colour that fails is worse
+  // than one that does not exist, because it fails only while the pointer is
+  // over it and nobody screenshots that.
+  { fg: 'on-accent', bg: 'accent-hover', ratio: 4.5, what: 'text on a hovered accent fill' },
+  { fg: 'on-accent', bg: 'accent-pressed', ratio: 4.5, what: 'text on a pressed accent fill' },
   { fg: 'on-accent', bg: 'danger', ratio: 4.5, what: 'text on a danger fill' },
   { fg: 'border-strong', bg: 'surface', ratio: 3, what: 'a control border on a surface' },
 ];

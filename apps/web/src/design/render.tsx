@@ -1,5 +1,6 @@
 import type { CSSProperties, JSX } from 'react';
-import { resolveClasses, type DesignDocument, type Frame, type Layer } from '@galley/design';
+import { designCss, hasStates, resolveClasses, type DesignDocument, type Frame, type Layer } from '@galley/design';
+import { useId } from 'react';
 
 /**
  * Drawing a design.
@@ -36,6 +37,14 @@ export interface RenderOptions {
    * exist if the drag is cancelled.
    */
   readonly ghostId?: string | null;
+  /**
+   * A state to show without having to hold it.
+   *
+   * Nobody can keep a button pressed while reading the inspector, and
+   * `disabled` has no gesture at all — so the editor forces the state on and
+   * the same rules that answer `:hover` answer this.
+   */
+  readonly state?: string | null;
 }
 
 /**
@@ -67,8 +76,18 @@ export function DesignView({
   design: DesignDocument;
   options?: RenderOptions;
 }): JSX.Element {
+  // Scoped per mounted view, because one page can show the same design twice —
+  // the canvas and a preview embedded in prose — and layer ids are only unique
+  // within a design. Without this, hovering a card in the preview would light
+  // up the same card on the canvas.
+  // Stripped of punctuation: React's ids contain colons, which are legal in an
+  // attribute value and a menace in a selector. A generated id that has to be
+  // escaped is a generated id waiting to be escaped wrong.
+  const instance = useId().replace(/[^\w-]/g, '');
+  const css = hasStates(design) ? designCss(design, instance) : '';
   return (
-    <div className="design-frames">
+    <div className="design-frames" data-design={instance} data-state={options.state ?? undefined}>
+      {css && <style>{css}</style>}
       {design.frames.map((frame) => (
         <FrameView key={frame.id} frame={frame} options={options} />
       ))}

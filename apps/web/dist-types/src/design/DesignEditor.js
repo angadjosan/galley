@@ -1,6 +1,6 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { VOCABULARY, applyOps, find, idAfter, lintDesign, parseDesign, serializeDesign, walk, } from '@galley/design';
+import { STATES, VOCABULARY, applyOps, find, idAfter, lintDesign, parseDesign, serializeDesign, splitState, walk, } from '@galley/design';
 import { Stage } from './Stage.js';
 import { NOTHING, addToSelection, focusFor, reconcile } from './selection.js';
 import { parentOf as holderOf } from './tree.js';
@@ -47,6 +47,15 @@ export function DesignEditor(props) {
      * whole design flips.
      */
     const [mode, setMode] = useState('light');
+    /**
+     * Which state the canvas is showing, and which one the inspector writes to.
+     *
+     * One control for both, because they are the same question asked twice: if
+     * you are looking at the hover state, the colour you pick is the hover
+     * colour. Splitting them into "preview this" and "edit that" is how a panel
+     * ends up silently editing something other than what is on screen.
+     */
+    const [state, setState] = useState(null);
     const parsed = useMemo(() => parseDesign(props.source), [props.source]);
     const design = parsed.ok ? parsed.design : null;
     const findings = useMemo(() => (design ? lintDesign(design) : []), [design]);
@@ -265,7 +274,7 @@ export function DesignEditor(props) {
             setSelection({ focus: focusFor(moved, landed), ids: [landed] });
         }
     }, [run]);
-    return (_jsxs("div", { className: "design-editor", "data-testid": "design-editor", children: [_jsxs("header", { className: "design-editor-head", children: [_jsx("h2", { children: design?.name ?? 'Design' }), _jsxs("div", { className: "design-editor-actions", children: [_jsx("div", { className: "design-mode-switch", role: "group", "aria-label": "Mode", children: MODES.map((name) => (_jsx("button", { type: "button", className: mode === name ? 'is-on' : '', "aria-pressed": mode === name, onClick: () => setMode(name), children: name === 'light' ? 'Light' : 'Dark' }, name))) }), _jsx("button", { type: "button", className: `chrome-button ${showSource ? 'is-on' : ''}`, "aria-pressed": showSource, onClick: () => setShowSource((on) => !on), children: "Source" })] })] }), !parsed.ok && (_jsxs("div", { className: "design-errors", role: "alert", children: [_jsx("p", { children: "This design could not be read." }), _jsx("ul", { children: parsed.errors.slice(0, 8).map((error, index) => (_jsxs("li", { children: [_jsxs("span", { className: "design-error-line", children: ["Line ", error.line] }), " ", error.message] }, index))) })] })), _jsxs("div", { className: "design-editor-body", children: [_jsxs("aside", { className: "design-tree", "aria-label": "Layers", children: [_jsxs("div", { className: "design-tree-tools", children: [_jsx("button", { type: "button", onClick: () => add('box'), disabled: props.readOnly, title: "Add a box", children: "+ Box" }), _jsx("button", { type: "button", onClick: () => add('text'), disabled: props.readOnly, title: "Add some text", children: "+ Text" }), _jsx("button", { type: "button", onClick: remove, 
+    return (_jsxs("div", { className: "design-editor", "data-testid": "design-editor", children: [_jsxs("header", { className: "design-editor-head", children: [_jsx("h2", { children: design?.name ?? 'Design' }), _jsxs("div", { className: "design-editor-actions", children: [_jsxs("div", { className: "design-mode-switch", role: "group", "aria-label": "State", children: [_jsx("button", { type: "button", className: state === null ? 'is-on' : '', "aria-pressed": state === null, onClick: () => setState(null), children: "Default" }), STATES.map((name) => (_jsx("button", { type: "button", className: state === name ? 'is-on' : '', "aria-pressed": state === name, onClick: () => setState(name), children: name === 'press' ? 'Pressed' : name[0].toUpperCase() + name.slice(1) }, name)))] }), _jsx("div", { className: "design-mode-switch", role: "group", "aria-label": "Mode", children: MODES.map((name) => (_jsx("button", { type: "button", className: mode === name ? 'is-on' : '', "aria-pressed": mode === name, onClick: () => setMode(name), children: name === 'light' ? 'Light' : 'Dark' }, name))) }), _jsx("button", { type: "button", className: `chrome-button ${showSource ? 'is-on' : ''}`, "aria-pressed": showSource, onClick: () => setShowSource((on) => !on), children: "Source" })] })] }), !parsed.ok && (_jsxs("div", { className: "design-errors", role: "alert", children: [_jsx("p", { children: "This design could not be read." }), _jsx("ul", { children: parsed.errors.slice(0, 8).map((error, index) => (_jsxs("li", { children: [_jsxs("span", { className: "design-error-line", children: ["Line ", error.line] }), " ", error.message] }, index))) })] })), _jsxs("div", { className: "design-editor-body", children: [_jsxs("aside", { className: "design-tree", "aria-label": "Layers", children: [_jsxs("div", { className: "design-tree-tools", children: [_jsx("button", { type: "button", onClick: () => add('box'), disabled: props.readOnly, title: "Add a box", children: "+ Box" }), _jsx("button", { type: "button", onClick: () => add('text'), disabled: props.readOnly, title: "Add some text", children: "+ Text" }), _jsx("button", { type: "button", onClick: remove, 
                                         // A frame cannot be deleted — a design needs one — so the button
                                         // is disabled rather than enabled and inert. An affordance that
                                         // appears and does nothing is the failure this codebase keeps
@@ -280,7 +289,7 @@ export function DesignEditor(props) {
                              * opacity was the entire cue, and at 100% zoom it is invisible.
                              * Webflow puts a breadcrumb under the canvas for the same reason.
                              */
-                            _jsxs("nav", { className: "design-crumbs", "aria-label": "Inside", children: [_jsx("button", { type: "button", onClick: () => setSelection(NOTHING), children: design.name }), trail(design, selection.focus).map((step) => (_jsxs("button", { type: "button", onClick: () => reveal(step.id), children: [_jsx("span", { "aria-hidden": "true", children: "\u203A" }), " ", step.name] }, step.id)))] })), design && (_jsx(Stage, { design: design, mode: mode, readOnly: props.readOnly ?? false, anchored: props.anchored, selection: selection, onSelection: setSelection, onEscape: props.onClose, onMeasure: setRects, onMove: moveLayer, onEditText: (id) => {
+                            _jsxs("nav", { className: "design-crumbs", "aria-label": "Inside", children: [_jsx("button", { type: "button", onClick: () => setSelection(NOTHING), children: design.name }), trail(design, selection.focus).map((step) => (_jsxs("button", { type: "button", onClick: () => reveal(step.id), children: [_jsx("span", { "aria-hidden": "true", children: "\u203A" }), " ", step.name] }, step.id)))] })), design && (_jsx(Stage, { design: design, mode: mode, readOnly: props.readOnly ?? false, anchored: props.anchored, state: state, selection: selection, onSelection: setSelection, onEscape: props.onClose, onMeasure: setRects, onMove: moveLayer, onEditText: (id) => {
                                     reveal(id);
                                     // The words live in the inspector, so "edit the text" means
                                     // put the caret where the text actually is.
@@ -296,7 +305,7 @@ export function DesignEditor(props) {
                             // class that actually fills: `grow` along the flow, stretch
                             // across it. Without it the control would have to guess, and a
                             // size control that guesses is one that silently does nothing.
-                            flow: design && current ? flowOf(design, current.id) : null, measured: (current && rects.get(current.id)) ?? null, onFrame: (change) => current && run([{ op: 'set-frame', id: current.id, ...change }]), readOnly: props.readOnly ?? false, findings: findings.filter((finding) => finding.layerId && selection.ids.includes(finding.layerId)), onEdit: (change) => edit(selection.ids, change) })) : (_jsx("p", { className: "design-inspector-empty", children: "Select a layer to change it." })) })] }), showSource && (_jsx("div", { className: "design-source", children: _jsxs("label", { children: [_jsx("span", { className: "visually-hidden", children: "Design source" }), _jsx("textarea", { spellCheck: false, value: props.source, readOnly: props.readOnly, onChange: (event) => props.onChange(event.target.value) })] }) })), _jsx("footer", { className: `design-findings ${findings.length === 0 ? 'is-clean' : ''}`, "data-testid": "design-findings", children: findings.length === 0 ? (_jsx("span", { children: "Nothing to fix." })) : (_jsx("ul", { children: findings.slice(0, 6).map((finding, index) => (_jsx("li", { className: `design-finding is-${finding.severity}`, children: _jsx("button", { type: "button", onClick: () => finding.layerId && reveal(finding.layerId), children: finding.message }) }, index))) })) })] }));
+                            state: state, flow: design && current ? flowOf(design, current.id) : null, measured: (current && rects.get(current.id)) ?? null, onFrame: (change) => current && run([{ op: 'set-frame', id: current.id, ...change }]), readOnly: props.readOnly ?? false, findings: findings.filter((finding) => finding.layerId && selection.ids.includes(finding.layerId)), onEdit: (change) => edit(selection.ids, change) })) : (_jsx("p", { className: "design-inspector-empty", children: "Select a layer to change it." })) })] }), showSource && (_jsx("div", { className: "design-source", children: _jsxs("label", { children: [_jsx("span", { className: "visually-hidden", children: "Design source" }), _jsx("textarea", { spellCheck: false, value: props.source, readOnly: props.readOnly, onChange: (event) => props.onChange(event.target.value) })] }) })), _jsx("footer", { className: `design-findings ${findings.length === 0 ? 'is-clean' : ''}`, "data-testid": "design-findings", children: findings.length === 0 ? (_jsx("span", { children: "Nothing to fix." })) : (_jsx("ul", { children: findings.slice(0, 6).map((finding, index) => (_jsx("li", { className: `design-finding is-${finding.severity}`, children: _jsx("button", { type: "button", onClick: () => finding.layerId && reveal(finding.layerId), children: finding.message }) }, index))) })) })] }));
 }
 const KIND_GLYPH = { box: '▢', text: 'T', image: '🖼' };
 /**
@@ -324,7 +333,7 @@ const MODES = ['light', 'dark'];
  * that could express something the format cannot store would be a control that
  * silently loses work on save.
  */
-function Inspector({ layers, flow, measured, wordsRef, readOnly, findings, onEdit, onFrame, }) {
+function Inspector({ layers, state, flow, measured, wordsRef, readOnly, findings, onEdit, onFrame, }) {
     const layer = layers[0];
     const many = layers.length > 1;
     /**
@@ -338,13 +347,20 @@ function Inspector({ layers, flow, measured, wordsRef, readOnly, findings, onEdi
         const first = pick(layer);
         return layers.every((one) => Object.is(pick(one), first)) ? first : null;
     };
-    const classes = layer.classes;
-    const has = (name) => layers.every((one) => one.classes.includes(name));
+    /** A class name as it is written in the state currently being edited. */
+    const stated = (name) => (state ? `${state}:${name}` : name);
+    /** And back again, for reading what is there. */
+    const inState = (one) => one.classes.flatMap((name) => {
+        const split = splitState(name);
+        return split.state === state ? [split.base] : [];
+    });
+    const classes = inState(layer);
+    const has = (name) => layers.every((one) => inState(one).includes(name));
     /** Whichever member of a family this selection agrees on, or null for mixed. */
-    const family = (names) => agreed((one) => one.classes.find((name) => names.includes(name)) ?? null);
+    const family = (names) => agreed((one) => inState(one).find((name) => names.includes(name)) ?? null);
     const mixed = (names) => !layers.every((one) => {
-        const here = one.classes.find((name) => names.includes(name)) ?? null;
-        const there = layer.classes.find((name) => names.includes(name)) ?? null;
+        const here = inState(one).find((name) => names.includes(name)) ?? null;
+        const there = classes.find((name) => names.includes(name)) ?? null;
         return here === there;
     });
     /** Where each class family sat before it was cleared, so it can go back. */
@@ -359,9 +375,12 @@ function Inspector({ layers, flow, measured, wordsRef, readOnly, findings, onEdi
      * inverse of itself.
      */
     const setFamily = (family, next) => {
+        // The family, as written in the state being edited. Everything below then
+        // works on real class names and does not have to know a state exists.
+        const owned = family.map(stated);
         onEdit((current) => {
-            const at = current.classes.findIndex((name) => family.includes(name));
-            const without = current.classes.filter((name) => !family.includes(name));
+            const at = current.classes.findIndex((name) => owned.includes(name));
+            const without = current.classes.filter((name) => !owned.includes(name));
             if (!next) {
                 // Remember where it was, so putting it back puts it *back*. Without
                 // this, value → None → value moved the class to the end of the list and
@@ -376,18 +395,19 @@ function Inspector({ layers, flow, measured, wordsRef, readOnly, findings, onEdi
                 ...current,
                 classes: [
                     ...without.slice(0, Math.min(insertAt, without.length)),
-                    next,
+                    stated(next),
                     ...without.slice(Math.min(insertAt, without.length)),
                 ],
             };
         });
     };
     const toggle = (name) => {
+        const owned = stated(name);
         onEdit((current) => ({
             ...current,
-            classes: current.classes.includes(name)
-                ? current.classes.filter((existing) => existing !== name)
-                : [...current.classes, name],
+            classes: current.classes.includes(owned)
+                ? current.classes.filter((existing) => existing !== owned)
+                : [...current.classes, owned],
         }));
     };
     const directions = ['flex-col', 'flex-row'];
@@ -412,15 +432,20 @@ function Inspector({ layers, flow, measured, wordsRef, readOnly, findings, onEdi
                                     // up looking nothing like its source. Written back in place,
                                     // for the same reason `setFamily` is.
                                     onEdit((current) => {
-                                        const owned = (name) => directions.includes(name) || name === 'flex';
-                                        const at = current.classes.findIndex(owned);
-                                        const without = current.classes.filter((name) => !owned(name));
+                                        const mine = [...directions, 'flex'].map(stated);
+                                        const at = current.classes.findIndex((name) => mine.includes(name));
+                                        const without = current.classes.filter((name) => !mine.includes(name));
                                         if (!next)
                                             return { ...current, classes: without };
                                         const insertAt = at === -1 ? 0 : at;
                                         return {
                                             ...current,
-                                            classes: [...without.slice(0, insertAt), 'flex', next, ...without.slice(insertAt)],
+                                            classes: [
+                                                ...without.slice(0, insertAt),
+                                                stated('flex'),
+                                                stated(next),
+                                                ...without.slice(insertAt),
+                                            ],
                                         };
                                     });
                                 } }), _jsx(Choice, { label: "Gap", options: [{ value: null, label: 'None' }, ...gaps.map((name) => ({ value: name, label: name.slice(4) }))], current: family(gaps), mixed: mixed(gaps), onChange: (next) => setFamily(gaps, next) })] }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Padding", options: [{ value: null, label: 'None' }, ...pads.map((name) => ({ value: name, label: name.slice(2) }))], current: family(pads), mixed: mixed(pads), onChange: (next) => setFamily(pads, next) }), _jsx(Choice, { label: "Align", options: [
@@ -428,7 +453,7 @@ function Inspector({ layers, flow, measured, wordsRef, readOnly, findings, onEdi
                                     { value: 'items-start', label: 'Start' },
                                     { value: 'items-center', label: 'Centre' },
                                     { value: 'items-end', label: 'End' },
-                                ], current: family(ALIGNMENTS), mixed: mixed(ALIGNMENTS), onChange: (next) => setFamily(ALIGNMENTS, next) })] })] })), !many && 'kind' in layer && layer.kind !== 'text' && (_jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Size" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Size, { axis: "w", flow: flow, classes: classes, measured: measured, onEdit: onEdit }), _jsx(Size, { axis: "h", flow: flow, classes: classes, measured: measured, onEdit: onEdit })] })] })), _jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Paint" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Background", options: [{ value: null, label: 'None' }, ...backgrounds.map((name) => ({ value: name, label: name.slice(3) }))], current: family(backgrounds), mixed: mixed(backgrounds), onChange: (next) => setFamily(backgrounds, next) }), _jsx(Choice, { label: "Ink", options: [{ value: null, label: 'Default' }, ...inks.map((name) => ({ value: name, label: name.slice(5) }))], current: family(inks), mixed: mixed(inks), onChange: (next) => setFamily(inks, next) })] }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Type", options: [{ value: null, label: 'Default' }, ...scales.map((name) => ({ value: name, label: name.slice(5) }))], current: family(scales), mixed: mixed(scales), onChange: (next) => setFamily(scales, next) }), _jsx(Choice, { label: "Corners", options: [{ value: null, label: 'Square' }, ...radii.map((name) => ({ value: name, label: name.slice(8) }))], current: family(radii), mixed: mixed(radii), onChange: (next) => setFamily(radii, next) })] }), _jsxs("div", { className: "inspector-row inspector-toggles", children: [_jsx(Toggle, { label: "Border", on: has('border'), mixed: layers.some((one) => one.classes.includes('border')) && !has('border'), onChange: () => toggle('border') }), _jsx(Toggle, { label: "Shadow", on: has('shadow-sm'), mixed: layers.some((one) => one.classes.includes('shadow-sm')) && !has('shadow-sm'), onChange: () => toggle('shadow-sm') })] })] }), findings.length > 0 && (_jsx("ul", { className: "inspector-findings", children: findings.map((finding, index) => (_jsx("li", { className: `is-${finding.severity}`, children: finding.message }, index))) })), _jsxs("details", { className: "inspector-raw", children: [_jsx("summary", { children: "All classes" }), layers.map((one) => (_jsx("code", { children: one.classes.join(' ') || 'none' }, one.id)))] })] }));
+                                ], current: family(ALIGNMENTS), mixed: mixed(ALIGNMENTS), onChange: (next) => setFamily(ALIGNMENTS, next) })] })] })), !many && 'kind' in layer && layer.kind !== 'text' && (_jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Size" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Size, { axis: "w", flow: flow, classes: classes, measured: measured, stated: stated, onEdit: onEdit }), _jsx(Size, { axis: "h", flow: flow, classes: classes, measured: measured, stated: stated, onEdit: onEdit })] })] })), _jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Paint" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Background", options: [{ value: null, label: 'None' }, ...backgrounds.map((name) => ({ value: name, label: name.slice(3) }))], current: family(backgrounds), mixed: mixed(backgrounds), onChange: (next) => setFamily(backgrounds, next) }), _jsx(Choice, { label: "Ink", options: [{ value: null, label: 'Default' }, ...inks.map((name) => ({ value: name, label: name.slice(5) }))], current: family(inks), mixed: mixed(inks), onChange: (next) => setFamily(inks, next) })] }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Type", options: [{ value: null, label: 'Default' }, ...scales.map((name) => ({ value: name, label: name.slice(5) }))], current: family(scales), mixed: mixed(scales), onChange: (next) => setFamily(scales, next) }), _jsx(Choice, { label: "Corners", options: [{ value: null, label: 'Square' }, ...radii.map((name) => ({ value: name, label: name.slice(8) }))], current: family(radii), mixed: mixed(radii), onChange: (next) => setFamily(radii, next) })] }), _jsxs("div", { className: "inspector-row inspector-toggles", children: [_jsx(Toggle, { label: "Border", on: has('border'), mixed: layers.some((one) => one.classes.includes('border')) && !has('border'), onChange: () => toggle('border') }), _jsx(Toggle, { label: "Shadow", on: has('shadow-sm'), mixed: layers.some((one) => one.classes.includes('shadow-sm')) && !has('shadow-sm'), onChange: () => toggle('shadow-sm') })] })] }), findings.length > 0 && (_jsx("ul", { className: "inspector-findings", children: findings.map((finding, index) => (_jsx("li", { className: `is-${finding.severity}`, children: finding.message }, index))) })), _jsxs("details", { className: "inspector-raw", children: [_jsx("summary", { children: "All classes" }), layers.map((one) => (_jsx("code", { children: one.classes.join(' ') || 'none' }, one.id)))] })] }));
 }
 /**
  * Fixed, Hug, or Fill — the three things a size can be.
@@ -448,7 +473,7 @@ function Inspector({ layers, flow, measured, wordsRef, readOnly, findings, onEdi
  * control has to know which way the parent runs, and the alternative — one
  * meaning for both axes — is a control that is wrong half the time.
  */
-function Size({ axis, flow, classes, measured, onEdit, }) {
+function Size({ axis, flow, classes, measured, stated, onEdit, }) {
     const alongTheFlow = flow === (axis === 'w' ? 'x' : 'y');
     const fillClass = alongTheFlow ? 'grow' : 'self-stretch';
     const hugClass = alongTheFlow ? null : 'self-start';
@@ -467,11 +492,18 @@ function Size({ axis, flow, classes, measured, onEdit, }) {
                     : 'fill';
     /** Replace whatever this control owns, in place, with whatever it now says. */
     const write = (next) => {
+        const mine = (name) => {
+            const split = splitState(name);
+            return owned(split.base) && stated(split.base) === name;
+        };
         onEdit((current) => {
-            const at = current.classes.findIndex(owned);
-            const without = current.classes.filter((name) => !owned(name));
+            const at = current.classes.findIndex(mine);
+            const without = current.classes.filter((name) => !mine(name));
             const insertAt = at === -1 ? without.length : Math.min(at, without.length);
-            return { ...current, classes: [...without.slice(0, insertAt), ...next, ...without.slice(insertAt)] };
+            return {
+                ...current,
+                classes: [...without.slice(0, insertAt), ...next.map(stated), ...without.slice(insertAt)],
+            };
         });
     };
     return (_jsxs("label", { className: "inspector-choice", children: [_jsx("span", { children: axis === 'w' ? 'Width' : 'Height' }), _jsxs("div", { className: "inspector-size", children: [_jsxs("select", { value: mode, onChange: (event) => {

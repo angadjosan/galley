@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type Ref } from 'react';
 import {
+  STATES,
   VOCABULARY,
   applyOps,
   find,
@@ -7,6 +8,7 @@ import {
   lintDesign,
   parseDesign,
   serializeDesign,
+  splitState,
   walk,
   type DesignDocument,
   type DesignOp,
@@ -14,6 +16,7 @@ import {
   type Layer,
   type LintFinding,
   type NewLayer,
+  type State,
 } from '@galley/design';
 import { Stage } from './Stage.js';
 import { NOTHING, addToSelection, focusFor, reconcile, type Selection } from './selection.js';
@@ -97,6 +100,15 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
    * whole design flips.
    */
   const [mode, setMode] = useState('light');
+  /**
+   * Which state the canvas is showing, and which one the inspector writes to.
+   *
+   * One control for both, because they are the same question asked twice: if
+   * you are looking at the hover state, the colour you pick is the hover
+   * colour. Splitting them into "preview this" and "edit that" is how a panel
+   * ends up silently editing something other than what is on screen.
+   */
+  const [state, setState] = useState<State | null>(null);
 
   const parsed = useMemo(() => parseDesign(props.source), [props.source]);
   const design = parsed.ok ? parsed.design : null;
@@ -341,6 +353,27 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
       <header className="design-editor-head">
         <h2>{design?.name ?? 'Design'}</h2>
         <div className="design-editor-actions">
+          <div className="design-mode-switch" role="group" aria-label="State">
+            <button
+              type="button"
+              className={state === null ? 'is-on' : ''}
+              aria-pressed={state === null}
+              onClick={() => setState(null)}
+            >
+              Default
+            </button>
+            {STATES.map((name) => (
+              <button
+                key={name}
+                type="button"
+                className={state === name ? 'is-on' : ''}
+                aria-pressed={state === name}
+                onClick={() => setState(name)}
+              >
+                {name === 'press' ? 'Pressed' : name[0]!.toUpperCase() + name.slice(1)}
+              </button>
+            ))}
+          </div>
           <div className="design-mode-switch" role="group" aria-label="Mode">
             {MODES.map((name) => (
               <button
@@ -458,6 +491,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
               mode={mode}
               readOnly={props.readOnly ?? false}
               anchored={props.anchored}
+              state={state}
               selection={selection}
               onSelection={setSelection}
               onEscape={props.onClose}
@@ -489,6 +523,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
               // class that actually fills: `grow` along the flow, stretch
               // across it. Without it the control would have to guess, and a
               // size control that guesses is one that silently does nothing.
+              state={state}
               flow={design && current ? flowOf(design, current.id) : null}
               measured={(current && rects.get(current.id)) ?? null}
               onFrame={(change) => current && run([{ op: 'set-frame', id: current.id, ...change }])}
@@ -569,6 +604,7 @@ const MODES = ['light', 'dark'] as const;
  */
 function Inspector({
   layers,
+  state,
   flow,
   measured,
   wordsRef,
@@ -578,6 +614,15 @@ function Inspector({
   onFrame,
 }: {
   layers: readonly (Layer | Frame)[];
+  /**
+   * The state being edited, or null for the default one.
+   *
+   * Every control writes its class through `stated`, so choosing a background
+   * while looking at the hover state writes `hover:bg-…`. The panel is a view
+   * of one state at a time, which is the only way it can be a view of what is
+   * on screen.
+   */
+  state: State | null;
   flow: 'x' | 'y' | null;
   /** What the browser actually laid this layer out as, for seeding a fixed size. */
   measured?: { width: number; height: number } | null;
@@ -601,15 +646,24 @@ function Inspector({
     const first = pick(layer);
     return layers.every((one) => Object.is(pick(one), first)) ? first : null;
   };
-  const classes = layer.classes;
-  const has = (name: string): boolean => layers.every((one) => one.classes.includes(name));
+  /** A class name as it is written in the state currently being edited. */
+  const stated = (name: string): string => (state ? `${state}:${name}` : name);
+  /** And back again, for reading what is there. */
+  const inState = (one: { classes: readonly string[] }): string[] =>
+    one.classes.flatMap((name) => {
+      const split = splitState(name);
+      return split.state === state ? [split.base] : [];
+    });
+
+  const classes = inState(layer);
+  const has = (name: string): boolean => layers.every((one) => inState(one).includes(name));
   /** Whichever member of a family this selection agrees on, or null for mixed. */
   const family = (names: readonly string[]): string | null =>
-    agreed((one) => one.classes.find((name) => names.includes(name)) ?? null);
+    agreed((one) => inState(one).find((name) => names.includes(name)) ?? null);
   const mixed = (names: readonly string[]): boolean =>
     !layers.every((one) => {
-      const here = one.classes.find((name) => names.includes(name)) ?? null;
-      const there = layer.classes.find((name) => names.includes(name)) ?? null;
+      const here = inState(one).find((name) => names.includes(name)) ?? null;
+      const there = classes.find((name) => names.includes(name)) ?? null;
       return here === there;
     });
   /** Where each class family sat before it was cleared, so it can go back. */
@@ -625,9 +679,12 @@ function Inspector({
    * inverse of itself.
    */
   const setFamily = (family: readonly string[], next: string | null): void => {
+    // The family, as written in the state being edited. Everything below then
+    // works on real class names and does not have to know a state exists.
+    const owned = family.map(stated);
     onEdit((current) => {
-      const at = current.classes.findIndex((name) => family.includes(name));
-      const without = current.classes.filter((name) => !family.includes(name));
+      const at = current.classes.findIndex((name) => owned.includes(name));
+      const without = current.classes.filter((name) => !owned.includes(name));
       if (!next) {
         // Remember where it was, so putting it back puts it *back*. Without
         // this, value → None → value moved the class to the end of the list and
@@ -641,7 +698,7 @@ function Inspector({
         ...current,
         classes: [
           ...without.slice(0, Math.min(insertAt, without.length)),
-          next,
+          stated(next),
           ...without.slice(Math.min(insertAt, without.length)),
         ],
       };
@@ -649,11 +706,12 @@ function Inspector({
   };
 
   const toggle = (name: string): void => {
+    const owned = stated(name);
     onEdit((current) => ({
       ...current,
-      classes: current.classes.includes(name)
-        ? current.classes.filter((existing) => existing !== name)
-        : [...current.classes, name],
+      classes: current.classes.includes(owned)
+        ? current.classes.filter((existing) => existing !== owned)
+        : [...current.classes, owned],
     }));
   };
 
@@ -751,14 +809,19 @@ function Inspector({
                 // up looking nothing like its source. Written back in place,
                 // for the same reason `setFamily` is.
                 onEdit((current) => {
-                  const owned = (name: string): boolean => directions.includes(name) || name === 'flex';
-                  const at = current.classes.findIndex(owned);
-                  const without = current.classes.filter((name) => !owned(name));
+                  const mine = [...directions, 'flex'].map(stated);
+                  const at = current.classes.findIndex((name) => mine.includes(name));
+                  const without = current.classes.filter((name) => !mine.includes(name));
                   if (!next) return { ...current, classes: without };
                   const insertAt = at === -1 ? 0 : at;
                   return {
                     ...current,
-                    classes: [...without.slice(0, insertAt), 'flex', next, ...without.slice(insertAt)],
+                    classes: [
+                      ...without.slice(0, insertAt),
+                      stated('flex'),
+                      stated(next),
+                      ...without.slice(insertAt),
+                    ],
                   };
                 });
               }}
@@ -799,8 +862,8 @@ function Inspector({
         <fieldset className="inspector-group" disabled={readOnly}>
           <legend>Size</legend>
           <div className="inspector-row">
-            <Size axis="w" flow={flow} classes={classes} measured={measured} onEdit={onEdit} />
-            <Size axis="h" flow={flow} classes={classes} measured={measured} onEdit={onEdit} />
+            <Size axis="w" flow={flow} classes={classes} measured={measured} stated={stated} onEdit={onEdit} />
+            <Size axis="h" flow={flow} classes={classes} measured={measured} stated={stated} onEdit={onEdit} />
           </div>
         </fieldset>
       )}
@@ -898,12 +961,16 @@ function Size({
   flow,
   classes,
   measured,
+  stated,
   onEdit,
 }: {
   axis: 'w' | 'h';
   flow: 'x' | 'y' | null;
+  /** Already narrowed to the state being edited, so these are bare names. */
   classes: readonly string[];
   measured?: { width: number; height: number } | null;
+  /** Puts a name back into the state being edited. */
+  stated(name: string): string;
   onEdit(change: (layer: Layer) => Layer): void;
 }): JSX.Element {
   const alongTheFlow = flow === (axis === 'w' ? 'x' : 'y');
@@ -927,11 +994,18 @@ function Size({
 
   /** Replace whatever this control owns, in place, with whatever it now says. */
   const write = (next: readonly string[]): void => {
+    const mine = (name: string): boolean => {
+      const split = splitState(name);
+      return owned(split.base) && stated(split.base) === name;
+    };
     onEdit((current) => {
-      const at = current.classes.findIndex(owned);
-      const without = current.classes.filter((name) => !owned(name));
+      const at = current.classes.findIndex(mine);
+      const without = current.classes.filter((name) => !mine(name));
       const insertAt = at === -1 ? without.length : Math.min(at, without.length);
-      return { ...current, classes: [...without.slice(0, insertAt), ...next, ...without.slice(insertAt)] };
+      return {
+        ...current,
+        classes: [...without.slice(0, insertAt), ...next.map(stated), ...without.slice(insertAt)],
+      };
     });
   };
 
