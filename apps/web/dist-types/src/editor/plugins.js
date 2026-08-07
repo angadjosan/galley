@@ -1,10 +1,9 @@
-import { baseKeymap, chainCommands, exitCode, setBlockType, toggleMark } from 'prosemirror-commands';
+import { baseKeymap } from 'prosemirror-commands';
 import { dropCursor } from 'prosemirror-dropcursor';
 import { gapCursor } from 'prosemirror-gapcursor';
-import { closeHistory, history, redo, undo } from 'prosemirror-history';
-import { inputRules, textblockTypeInputRule, undoInputRule, wrappingInputRule, InputRule, } from 'prosemirror-inputrules';
+import { closeHistory, history } from 'prosemirror-history';
+import { inputRules, textblockTypeInputRule, wrappingInputRule, InputRule, } from 'prosemirror-inputrules';
 import { keymap } from 'prosemirror-keymap';
-import { liftListItem, splitListItem, sinkListItem, wrapInList } from 'prosemirror-schema-list';
 import { Plugin, PluginKey, TextSelection } from 'prosemirror-state';
 import { Decoration, DecorationSet } from 'prosemirror-view';
 import { schema } from './schema.js';
@@ -103,56 +102,25 @@ export const clearFormatting = (state, dispatch) => {
         dispatch(state.tr.removeMark(from, to));
     return true;
 };
-const insertHardBreak = (state, dispatch) => {
-    if (dispatch) {
-        dispatch(state.tr.replaceSelectionWith(schema.nodes.hard_break.create()).scrollIntoView());
-    }
-    return true;
-};
-export function galleyKeymap(onComment, onLink) {
-    const listItem = schema.nodes.list_item;
-    return keymap({
-        'Mod-b': toggleMark(schema.marks.strong),
-        'Mod-i': toggleMark(schema.marks.em),
-        'Mod-e': toggleMark(schema.marks.code),
-        'Mod-Shift-x': toggleMark(schema.marks.strike),
-        'Mod-k': () => {
-            onLink();
-            return true;
-        },
-        // There is no underline in the Markdown model. Left unbound, the browser
-        // inserts a `<u>` into the contenteditable that the editor then reconciles
-        // away, so the keystroke has to be actively swallowed rather than ignored.
-        'Mod-u': () => true,
-        'Mod-\\': clearFormatting,
-        'Mod-z': undo,
-        'Mod-y': redo,
-        'Mod-Shift-z': redo,
-        'Mod-Alt-0': setBlockType(schema.nodes.paragraph),
-        'Mod-Alt-1': setBlockType(schema.nodes.heading, { level: 1 }),
-        'Mod-Alt-2': setBlockType(schema.nodes.heading, { level: 2 }),
-        'Mod-Alt-3': setBlockType(schema.nodes.heading, { level: 3 }),
-        'Mod-Shift-7': wrapInList(schema.nodes.ordered_list),
-        'Mod-Shift-8': wrapInList(schema.nodes.bullet_list),
-        'Mod-Shift-9': wrapInType('blockquote'),
-        'Mod-Alt-m': () => {
-            onComment();
-            return true;
-        },
-        Enter: chainCommands(splitListItem(listItem), baseKeymap.Enter),
-        // Without this a writer who lands in a code block cannot get out of it.
-        'Mod-Enter': exitCode,
-        'Shift-Enter': chainCommands(exitCode, insertHardBreak),
-        Backspace: undoInputRule,
-        Tab: sinkListItem(listItem),
-        'Shift-Tab': liftListItem(listItem),
-    });
-}
+/**
+ * The keymap used to live here.
+ *
+ * It is built in `commands.ts` now, from the same `ActionSpec`s the toolbar and
+ * the menus are built from, because a third hand-written copy of the same list
+ * had drifted from the other two in four places. See `galleyKeymap` there.
+ */
 // ---------------------------------------------------------------------------
 // Placeholders
 // ---------------------------------------------------------------------------
 /**
- * The "type / for commands" affordance.
+ * The empty-block hints.
+ *
+ * These say what a block *is*, never what to press. An earlier version read
+ * "Type / for commands", which is the pattern this editor deliberately dropped:
+ * a hint that teaches a hidden control is an admission that the control cannot
+ * be found, and writers reported the same hint in Dropbox Paper as an
+ * interruption. Everything it used to advertise is now visible in the toolbar
+ * and enumerated in the menus.
  *
  * Node decorations with a CSS `::before`, never widget decorations: a widget is
  * a real DOM node, so it lands in `getSelection()`, is read aloud as document
@@ -164,6 +132,16 @@ export function galleyKeymap(onComment, onLink) {
  * dispatching one on every focus change would pollute the change stream that
  * autosave watches.
  */
+/**
+ * What the style menu calls a heading of this level.
+ *
+ * Duplicated from `STYLES` rather than imported, because `commands.ts` imports
+ * *this* file and the cycle is not worth breaking for five strings. The test
+ * that keeps them honest lives beside the menu.
+ */
+function headingLabel(level) {
+    return level === 1 ? 'Title' : level <= 4 ? `Heading ${level - 1}` : 'Heading';
+}
 export function placeholders() {
     return new Plugin({
         props: {
@@ -174,7 +152,7 @@ export function placeholders() {
                     return DecorationSet.create(doc, [
                         Decoration.node(0, only.nodeSize, {
                             class: 'placeholder placeholder-doc',
-                            'data-placeholder': 'Write something, or press / for headings, lists and more',
+                            'data-placeholder': 'Start writing',
                         }),
                     ]);
                 }
@@ -188,11 +166,17 @@ export function placeholders() {
                     return null;
                 if (parent.type === schema.nodes.table_cell)
                     return null;
+                // Named the way the style menu names it, not by its Markdown level.
+                // These disagreed: an empty level-2 heading showed "Heading 2" while
+                // the toolbar simultaneously read "Heading 1", and the number is raw
+                // format vocabulary that this file is otherwise careful never to leak.
                 const label = parent.type === schema.nodes.heading
-                    ? `Heading ${parent.attrs.level}`
+                    ? headingLabel(parent.attrs.level)
                     : parent.type === schema.nodes.blockquote
                         ? 'Quote'
-                        : 'Type / for commands';
+                        : '';
+                if (!label)
+                    return null;
                 const pos = $from.before($from.depth);
                 return DecorationSet.create(doc, [
                     Decoration.node(pos, pos + parent.nodeSize, {
@@ -397,12 +381,8 @@ export function commentPointerPlugin(onHover, onOpen) {
 }
 export function corePlugins(options) {
     return [
-        // Before the keymaps: plugins see keydown in array order, and the slash
-        // menu has to claim Enter and the arrow keys before the base keymap
-        // splits the paragraph.
-        options.slash,
         markdownInputRules(),
-        galleyKeymap(options.onComment, options.onLink),
+        options.keymap,
         keymap(baseKeymap),
         history(),
         dropCursor({ class: 'drop-cursor' }),
@@ -424,6 +404,14 @@ export function corePlugins(options) {
  */
 export function activeBlock(state) {
     const { $from } = state.selection;
+    // A node selection on an atom — a diagram, a divider — resolves *before* the
+    // node, so walking up from the caret never reaches it. Without this a
+    // selected diagram had no active block: the margin comment button appeared,
+    // because the selection is not empty, and clicking it did nothing.
+    const selected = state.selection.node;
+    const selectedId = selected?.attrs?.blockId;
+    if (selectedId)
+        return { id: selectedId, depth: $from.depth };
     for (let depth = $from.depth; depth >= 0; depth--) {
         const node = $from.node(depth);
         const id = node.attrs?.blockId;

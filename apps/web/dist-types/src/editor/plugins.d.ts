@@ -23,20 +23,6 @@ export declare function markdownInputRules(): Plugin;
 export declare function wrapInType(typeName: string, attrs?: Record<string, unknown>): Command;
 /** Strip every mark from the selection — the escape hatch from stuck bold. */
 export declare const clearFormatting: Command;
-export declare function galleyKeymap(onComment: () => void, onLink: () => void): Plugin;
-/**
- * The "type / for commands" affordance.
- *
- * Node decorations with a CSS `::before`, never widget decorations: a widget is
- * a real DOM node, so it lands in `getSelection()`, is read aloud as document
- * content, and can be copied out. A node decoration changes nothing about the
- * document.
- *
- * Focus gating is done in CSS rather than here because focus and blur do not
- * produce a transaction — `decorations()` would never re-run on them, and
- * dispatching one on every focus change would pollute the change stream that
- * autosave watches.
- */
 export declare function placeholders(): Plugin;
 export interface CommentAnchor {
     readonly threadId: string;
@@ -102,7 +88,8 @@ export interface CorePluginOptions {
     onOpenThread(threadId: string): void;
     onComment(): void;
     onLink(): void;
-    slash: Plugin;
+    /** Built in `commands.ts`, so it cannot disagree with the menus. */
+    keymap: Plugin;
 }
 export declare function corePlugins(options: CorePluginOptions): Plugin[];
 /**

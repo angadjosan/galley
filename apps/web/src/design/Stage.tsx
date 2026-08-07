@@ -14,6 +14,7 @@ import {
   MAX_ZOOM,
   MIN_ZOOM,
   fit,
+  toViewport,
   unionOf,
   useLayerRects,
   zoomAbout,
@@ -39,6 +40,7 @@ import {
   clickSelect,
   enterSelection,
   exitSelection,
+  focusFor,
   marqueeSelect,
   resolveClick,
   type Selection,
@@ -77,7 +79,12 @@ export interface StageProps {
   onMove(id: LayerId, parentId: LayerId, index: number): void;
   /** Double-click on text, which means edit the words rather than go inside. */
   onEditText?(id: LayerId): void;
-  onDelete(id: LayerId): void;
+  onDelete(ids: readonly LayerId[]): void;
+  /**
+   * Where every layer landed, so the inspector can seed a fixed size from what
+   * the browser actually drew rather than from a constant.
+   */
+  onMeasure?(rects: ReadonlyMap<LayerId, Rect>): void;
 }
 
 /** What the pointer is in the middle of. Exactly one at a time, by construction. */
@@ -98,6 +105,11 @@ export function Stage(props: StageProps): JSX.Element {
   const [spacePan, setSpacePan] = useState(false);
 
   const rects = useLayerRects(content, camera, props.design);
+
+  const onMeasure = props.onMeasure;
+  useEffect(() => {
+    onMeasure?.(rects);
+  }, [onMeasure, rects]);
 
   /**
    * Which way the pointer is travelling, per axis, measured over a window.
@@ -143,6 +155,37 @@ export function Stage(props: StageProps): JSX.Element {
     fitAll();
   }, [fitAll, rects.size]);
 
+  /**
+   * A selection made somewhere else is brought on screen.
+   *
+   * Panned, never zoomed: the zoom is the reader's and moving it because they
+   * clicked a row in a list would be the canvas taking a decision that was not
+   * theirs. Only runs when the layer is actually outside the viewport, so
+   * clicking around what you can already see never moves anything.
+   */
+  useEffect(() => {
+    const node = viewport.current;
+    const bounds = unionOf(props.selection.ids.map((id) => rects.get(id)).filter((r): r is Rect => !!r));
+    if (!node || !bounds || gestureRef.current.kind !== 'none') return;
+    setCamera((current) => {
+      const at = toViewport(current, bounds);
+      const size = { width: bounds.width * current.zoom, height: bounds.height * current.zoom };
+      const margin = 24;
+      const slide = (start: number, extent: number, viewportExtent: number): number => {
+        if (start >= margin && start + extent <= viewportExtent - margin) return 0;
+        if (extent > viewportExtent - margin * 2) return start - margin;
+        return start < margin ? start - margin : start + extent - (viewportExtent - margin);
+      };
+      const dx = slide(at.x, size.width, node.clientWidth);
+      const dy = slide(at.y, size.height, node.clientHeight);
+      if (dx === 0 && dy === 0) return current;
+      return { ...current, x: current.x + dx / current.zoom, y: current.y + dy / current.zoom };
+    });
+    // Deliberately not keyed on `rects`: they change on every measurement, and
+    // re-running this then fights a pan the reader is in the middle of.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.selection.ids]);
+
   useEffect(() => {
     const node = viewport.current;
     if (!node) return;
@@ -159,20 +202,41 @@ export function Stage(props: StageProps): JSX.Element {
         setCamera((current) => zoomAbout(current, at, current.zoom * Math.exp(-event.deltaY / 200)));
         return;
       }
-      setCamera((current) => ({
-        ...current,
-        x: current.x + event.deltaX / current.zoom,
-        y: current.y + event.deltaY / current.zoom,
-      }));
+      setCamera((current) => {
+        // Shift turns a vertical wheel into a horizontal pan, which is what a
+        // mouse with one wheel needs and what every canvas binds it to. A
+        // trackpad already sends `deltaX`, so both are added rather than
+        // chosen between.
+        const dx = event.deltaX + (event.shiftKey ? event.deltaY : 0);
+        const dy = event.shiftKey ? 0 : event.deltaY;
+        return { ...current, x: current.x + dx / current.zoom, y: current.y + dy / current.zoom };
+      });
     };
     node.addEventListener('wheel', onWheel, { passive: false });
     return () => node.removeEventListener('wheel', onWheel);
   }, []);
 
-  // `fitAll` changes identity whenever the rects do, so the keyboard effect
-  // reaches it through a ref rather than re-subscribing for it.
+  /**
+   * Bring the selection into view.
+   *
+   * The layer tree is the escape hatch for the focus model — "cannot click it?
+   * use the tree" — and it was useless at any zoom above fit, because picking a
+   * row would leave the inspector editing something a thousand pixels off
+   * screen with nothing on screen to say so.
+   */
+  const zoomToSelection = useCallback(() => {
+    const node = viewport.current;
+    const bounds = unionOf(props.selection.ids.map((id) => rects.get(id)).filter((r): r is Rect => !!r));
+    if (!node || !bounds) return;
+    setCamera(fit(bounds, { width: node.clientWidth, height: node.clientHeight }, 120));
+  }, [props.selection.ids, rects]);
+
+  // These change identity whenever the rects do, so the keyboard effect reaches
+  // them through refs rather than re-subscribing for them.
   const fitRef = useRef(fitAll);
   fitRef.current = fitAll;
+  const zoomToRef = useRef(zoomToSelection);
+  zoomToRef.current = zoomToSelection;
 
   const zoomBy = useCallback((factor: number) => {
     const node = viewport.current;
@@ -219,10 +283,13 @@ export function Stage(props: StageProps): JSX.Element {
         return;
       }
       if (event.key === 'Backspace' || event.key === 'Delete') {
-        const id = latest.current.selection.ids.length === 1 ? latest.current.selection.ids[0]! : null;
-        if (id && !latest.current.readOnly && !isFrameId(latest.current.design, id)) {
+        // The whole selection, not just a lone layer. A marquee that selects
+        // three cards and then refuses to delete them is the canvas asserting
+        // something the rest of the editor denies.
+        const ids = latest.current.selection.ids.filter((id) => !isFrameId(latest.current.design, id));
+        if (ids.length > 0 && !latest.current.readOnly) {
           event.preventDefault();
-          latest.current.onDelete(id);
+          latest.current.onDelete(ids);
         }
         return;
       }
@@ -252,10 +319,34 @@ export function Stage(props: StageProps): JSX.Element {
         latest.current.onMove(id, from.parentId, index);
         return;
       }
-      if ((event.key === '0' || event.key === '9') && (event.metaKey || event.ctrlKey)) {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key === '0') {
+        // About the viewport centre, not the content origin. Setting the zoom
+        // directly leaves the camera where it was, which at 400% throws the
+        // design off screen — and with no scrollbars and no minimap, nothing
+        // on screen tells you where it went.
         event.preventDefault();
-        if (event.key === '0') setCamera((current) => ({ ...current, zoom: 1 }));
-        else fitRef.current();
+        setCamera((current) => zoomAbout(current, centreOf(viewport.current), 1));
+        return;
+      }
+      if (event.key === '9' || event.key === '1') {
+        event.preventDefault();
+        fitRef.current();
+        return;
+      }
+      if (event.key === '2') {
+        event.preventDefault();
+        zoomToRef.current();
+        return;
+      }
+      if (event.key === '=' || event.key === '+' || event.key === '-') {
+        // Bound, and prevented. Unhandled these fall through to the browser's
+        // own zoom, which scales the entire application — every canvas tool
+        // takes these keys for exactly that reason.
+        event.preventDefault();
+        setCamera((current) =>
+          zoomAbout(current, centreOf(viewport.current), current.zoom * (event.key === '-' ? 1 / 1.2 : 1.2)),
+        );
       }
     };
     const onUp = (event: KeyboardEvent): void => {
@@ -324,6 +415,16 @@ export function Stage(props: StageProps): JSX.Element {
     if (event.button === 1 || spacePan) {
       event.currentTarget.setPointerCapture(event.pointerId);
       setGesture({ kind: 'pan', from: { x: event.clientX, y: event.clientY }, camera });
+      return;
+    }
+    if (event.button === 2) {
+      // Selects what is under it. Right-clicking a layer and having the
+      // selection stay somewhere else is how a context menu ends up acting on
+      // the wrong thing — so the selection moves even though there is no menu
+      // yet.
+      const hit = layerUnder(event);
+      const claimed = hit ? resolveClick(props.design, hit, props.selection.focus) : null;
+      if (claimed) props.onSelection({ focus: focusFor(props.design, claimed), ids: [claimed] });
       return;
     }
     if (event.button !== 0) return;
@@ -480,6 +581,9 @@ export function Stage(props: StageProps): JSX.Element {
       onPointerCancel={onPointerCancel}
       onPointerLeave={() => setHovered(null)}
       onDoubleClick={onDoubleClick}
+      // The browser's own menu over a design canvas offers Reload and Save As,
+      // which is never what the hand was reaching for.
+      onContextMenu={(event) => event.preventDefault()}
     >
       <div
         className="design-stage-content"
@@ -564,6 +668,11 @@ function updateTravel(
     state.dir = delta > 0 ? 1 : -1;
     state.at = value;
   }
+}
+
+/** The middle of the viewport, in viewport coordinates. */
+function centreOf(node: HTMLElement | null): { x: number; y: number } {
+  return node ? { x: node.clientWidth / 2, y: node.clientHeight / 2 } : { x: 0, y: 0 };
 }
 
 function boxOf(a: { x: number; y: number }, b: { x: number; y: number }): Rect {

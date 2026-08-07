@@ -894,5 +894,15 @@ test.describe('designs', () => {
     await page.keyboard.press('ArrowRight');
     await page.waitForTimeout(500);
     expect(await readAsAgent(designPath)).toBe(after);
+
+    // Undo. Every structural gesture here is destructive and saves itself
+    // immediately, so a canvas without this is a canvas you cannot explore.
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    expect(await readAsAgent(designPath), 'undo did not put the layer back').toBe(source);
+
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    expect(await readAsAgent(designPath), 'redo did not reapply the move').toBe(after);
   });
 });

@@ -1,13 +1,16 @@
-import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, } from 'react';
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, } from 'react';
 import { createPortal } from 'react-dom';
-import { setBlockType, toggleMark } from 'prosemirror-commands';
-import { wrapInList } from 'prosemirror-schema-list';
+import { toggleMark } from 'prosemirror-commands';
 import { EditorState, Selection, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { schema } from './schema.js';
-import { activeBlock, activeBlockId, blockActive, clearFormatting, commentHighlightKey, corePlugins, markActive, selectionIsFormattable, wrapInType, } from './plugins.js';
-import { closeSlash, openSlashAt, runSlashItem, slashKey, slashPlugin, } from './slash.js';
+import { activeBlock, activeBlockId, commentHighlightKey, corePlugins, selectionIsFormattable, } from './plugins.js';
+import { galleyKeymap } from './commands.js';
+import { DiagramView } from './DiagramView.js';
+import { imageUpload } from './images.js';
+import { renderDiagram } from './diagram.js';
+import { designPreview, designPreviewKey, noDesigns } from '../design/preview.js';
 import { suggestionKey, suggestionReview, } from './suggestions.js';
 import { docToMarkdown, markdownToDoc } from './convert.js';
 /**
@@ -17,10 +20,21 @@ import { docToMarkdown, markdownToDoc } from './convert.js';
  * no Markdown visible anywhere in this component — the syntax exists only as
  * *input rules*, for people who already type it out of habit.
  *
- * There is also no formatting toolbar. Every control it held is now either on
- * the selection it applies to, or in the menu the `/` key opens; a row of
- * buttons that is inert whenever the caret is collapsed — which is almost
- * always — was spending permanent attention on rare actions.
+ * The formatting controls are *not* here. They live in the toolbar and the menu
+ * bar above, which never move and never disappear. That is a deliberate
+ * reversal of an earlier design in which everything hung off the selection or
+ * off a `/` menu, and the reason is documented rather than assumed: the
+ * designer who shipped Dropbox Paper's slash commands published a teardown of
+ * them finding both an *awareness* problem (people did not know the commands
+ * existed) and a *usability* problem (people who knew did not know how to use
+ * them) — and the inline hint added to fix the first made writers feel the
+ * editor was interrupting them. Hidden controls are efficient for the person
+ * who already knows the tool and a wall for everyone else, and this product is
+ * explicitly for everyone else.
+ *
+ * What remains anchored to the selection is one button, in the margin, offering
+ * the one action that is *about* the selected words rather than about the
+ * document: leaving a comment.
  */
 export const Editor = forwardRef(function Editor(props, ref) {
     const host = useRef(null);
@@ -32,8 +46,8 @@ export const Editor = forwardRef(function Editor(props, ref) {
     const lastCaret = useRef(null);
     const [surface, setSurface] = useState({ dragging: false, composing: false });
     const [bubble, setBubble] = useState(null);
-    const [slash, setSlash] = useState(null);
     const [linking, setLinking] = useState(false);
+    const [diagramEdit, setDiagramEdit] = useState(null);
     // Callbacks reach the plugins through a ref so that the view is built once
     // per document rather than once per render.
     const callbacks = useRef(props);
@@ -48,6 +62,11 @@ export const Editor = forwardRef(function Editor(props, ref) {
         const block = activeBlock(editor.state);
         if (!block)
             return;
+        // `activeBlock` walks *up* from the caret, and a node selection on an atom
+        // resolves before the node — so a selected diagram was never in the
+        // ancestor chain, the selection was non-empty enough for the margin button
+        // to appear, and clicking it did nothing at all. `activeBlock` handles the
+        // node-selection case now; this is the note explaining why it has to.
         const quoted = empty ? '' : editor.state.doc.textBetween(from, to, ' ');
         // Character offsets within the block, so the note highlights the sentence
         // that was selected rather than the paragraph containing it. Measured from
@@ -72,7 +91,10 @@ export const Editor = forwardRef(function Editor(props, ref) {
             return;
         const initial = markdownToDoc(callbacks.current.markdown);
         loaded.current = initial;
-        const slashPluginInstance = slashPlugin({ onChange: setSlash });
+        // The panel holds a raw position, and a rebuild is exactly the event that
+        // invalidates one. Leaving it open would let an edit land on whichever
+        // diagram now occupies that offset.
+        setDiagramEdit(null);
         const state = EditorState.create({
             doc: initial.doc,
             plugins: [
@@ -83,9 +105,18 @@ export const Editor = forwardRef(function Editor(props, ref) {
                     onOpenThread: (id) => callbacks.current.onOpenThread?.(id),
                     onComment: requestComment,
                     onLink: () => setLinking(true),
-                    slash: slashPluginInstance,
+                    keymap: galleyKeymap(requestComment, () => setLinking(true)),
                 }),
                 suggestionReview(callbacks.current.suggestions, suggestionRef),
+                designPreview(callbacks.current.designs ?? noDesigns),
+                ...(callbacks.current.imageUploader
+                    ? [
+                        imageUpload({
+                            upload: (file) => callbacks.current.imageUploader.upload(file),
+                            onError: (message) => callbacks.current.imageUploader.onError(message),
+                        }),
+                    ]
+                    : []),
             ],
         });
         const editor = new EditorView(host.current, {
@@ -101,6 +132,18 @@ export const Editor = forwardRef(function Editor(props, ref) {
             // "in view" and practically unreadable.
             scrollMargin: { top: 96, bottom: 120, left: 0, right: 0 },
             scrollThreshold: { top: 96, bottom: 120, left: 0, right: 0 },
+            nodeViews: {
+                diagram: (node, editorView, getPos) => new DiagramView(node, editorView, getPos, (pos) => {
+                    const target = editorView.state.doc.nodeAt(pos);
+                    if (!target)
+                        return;
+                    setDiagramEdit({
+                        pos,
+                        code: String(target.attrs.code ?? ''),
+                        lang: String(target.attrs.lang ?? 'mermaid'),
+                    });
+                }),
+            },
             dispatchTransaction(transaction) {
                 const next = editor.state.apply(transaction);
                 editor.updateState(next);
@@ -112,15 +155,21 @@ export const Editor = forwardRef(function Editor(props, ref) {
                     lastCaret.current = caretOf(next, editor.hasFocus());
                     setLinking(false);
                 }
+                // The chrome is a pure function of this, so it has to be told about
+                // every transaction — including the ones that only moved the caret,
+                // which is what most of the toolbar's pressed states depend on.
+                callbacks.current.onStateChange?.(next);
                 forceRender((n) => n + 1);
             },
         });
         view.current = editor;
         restoreCaret(editor, lastCaret.current);
+        callbacks.current.onStateChange?.(editor.state);
         forceRender((n) => n + 1);
         return () => {
             editor.destroy();
             view.current = null;
+            callbacks.current.onStateChange?.(null);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [props.revision, requestComment]);
@@ -138,6 +187,30 @@ export const Editor = forwardRef(function Editor(props, ref) {
             return;
         editor.dispatch(editor.state.tr.setMeta(suggestionKey, props.suggestions));
     }, [props.suggestions]);
+    useEffect(() => {
+        const editor = view.current;
+        if (!editor || !props.designs)
+            return;
+        editor.dispatch(editor.state.tr.setMeta(designPreviewKey, props.designs));
+    }, [props.designs]);
+    /**
+     * Scrolling moves the selection on screen without producing a transaction.
+     *
+     * The effect below recomputes the selection's rectangle after *every* render,
+     * but nothing re-renders on scroll — so the margin comment button detached
+     * from its text and ended up beside unrelated words while still claiming to
+     * comment on the original selection. A listener inside the button could not
+     * fix it: the rectangle is a prop this component computes.
+     */
+    useEffect(() => {
+        const bump = () => forceRender((n) => n + 1);
+        window.addEventListener('scroll', bump, true);
+        window.addEventListener('resize', bump);
+        return () => {
+            window.removeEventListener('scroll', bump, true);
+            window.removeEventListener('resize', bump);
+        };
+    }, []);
     // The bubble follows the selection, but never while the pointer is down: a
     // bubble that chases a growing selection is the single loudest tell that a
     // writing surface was not finished.
@@ -228,10 +301,20 @@ export const Editor = forwardRef(function Editor(props, ref) {
                 // Nothing to put a caret in is not worth throwing over.
             }
         },
-        openInsertMenu: () => {
+        run: (command) => {
             const editor = view.current;
-            if (editor)
-                openSlashAt(editor);
+            if (!editor)
+                return;
+            command(editor.state, editor.dispatch, editor);
+            editor.focus();
+        },
+        openLink: () => {
+            view.current?.focus();
+            setLinking(true);
+        },
+        openComment: () => {
+            view.current?.focus();
+            requestComment();
         },
         focus: () => view.current?.focus(),
     }), [props.markdown]);
@@ -242,14 +325,39 @@ export const Editor = forwardRef(function Editor(props, ref) {
         command(editor.state, editor.dispatch, editor);
         editor.focus();
     }, []);
-    return (_jsxs("div", { className: "editor-shell", children: [_jsx("div", { className: "editor-surface", ref: host, "data-testid": "editor" }), bubble && !slash && (_jsx(SelectionBubble, { state: bubble, view: view.current, linking: linking, onLink: () => setLinking(true), onCloseLink: () => setLinking(false), onComment: requestComment, run: run })), slash && (_jsx(SlashMenu, { open: slash, onChoose: (item) => {
+    return (_jsxs("div", { className: "editor-shell", children: [_jsx("div", { className: "editor-surface", ref: host, "data-testid": "editor" }), bubble && !linking && (_jsx(MarginCommentButton, { rect: bubble.rect, host: host.current, onComment: requestComment })), linking && (_jsx(LinkPopup, { rect: bubble?.rect ?? null, view: view.current, onCancel: () => setLinking(false), onSubmit: (href) => {
+                    setLinking(false);
+                    if (!href) {
+                        run((s, dispatch) => {
+                            const { from, to } = s.selection;
+                            dispatch?.(s.tr.removeMark(from, to, schema.marks.link));
+                            return true;
+                        });
+                        return;
+                    }
+                    run(toggleMark(schema.marks.link, { href }));
+                } })), diagramEdit && (_jsx(DiagramEditor, { edit: diagramEdit, onCancel: () => {
+                    setDiagramEdit(null);
+                    view.current?.focus();
+                }, onApply: (code) => {
                     const editor = view.current;
-                    if (editor)
-                        runSlashItem(editor, item);
-                }, onDismiss: () => {
-                    const editor = view.current;
-                    if (editor)
-                        closeSlash(editor);
+                    setDiagramEdit(null);
+                    if (!editor)
+                        return;
+                    const node = editor.state.doc.nodeAt(diagramEdit.pos);
+                    if (!node || node.type !== schema.nodes.diagram)
+                        return;
+                    if (String(node.attrs.code ?? '') === code)
+                        return;
+                    editor.dispatch(editor.state.tr.setNodeMarkup(diagramEdit.pos, undefined, {
+                        ...node.attrs,
+                        code,
+                        // The cached bytes describe the diagram as it was. Clearing it
+                        // is what tells the save path this block must be re-serialized
+                        // rather than copied.
+                        source: null,
+                    }));
+                    editor.focus();
                 } }))] }));
 });
 function caretOf(state, focused) {
@@ -314,148 +422,80 @@ function selectionRect(view) {
         return null;
     }
 }
-const BLOCK_CHOICES = [
-    {
-        label: 'Text',
-        shortcut: '⌘⌥0',
-        command: setBlockType(schema.nodes.paragraph),
-        isActive: (state) => blockActive(state, 'paragraph'),
-    },
-    {
-        label: 'Heading 1',
-        shortcut: '⌘⌥1',
-        command: setBlockType(schema.nodes.heading, { level: 1 }),
-        isActive: (state) => blockActive(state, 'heading', { level: 1 }),
-    },
-    {
-        label: 'Heading 2',
-        shortcut: '⌘⌥2',
-        command: setBlockType(schema.nodes.heading, { level: 2 }),
-        isActive: (state) => blockActive(state, 'heading', { level: 2 }),
-    },
-    {
-        label: 'Heading 3',
-        shortcut: '⌘⌥3',
-        command: setBlockType(schema.nodes.heading, { level: 3 }),
-        isActive: (state) => blockActive(state, 'heading', { level: 3 }),
-    },
-    {
-        label: 'Bulleted list',
-        shortcut: '⌘⇧8',
-        command: wrapInList(schema.nodes.bullet_list),
-        isActive: (state) => blockActive(state, 'bullet_list'),
-    },
-    {
-        label: 'Numbered list',
-        shortcut: '⌘⇧7',
-        command: wrapInList(schema.nodes.ordered_list),
-        isActive: (state) => blockActive(state, 'ordered_list'),
-    },
-    {
-        label: 'Quote',
-        shortcut: '⌘⇧9',
-        command: wrapInType('blockquote'),
-        isActive: (state) => blockActive(state, 'blockquote'),
-    },
-    {
-        label: 'Callout',
-        shortcut: '',
-        command: wrapInType('callout', { kind: 'NOTE' }),
-        isActive: (state) => blockActive(state, 'callout'),
-    },
-];
-function SelectionBubble({ state, view, linking, onLink, onCloseLink, onComment, run, }) {
-    const element = useRef(null);
-    const [menuOpen, setMenuOpen] = useState(false);
-    const [flipped, setFlipped] = useState(true);
-    const [position, setPosition] = useState(null);
-    useEffect(() => setMenuOpen(false), [state.rect.top, state.rect.left]);
-    // Measure, then place. Positioning against an unmeasured box puts the bubble
-    // half a width off on its first frame, which reads as a flicker.
-    useEffect(() => {
-        const node = element.current;
-        if (!node)
-            return;
-        const place = () => {
-            const box = node.getBoundingClientRect();
-            const gap = 10;
-            const above = state.rect.top - box.height - gap;
-            const fitsAbove = above > 8;
-            const top = fitsAbove ? above : state.rect.bottom + gap;
-            // When the bubble sits above the selection its menu has to open upward
-            // too, or it drops straight over the text being restyled.
-            setFlipped(fitsAbove);
-            const left = Math.min(Math.max(8, state.rect.left + state.rect.width / 2 - box.width / 2), window.innerWidth - box.width - 8);
-            setPosition({ top, left });
-        };
-        place();
-        window.addEventListener('scroll', place, true);
-        window.addEventListener('resize', place);
-        return () => {
-            window.removeEventListener('scroll', place, true);
-            window.removeEventListener('resize', place);
-        };
-    }, [state.rect, menuOpen, linking]);
-    if (!view)
+/**
+ * The one thing a text selection offers.
+ *
+ * Google Docs puts a single comment button in the right margin when you select
+ * words, and offers nothing else — every formatting control stays where it was.
+ * That restraint is the point: a popup that appears over the text you just
+ * selected covers the thing you are looking at, and one that follows a growing
+ * selection is the loudest tell that a writing surface was not finished.
+ *
+ * It hangs in the gutter, vertically aligned with the selection, so it never
+ * overlaps a word.
+ */
+function MarginCommentButton({ rect, host, onComment, }) {
+    const page = host?.closest('.page');
+    if (!page)
         return null;
-    const editorState = view.state;
-    const current = BLOCK_CHOICES.find((choice) => choice.isActive(editorState))?.label ?? 'Text';
-    return createPortal(_jsx("div", { ref: element, className: "bubble", role: "toolbar", "aria-label": "Formatting", "data-testid": "format-bubble", style: {
-            top: position?.top ?? -9999,
-            left: position?.left ?? -9999,
-            visibility: position ? 'visible' : 'hidden',
-        }, onMouseDown: (event) => event.preventDefault(), children: linking ? (_jsx(LinkEditor, { onCancel: onCloseLink, onSubmit: (href) => {
-                onCloseLink();
-                if (!href) {
-                    run((s, dispatch) => {
-                        const { from, to } = s.selection;
-                        dispatch?.(s.tr.removeMark(from, to, schema.marks.link));
-                        return true;
-                    });
-                    return;
-                }
-                run(toggleMark(schema.marks.link, { href }));
-            } })) : (_jsxs(_Fragment, { children: [state.formattable && (_jsxs("div", { className: "bubble-turn", children: [_jsxs("button", { type: "button", className: "bubble-button bubble-turn-trigger", "aria-haspopup": "menu", "aria-expanded": menuOpen, onClick: () => setMenuOpen((open) => !open), children: [current, _jsx("span", { className: "caret", "aria-hidden": "true", children: "\u25BE" })] }), menuOpen && (_jsxs("div", { className: `bubble-menu ${flipped ? 'is-above' : ''}`, role: "menu", children: [BLOCK_CHOICES.map((choice) => (_jsxs("button", { type: "button", role: "menuitem", className: choice.isActive(editorState) ? 'is-active' : '', onClick: () => {
-                                        setMenuOpen(false);
-                                        run(choice.command);
-                                    }, children: [_jsx("span", { children: choice.label }), choice.shortcut && _jsx("kbd", { children: choice.shortcut })] }, choice.label))), _jsx("span", { className: "bubble-menu-sep" }), _jsxs("button", { type: "button", role: "menuitem", onClick: () => {
-                                        setMenuOpen(false);
-                                        run(clearFormatting);
-                                    }, children: [_jsx("span", { children: "Clear formatting" }), _jsx("kbd", { children: "\u2318\\" })] })] }))] })), state.formattable && (_jsxs(_Fragment, { children: [_jsx("span", { className: "bubble-sep" }), _jsx(BubbleButton, { label: "Bold", active: markActive(editorState, 'strong'), onClick: () => run(toggleMark(schema.marks.strong)), children: _jsx("strong", { children: "B" }) }), _jsx(BubbleButton, { label: "Italic", active: markActive(editorState, 'em'), onClick: () => run(toggleMark(schema.marks.em)), children: _jsx("em", { children: "I" }) }), _jsx(BubbleButton, { label: "Strikethrough", active: markActive(editorState, 'strike'), onClick: () => run(toggleMark(schema.marks.strike)), children: _jsx("s", { children: "S" }) }), _jsx(BubbleButton, { label: "Link", active: markActive(editorState, 'link'), onClick: onLink, children: _jsx(LinkIcon, {}) }), _jsx("span", { className: "bubble-sep" })] })), _jsx(BubbleButton, { label: "Add a note", active: false, onClick: onComment, children: _jsx(CommentIcon, {}) })] })) }), document.body);
+    const box = page.getBoundingClientRect();
+    return createPortal(_jsx("button", { type: "button", className: "margin-comment", "data-testid": "margin-comment", "aria-label": "Add a comment", title: "Add a comment (\u2318\u2325M)", style: { top: rect.top + rect.height / 2 - 18, left: box.right + 12 }, onMouseDown: (event) => event.preventDefault(), onClick: onComment, children: _jsxs("svg", { viewBox: "0 0 20 20", width: "18", height: "18", "aria-hidden": "true", children: [_jsx("path", { d: "M3.5 4.5h13v9h-7l-3.5 3v-3h-2.5z", fill: "none", stroke: "currentColor", strokeWidth: "1.6", strokeLinejoin: "round" }), _jsx("path", { d: "M10 7v4M8 9h4", stroke: "currentColor", strokeWidth: "1.6", strokeLinecap: "round" })] }) }), document.body);
 }
-function BubbleButton({ label, active, onClick, children, }) {
-    return (_jsx("button", { type: "button", className: `bubble-button ${active ? 'is-active' : ''}`, "aria-label": label, "aria-pressed": active, title: label, onClick: onClick, children: children }));
-}
-function LinkEditor({ onSubmit, onCancel, }) {
-    const [href, setHref] = useState('');
-    return (_jsxs("form", { className: "link-editor", onSubmit: (event) => {
-            event.preventDefault();
-            onSubmit(href.trim());
-        }, children: [_jsx("input", { autoFocus: true, value: href, placeholder: "Paste a link", "aria-label": "Link address", onChange: (event) => setHref(event.target.value), onKeyDown: (event) => {
-                    if (event.key === 'Escape') {
-                        event.preventDefault();
-                        onCancel();
-                    }
-                } }), _jsx("button", { type: "submit", className: "bubble-button", children: "Apply" })] }));
-}
-function SlashMenu({ open, onChoose, onDismiss, }) {
+/**
+ * The link editor, anchored to the words it will link.
+ *
+ * A popup rather than a dialog, because the selection has to stay visible —
+ * "what am I linking?" is the question the writer is holding in their head, and
+ * a modal answers it by covering the answer.
+ */
+function LinkPopup({ rect, view, onSubmit, onCancel, }) {
+    /**
+     * Prefilled with the link that is already there.
+     *
+     * An empty field on already-linked text is a trap: there is no way to see
+     * where the link points, and Apply silently replaces it with whatever is
+     * typed. Editing a link should start from the link.
+     */
+    const [href, setHref] = useState(() => {
+        if (!view)
+            return '';
+        const { from, $from } = view.state.selection;
+        const type = schema.marks.link;
+        if (!type)
+            return '';
+        const existing = type.isInSet(view.state.storedMarks ?? $from.marks()) ??
+            view.state.doc.resolve(from).marks().find((mark) => mark.type === type) ??
+            null;
+        return existing ? String(existing.attrs.href ?? '') : '';
+    });
     const element = useRef(null);
     const [position, setPosition] = useState(null);
+    // Where the caret is, when nothing is selected — ⌘K on a collapsed cursor is
+    // how you insert a link with its own text.
+    const anchorRect = useMemo(() => {
+        if (rect)
+            return rect;
+        if (!view)
+            return null;
+        try {
+            const coords = view.coordsAtPos(view.state.selection.from, 1);
+            return new DOMRect(coords.left, coords.top, 0, coords.bottom - coords.top);
+        }
+        catch {
+            return null;
+        }
+    }, [rect, view]);
     useEffect(() => {
         const node = element.current;
-        if (!node)
+        if (!node || !anchorRect)
             return;
         const place = () => {
             const box = node.getBoundingClientRect();
-            const below = open.coords.bottom + 8;
-            const roomBelow = window.innerHeight - below - 8;
-            const roomAbove = open.coords.top - 16;
-            const goesBelow = box.height <= roomBelow || roomBelow >= roomAbove;
-            node.style.maxHeight = `${Math.max(180, Math.floor(goesBelow ? roomBelow : roomAbove))}px`;
-            const height = Math.min(box.height, goesBelow ? roomBelow : roomAbove);
+            const below = anchorRect.bottom + 8;
+            const fitsBelow = below + box.height < window.innerHeight - 8;
             setPosition({
-                top: Math.max(8, goesBelow ? below : open.coords.top - height - 8),
-                left: Math.min(open.coords.left, window.innerWidth - box.width - 8),
+                top: fitsBelow ? below : Math.max(8, anchorRect.top - box.height - 8),
+                left: Math.min(Math.max(8, anchorRect.left), window.innerWidth - box.width - 8),
             });
         };
         place();
@@ -465,39 +505,78 @@ function SlashMenu({ open, onChoose, onDismiss, }) {
             window.removeEventListener('scroll', place, true);
             window.removeEventListener('resize', place);
         };
-    }, [open.coords, open.items.length]);
-    // Browsers do not scroll `aria-activedescendant` into view; without this the
-    // keyboard highlight walks off the bottom of the list.
-    useEffect(() => {
-        element.current
-            ?.querySelector('[aria-selected="true"]')
-            ?.scrollIntoView({ block: 'nearest' });
-    }, [open.index]);
-    if (open.items.length === 0) {
-        return createPortal(_jsx("div", { ref: element, className: "slash-menu is-empty", style: { top: position?.top ?? -9999, left: position?.left ?? -9999 }, children: _jsxs("p", { children: ["No blocks match \u201C", open.query, "\u201D"] }) }), document.body);
-    }
-    let lastGroup = '';
-    return createPortal(_jsxs("div", { ref: element, className: "slash-menu", "data-testid": "slash-menu", style: {
+    }, [anchorRect]);
+    if (!anchorRect)
+        return null;
+    return createPortal(_jsxs("form", { ref: element, className: "link-popup", "data-testid": "link-popup", style: {
             top: position?.top ?? -9999,
             left: position?.left ?? -9999,
             visibility: position ? 'visible' : 'hidden',
-        }, onMouseDown: (event) => event.preventDefault(), children: [_jsx("ul", { role: "listbox", id: "galley-slash-listbox", "aria-label": "Insert", children: open.items.flatMap((item, index) => {
-                    const header = item.group !== lastGroup ? item.group : null;
-                    lastGroup = item.group;
-                    const option = (_jsxs("li", { role: "option", id: `galley-slash-option-${index}`, "aria-selected": index === open.index, className: `slash-item ${index === open.index ? 'is-active' : ''}`, onClick: () => onChoose(item), children: [_jsx("span", { className: "slash-label", children: item.label }), _jsx("span", { className: "slash-hint", children: item.hint }), item.shortcut && _jsx("kbd", { children: item.shortcut })] }, item.id));
-                    return header
-                        ? [
-                            _jsx("li", { role: "presentation", className: "slash-group", children: header }, `${item.id}-group`),
-                            option,
-                        ]
-                        : [option];
-                }) }), _jsx("button", { type: "button", className: "slash-dismiss", onClick: onDismiss, "aria-label": "Close", children: "Esc" })] }), document.body);
+        }, onMouseDown: (event) => event.stopPropagation(), onSubmit: (event) => {
+            event.preventDefault();
+            onSubmit(href.trim());
+        }, children: [_jsx("input", { autoFocus: true, value: href, placeholder: "Paste a link", "aria-label": "Link address", 
+                // Selected on focus, so typing replaces the existing address rather
+                // than appending to it.
+                onFocus: (event) => event.currentTarget.select(), onChange: (event) => setHref(event.target.value), onKeyDown: (event) => {
+                    if (event.key === 'Escape') {
+                        event.preventDefault();
+                        onCancel();
+                    }
+                } }), _jsx("button", { type: "submit", className: "link-apply", children: "Apply" }), _jsx("button", { type: "button", className: "link-remove", onClick: () => onSubmit(''), children: "Remove" })] }), document.body);
 }
-function LinkIcon() {
-    return (_jsxs("svg", { viewBox: "0 0 16 16", width: "14", height: "14", "aria-hidden": "true", className: "icon", children: [_jsx("path", { d: "M6.5 9.5a2.5 2.5 0 0 0 3.54 0l2-2a2.5 2.5 0 0 0-3.54-3.54l-.9.9" }), _jsx("path", { d: "M9.5 6.5a2.5 2.5 0 0 0-3.54 0l-2 2a2.5 2.5 0 0 0 3.54 3.54l.9-.9" })] }));
+/**
+ * The diagram source panel.
+ *
+ * A diagram is the one place this product shows a writer a syntax, and it is
+ * worth being honest about why that is not a contradiction. Markdown is a way
+ * of writing *prose*, and hiding it is the whole product. Mermaid is a way of
+ * describing *a picture*, and there is no direct-manipulation surface here that
+ * would describe one better — so the syntax is the feature, not a leak.
+ *
+ * What the panel owes the writer instead is that they never start from a blank
+ * box (the Insert menu offers finished diagrams to edit), that the drawing
+ * updates as they type, and that a mistake reads as "not finished yet" rather
+ * than as an error.
+ */
+function DiagramEditor({ edit, onApply, onCancel, }) {
+    const [code, setCode] = useState(edit.code);
+    const [preview, setPreview] = useState(null);
+    const panel = useRef(null);
+    // Debounced, because rendering is asynchronous and comparatively slow: a
+    // render per keystroke makes the preview strobe and the textarea stutter.
+    useEffect(() => {
+        let live = true;
+        const timer = window.setTimeout(() => {
+            void renderDiagram(edit.lang, code).then((result) => {
+                if (!live)
+                    return;
+                setPreview(result.ok ? { svg: result.svg } : { error: result.message });
+            });
+        }, 220);
+        return () => {
+            live = false;
+            window.clearTimeout(timer);
+        };
+    }, [code, edit.lang]);
+    useEffect(() => {
+        const onKey = (event) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                onCancel();
+            }
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                onApply(code);
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [code, onApply, onCancel]);
+    return createPortal(_jsxs("div", { className: "overlay", role: "dialog", "aria-modal": "true", "aria-label": "Edit diagram", children: [_jsx("button", { className: "overlay-scrim", "aria-label": "Close", onClick: onCancel }), _jsxs("div", { className: "overlay-panel diagram-panel", ref: panel, tabIndex: -1, children: [_jsxs("div", { className: "diagram-panel-head", children: [_jsx("h2", { children: "Diagram" }), _jsx("p", { children: "The picture updates as you type." })] }), _jsxs("div", { className: "diagram-panel-body", children: [_jsxs("label", { className: "diagram-panel-source", children: [_jsx("span", { className: "visually-hidden", children: "Diagram description" }), _jsx("textarea", { autoFocus: true, spellCheck: false, value: code, onChange: (event) => setCode(event.target.value) })] }), _jsx("div", { className: "diagram-panel-preview", "data-testid": "diagram-preview", children: preview && 'svg' in preview ? (
+                                // Mermaid's output, which it only hands back as a string. Safe
+                                // here because `securityLevel: 'strict'` escapes every label it
+                                // did not generate — see `diagram.ts`.
+                                _jsx("div", { className: "diagram-canvas", dangerouslySetInnerHTML: { __html: preview.svg } })) : (_jsx("p", { className: "diagram-panel-pending", children: preview?.error ?? 'Drawing…' })) })] }), _jsxs("div", { className: "diagram-panel-foot", children: [_jsx("button", { type: "button", className: "ghost", onClick: onCancel, children: "Cancel" }), _jsx("button", { type: "button", className: "primary", onClick: () => onApply(code), children: "Done" })] })] })] }), document.body);
 }
-function CommentIcon() {
-    return (_jsx("svg", { viewBox: "0 0 16 16", width: "14", height: "14", "aria-hidden": "true", className: "icon", children: _jsx("path", { d: "M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" }) }));
-}
-export { slashKey };
 //# sourceMappingURL=Editor.js.map

@@ -26,6 +26,17 @@ export interface Loaded {
     /** False when the source had no body at all — only frontmatter, or nothing. */
     readonly hadBody: boolean;
 }
+/**
+ * Fence info strings the editor renders as a picture rather than as code.
+ *
+ * Kept deliberately small. Every entry here is a language whose fenced form is
+ * already rendered as a diagram by GitHub and by the common Markdown previewers,
+ * so a Galley document opened anywhere else shows the same picture. Adding one
+ * that is not, would mean the editor showed a drawing where every other reader
+ * showed source — the WYSIWYG lying about the file, which is the one thing this
+ * codebase will not do.
+ */
+export declare const DIAGRAM_LANGS: Set<string>;
 export declare function markdownToDoc(markdown: string): Loaded;
 export declare function docToMarkdown(doc: PmNode, loaded: Loaded): string;
 //# sourceMappingURL=convert.d.ts.map

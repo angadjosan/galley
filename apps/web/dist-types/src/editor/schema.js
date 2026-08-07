@@ -80,12 +80,77 @@ const nodes = {
         code: true,
         defining: true,
         marks: '',
-        attrs: { lang: { default: null }, ...blockAttrs },
+        attrs: {
+            lang: { default: null },
+            /**
+             * The rest of the fence's info string, after the language.
+             *
+             * ` ```ts title="server.ts" ` is a real and common convention, and the
+             * parser and the serializer have both always carried it. The editor was
+             * the one layer that dropped it, so editing such a block deleted the tail
+             * — the exact "silently disappears on save" failure this file's header
+             * warns about.
+             */
+            meta: { default: null },
+            ...blockAttrs,
+        },
         parseDOM: [{ tag: 'pre', preserveWhitespace: 'full' }],
         toDOM: (node) => [
             'pre',
-            { 'data-lang': node.attrs.lang ?? undefined, 'data-block-id': node.attrs.blockId ?? undefined },
+            {
+                'data-lang': node.attrs.lang ?? undefined,
+                'data-meta': node.attrs.meta ?? undefined,
+                'data-block-id': node.attrs.blockId ?? undefined,
+            },
             ['code', 0],
+        ],
+    },
+    /**
+     * A diagram.
+     *
+     * On disk this is an ordinary fenced code block with a `mermaid` info string —
+     * the convention GitHub, GitLab, Obsidian and VS Code already render — so the
+     * file stays portable CommonMark and Principle IV holds. In the editor it is
+     * never a code block: it is a picture with an "Edit" affordance, because a
+     * writer who inserts a flowchart should no more see a fence than a writer who
+     * types a heading should see a `#`.
+     *
+     * An atom rather than a text-holding node. The source lives in an attribute
+     * and is edited in a panel, so a stray keystroke on the canvas cannot corrupt
+     * a diagram into an unparseable state, and the NodeView is free to render
+     * asynchronously without ProseMirror trying to map positions into an SVG.
+     */
+    diagram: {
+        group: 'block',
+        atom: true,
+        selectable: true,
+        draggable: true,
+        defining: true,
+        attrs: {
+            /** The diagram's own language. `mermaid` today; the fence carries it. */
+            lang: { default: 'mermaid' },
+            /** The fence's info-string tail, carried across untouched. */
+            meta: { default: null },
+            code: { default: '' },
+            ...blockAttrs,
+        },
+        parseDOM: [
+            {
+                tag: 'figure[data-diagram]',
+                getAttrs: (dom) => ({
+                    lang: dom.dataset.diagram || 'mermaid',
+                    code: dom.dataset.code ?? '',
+                }),
+            },
+        ],
+        toDOM: (node) => [
+            'figure',
+            {
+                'data-diagram': String(node.attrs.lang ?? 'mermaid'),
+                'data-code': String(node.attrs.code ?? ''),
+                'data-block-id': node.attrs.blockId ?? undefined,
+                class: 'diagram',
+            },
         ],
     },
     bullet_list: {
@@ -230,6 +295,29 @@ const marks = {
     strike: {
         parseDOM: [{ tag: 's' }, { tag: 'del' }],
         toDOM: () => ['s', 0],
+    },
+    /**
+     * Underline and highlight.
+     *
+     * CommonMark has no syntax for either, so both round-trip as the inline HTML
+     * CommonMark explicitly permits: `<u>…</u>` and `<mark>…</mark>`. That is not
+     * an invented extension — it is the escape hatch the spec provides, it renders
+     * correctly in every HTML-producing renderer, and it degrades to visible text
+     * in none of them.
+     *
+     * They exist because the toolbar is the product's promise. A writer coming
+     * from a word processor reaches for underline and for the yellow marker; a
+     * toolbar missing both is the tell that this is a Markdown editor wearing a
+     * costume. The cost — two constructs an agent reads as HTML rather than as
+     * Markdown — is recorded in `tradeoffs.md`.
+     */
+    underline: {
+        parseDOM: [{ tag: 'u' }, { style: 'text-decoration=underline' }],
+        toDOM: () => ['u', 0],
+    },
+    highlight: {
+        parseDOM: [{ tag: 'mark' }],
+        toDOM: () => ['mark', 0],
     },
     link: {
         inclusive: false,

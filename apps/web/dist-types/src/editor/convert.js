@@ -6,6 +6,17 @@ import { parseDocument, serializeFlow } from '@galley/markdown';
 import { segment } from '@galley/core/segments';
 import { schema } from './schema.js';
 const CALLOUT = /^\[!([A-Za-z]+)\]([+-])?\s*/;
+/**
+ * Fence info strings the editor renders as a picture rather than as code.
+ *
+ * Kept deliberately small. Every entry here is a language whose fenced form is
+ * already rendered as a diagram by GitHub and by the common Markdown previewers,
+ * so a Galley document opened anywhere else shows the same picture. Adding one
+ * that is not, would mean the editor showed a drawing where every other reader
+ * showed source — the WYSIWYG lying about the file, which is the one thing this
+ * codebase will not do.
+ */
+export const DIAGRAM_LANGS = new Set(['mermaid']);
 const MARKER = /^<!--\s*\^([A-Za-z0-9_-]{2,64})\s*-->$/;
 /**
  * Pull a trailing id marker off a paragraph or heading's inline content.
@@ -93,7 +104,18 @@ function flowToNode(node, blockId, source, block) {
             return schema.nodes.heading.create({ ...attrs, blockId: blockId ?? extracted.blockId, level: node.depth }, inlineToNodes(extracted.inline));
         }
         case 'code':
-            return schema.nodes.code_block.create({ ...attrs, lang: node.lang ?? null }, node.value ? [schema.text(node.value)] : []);
+            // A fence whose info string names a diagram language is a picture, not
+            // code. The bytes on disk are identical either way — this is purely which
+            // face the editor puts on them.
+            if (node.lang && DIAGRAM_LANGS.has(node.lang.toLowerCase())) {
+                return schema.nodes.diagram.create({
+                    ...attrs,
+                    lang: node.lang.toLowerCase(),
+                    meta: node.meta ?? null,
+                    code: node.value ?? '',
+                });
+            }
+            return schema.nodes.code_block.create({ ...attrs, lang: node.lang ?? null, meta: node.meta ?? null }, node.value ? [schema.text(node.value)] : []);
         case 'thematicBreak':
             return schema.nodes.horizontal_rule.create(attrs);
         case 'blockquote': {
@@ -183,7 +205,75 @@ function stripCalloutLabel(node, strip) {
         children: [{ ...first, value: first.value.replace(CALLOUT, '') }, ...node.children.slice(1)],
     };
 }
+/**
+ * Inline HTML elements the editor understands as formatting rather than as raw
+ * source, keyed by the mark they become.
+ *
+ * Only elements whose entire meaning *is* a text style. `<u>` and `<mark>` are
+ * the two a word-processor toolbar needs and Markdown does not have; anything
+ * with attributes, or whose meaning depends on where it sits, stays an
+ * `inline_raw` atom and is re-emitted verbatim.
+ */
+const HTML_MARKS = { u: 'underline', mark: 'highlight' };
+/**
+ * Fold `<u>…</u>` and `<mark>…</mark>` runs into marks before the ordinary walk.
+ *
+ * mdast hands these back as three separate siblings — an `html` open tag, the
+ * content, an `html` close tag — so the pairing has to happen across the array
+ * rather than inside the per-child switch. An opening tag with no matching close
+ * is left alone and falls through to `inline_raw`, because unbalanced HTML in
+ * someone's document is their content, not an invitation to guess.
+ */
+function foldHtmlMarks(children, marks) {
+    for (let i = 0; i < children.length; i++) {
+        const child = children[i];
+        if (child?.type !== 'html')
+            continue;
+        const open = /^<([a-z]+)>$/i.exec(child.value.trim());
+        const markName = open ? HTML_MARKS[open[1].toLowerCase()] : undefined;
+        const markType = markName ? schema.marks[markName] : undefined;
+        if (!open || !markType)
+            continue;
+        const closing = `</${open[1].toLowerCase()}>`;
+        // Nesting of the same element is not something a toolbar can produce, but a
+        // hand-written document may contain it; depth counting keeps the pairing
+        // right if it does.
+        let depth = 1;
+        let close = -1;
+        for (let j = i + 1; j < children.length; j++) {
+            const later = children[j];
+            if (later?.type !== 'html')
+                continue;
+            const tag = later.value.trim().toLowerCase();
+            if (tag === child.value.trim().toLowerCase())
+                depth++;
+            else if (tag === closing && --depth === 0) {
+                close = j;
+                break;
+            }
+        }
+        if (close === -1)
+            continue;
+        return [
+            ...inlineToNodes(children.slice(0, i), marks),
+            ...inlineToNodes(children.slice(i + 1, close), [...marks, markType.create()]),
+            ...inlineToNodes(children.slice(close + 1), marks),
+        ];
+    }
+    return null;
+}
+/**
+ * Every node produced here carries `marks`, atoms included.
+ *
+ * An atom created without them silently loses whatever emphasis surrounded it:
+ * `<u>*<span>*</u>` came back as a bare `<span>`, with the underline *and* the
+ * italics gone, because the `inline_raw` holding `<span>` was built with no
+ * marks and the serializer had nothing left to wrap.
+ */
 function inlineToNodes(children, marks = []) {
+    const folded = foldHtmlMarks(children, marks);
+    if (folded)
+        return folded;
     const out = [];
     for (const child of children) {
         switch (child.type) {
@@ -219,35 +309,26 @@ function inlineToNodes(children, marks = []) {
                 ]));
                 break;
             case 'image':
-                out.push(schema.nodes.image.create({ src: child.url, alt: child.alt ?? '', title: child.title ?? null }));
+                out.push(schema.nodes.image.create({ src: child.url, alt: child.alt ?? '', title: child.title ?? null }, null, marks));
                 break;
             case 'break':
-                out.push(schema.nodes.hard_break.create());
+                out.push(schema.nodes.hard_break.create(null, null, marks));
                 break;
             case 'html':
                 // As an atom, not as text: text is escaped on the way out, so
                 // `<span class="x">` came back as `\<span class="x"\>`.
                 if (child.value) {
-                    out.push(schema.nodes.inline_raw.create({ source: child.value, label: child.value }));
+                    out.push(schema.nodes.inline_raw.create({ source: child.value, label: child.value }, null, marks));
                 }
                 break;
             case 'linkReference':
-                out.push(schema.nodes.inline_raw.create({
-                    source: `[${plainOf(child.children)}][${child.identifier}]`,
-                    label: plainOf(child.children),
-                }));
+                out.push(schema.nodes.inline_raw.create({ source: `[${plainOf(child.children)}][${child.identifier}]`, label: plainOf(child.children) }, null, marks));
                 break;
             case 'imageReference':
-                out.push(schema.nodes.inline_raw.create({
-                    source: `![${child.alt ?? ''}][${child.identifier}]`,
-                    label: child.alt ?? child.identifier,
-                }));
+                out.push(schema.nodes.inline_raw.create({ source: `![${child.alt ?? ''}][${child.identifier}]`, label: child.alt ?? child.identifier }, null, marks));
                 break;
             case 'footnoteReference':
-                out.push(schema.nodes.inline_raw.create({
-                    source: `[^${child.identifier}]`,
-                    label: `[${child.identifier}]`,
-                }));
+                out.push(schema.nodes.inline_raw.create({ source: `[^${child.identifier}]`, label: `[${child.identifier}]` }, null, marks));
                 break;
             default: {
                 const anyChild = child;
@@ -300,7 +381,22 @@ function nodeToFlow(node) {
                 children: withMarker(nodeToInline(node), node),
             };
         case 'code_block':
-            return { type: 'code', lang: node.attrs.lang ?? null, meta: null, value: node.textContent };
+            return {
+                type: 'code',
+                lang: node.attrs.lang ?? null,
+                meta: node.attrs.meta ?? null,
+                value: node.textContent,
+            };
+        case 'diagram':
+            // Back to the fence it came from. A diagram the writer never opened is
+            // still covered by the unchanged-block rule above and re-emitted byte for
+            // byte; this path only runs for one that was actually edited.
+            return {
+                type: 'code',
+                lang: node.attrs.lang ?? 'mermaid',
+                meta: node.attrs.meta ?? null,
+                value: String(node.attrs.code ?? ''),
+            };
         case 'horizontal_rule':
             return { type: 'thematicBreak' };
         case 'raw_block':
@@ -401,7 +497,7 @@ function nodeToInline(node) {
     });
     return buildInline(pieces, []);
 }
-const MARK_ORDER = ['link', 'strong', 'em', 'strike', 'code'];
+const MARK_ORDER = ['link', 'highlight', 'underline', 'strong', 'em', 'strike', 'code'];
 /**
  * Rebuild nested Markdown emphasis from ProseMirror's flat per-text marks.
  *
@@ -421,10 +517,29 @@ function buildInline(pieces, applied) {
     const isApplied = (mark) => applied.some((m) => m.eq(mark));
     while (index < pieces.length) {
         const piece = pieces[index];
-        const candidates = piece.marks
+        // The **widest** run wins, and `MARK_ORDER` is only the tie-break.
+        //
+        // Ranking by the table alone loses content. Take `**<mark>b</mark> plain**`
+        // — bold over the whole phrase, highlight over one word of it, which is
+        // what a writer gets by bolding a sentence and then highlighting a word.
+        // Hoisting the highlight outward splits the bold in two, and the second
+        // half opens on a space: `** plain**` is not left-flanking, so CommonMark
+        // does not read it as emphasis, and the next save escapes the asterisks.
+        // Two saves and the emphasis is gone, replaced by visible `\*\*`.
+        //
+        // Choosing the widest run means a mark can only be nested inside one that
+        // covers at least as much, which is the condition under which a delimiter
+        // pair cannot straddle a boundary in the first place.
+        const runFrom = (mark) => {
+            let end = index;
+            while (end < pieces.length && pieces[end].marks.some((m) => m.eq(mark)))
+                end++;
+            return end - index;
+        };
+        const next = piece.marks
             .filter((mark) => !isAnnotation(mark.type.name) && !isApplied(mark))
-            .sort((a, b) => MARK_ORDER.indexOf(a.type.name) - MARK_ORDER.indexOf(b.type.name));
-        const next = candidates[0];
+            .map((mark) => ({ mark, run: runFrom(mark), rank: MARK_ORDER.indexOf(mark.type.name) }))
+            .sort((a, b) => b.run - a.run || a.rank - b.rank)[0]?.mark;
         if (!next) {
             if (piece.node)
                 out.push(nodeToPhrasing(piece.node));
@@ -436,7 +551,7 @@ function buildInline(pieces, applied) {
         let end = index;
         while (end < pieces.length && pieces[end].marks.some((mark) => mark.eq(next)))
             end++;
-        out.push(wrapMark(next, buildInline(pieces.slice(index, end), [...applied, next])));
+        out.push(...wrapMark(next, buildInline(pieces.slice(index, end), [...applied, next])));
         index = end;
     }
     return out;
@@ -445,26 +560,98 @@ function buildInline(pieces, applied) {
 function isAnnotation(name) {
     return name === 'comment' || name === 'suggestion';
 }
+/**
+ * Returns a list, not a node: `<u>` and `<mark>` have no mdast node of their
+ * own and come back as an open tag, the children, and a close tag.
+ */
 function wrapMark(mark, children) {
+    // Whitespace never sits inside the delimiters.
+    //
+    // CommonMark's flanking rules say a closing `**` preceded by a space cannot
+    // close, and an opening `**` followed by one cannot open — so `**a **` is not
+    // emphasis at all, it is four literal asterisks. Emitting it meant the *next*
+    // save read them as literal and escaped them, and the emphasis was gone.
+    //
+    // This arrangement is not exotic: it is what any two marks that *cross* look
+    // like, and crossing is unrepresentable in Markdown, so one of them has to be
+    // split at a boundary that may well fall on a space.
+    const outer = liftEdges(children);
+    if (outer.lead.length > 0 || outer.trail.length > 0) {
+        // Nothing but whitespace inside: there is no content to emphasise, so the
+        // mark is dropped rather than emitted as an empty pair.
+        if (outer.inner.length === 0)
+            return [...outer.lead, ...outer.trail];
+        return [...outer.lead, ...wrapMark(mark, outer.inner), ...outer.trail];
+    }
     switch (mark.type.name) {
         case 'strong':
-            return { type: 'strong', children };
+            return [{ type: 'strong', children }];
         case 'em':
-            return { type: 'emphasis', children };
+            return [{ type: 'emphasis', children }];
         case 'strike':
-            return { type: 'delete', children };
+            return [{ type: 'delete', children }];
         case 'code':
-            return { type: 'inlineCode', value: children.map(plainText).join('') };
+            return [{ type: 'inlineCode', value: children.map(plainText).join('') }];
+        case 'underline':
+            return htmlWrap('u', children);
+        case 'highlight':
+            return htmlWrap('mark', children);
         case 'link':
-            return {
-                type: 'link',
-                url: String(mark.attrs.href ?? ''),
-                title: mark.attrs.title ?? null,
-                children,
-            };
+            return [
+                {
+                    type: 'link',
+                    url: String(mark.attrs.href ?? ''),
+                    title: mark.attrs.title ?? null,
+                    children,
+                },
+            ];
         default:
-            return { type: 'text', value: children.map(plainText).join('') };
+            return [{ type: 'text', value: children.map(plainText).join('') }];
     }
+}
+/**
+ * Peel whitespace off both ends of a run, to sit outside its delimiters.
+ *
+ * "Whitespace" includes a **hard break**, which is the case this missed twice.
+ * A hard break serializes as two spaces and a newline, so a mark run beginning
+ * with one produces `**  \n`, and an opening `**` followed by whitespace cannot
+ * open — the same flanking rule that makes `**a **` four literal asterisks.
+ * Shift+Enter and then ⌘B is an ordinary thing to do, and it destroyed the
+ * emphasis on the *second* save.
+ */
+function liftEdges(children) {
+    const inner = [...children];
+    const lead = [];
+    const trail = [];
+    /** Whether this node cannot sit against a delimiter. */
+    const isEdgeSpace = (node) => node?.type === 'break' || (node?.type === 'text' && /^\s*$/.test(node.value));
+    // Whole nodes first, from both ends.
+    while (inner.length > 0 && isEdgeSpace(inner[0]))
+        lead.push(inner.shift());
+    while (inner.length > 0 && isEdgeSpace(inner[inner.length - 1]))
+        trail.unshift(inner.pop());
+    // Then the whitespace *inside* the text nodes that now sit at each edge.
+    const first = inner[0];
+    if (first?.type === 'text') {
+        const match = /^\s+/.exec(first.value);
+        if (match) {
+            lead.push({ type: 'text', value: match[0] });
+            inner[0] = { ...first, value: first.value.slice(match[0].length) };
+        }
+    }
+    const last = inner[inner.length - 1];
+    if (last?.type === 'text') {
+        const match = /\s+$/.exec(last.value);
+        if (match) {
+            trail.unshift({ type: 'text', value: match[0] });
+            inner[inner.length - 1] = { ...last, value: last.value.slice(0, last.value.length - match[0].length) };
+        }
+    }
+    return { lead, trail, inner };
+}
+/** `html` phrasing nodes are emitted verbatim, which is what a tag needs. */
+function htmlWrap(tag, children) {
+    return [{ type: 'html', value: `<${tag}>` }, ...children, { type: 'html', value: `</${tag}>` }];
 }
 function nodeToPhrasing(node) {
     if (node.type.name === 'hard_break')

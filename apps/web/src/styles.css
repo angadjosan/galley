@@ -2621,7 +2621,50 @@ kbd {
 .design-canvas {
   min-height: 0;
   display: flex;
+  flex-direction: column;
   overflow: hidden;
+}
+
+/* Which level you are working at, and the way back out. The overlay's dashed
+   ring says the same thing in the corner of your eye; this says it in words,
+   because the ring alone is invisible at 100% zoom on a large frame. */
+.design-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line-2);
+  background: var(--page);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.design-crumbs button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.design-crumbs button:last-child {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.design-crumbs button:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* The row for the container you are inside, so the tree agrees with the
+   breadcrumb and the canvas about where you are. */
+.design-tree-row.is-focus {
+  box-shadow: inset 2px 0 0 var(--accent-line);
 }
 
 /* The stage owns its own scrolling, through the camera rather than through the
@@ -2703,9 +2746,9 @@ kbd {
    second selection on the container itself. */
 .design-overlay-focus {
   stroke: var(--accent);
-  stroke-width: 1;
-  stroke-dasharray: 3 3;
-  opacity: 0.5;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  opacity: 0.85;
 }
 
 .design-overlay-anchor {
@@ -3168,4 +3211,27 @@ kbd {
   background: var(--accent-tint);
   color: var(--accent-text);
   font-weight: 560;
+}
+
+/* A pane that failed to render. The document list, the header and the source
+   view are all still there — which matters, because the source view is how
+   someone rescues a design by hand when the canvas cannot draw it. */
+.pane-failed {
+  margin: auto;
+  max-width: 44ch;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-2);
+  font-size: var(--fs-ui);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+}
+
+.pane-failed-detail {
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  word-break: break-word;
 }

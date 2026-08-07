@@ -10,6 +10,7 @@ import {
   walk,
   type DesignDocument,
   type DesignOp,
+  type Frame,
   type Layer,
   type LintFinding,
   type NewLayer,
@@ -63,10 +64,30 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
    */
   const [rawSelection, setSelection] = useState<Selection>(NOTHING);
   const [showSource, setShowSource] = useState(false);
+  /** What the canvas measured, for the one control that needs a real number. */
+  const [rects, setRects] = useState<ReadonlyMap<string, { width: number; height: number }>>(new Map());
   /** The inspector's Words field, so a double-click on the canvas can reach it. */
   const wordsRef = useRef<HTMLTextAreaElement>(null);
   /** The last markup this editor emitted, to tell its own edits from everyone else's. */
   const mine = useRef<string | null>(null);
+  /**
+   * Undo, which every structural gesture on the canvas needs and none had.
+   *
+   * Stacks of *sources*, not of inverse ops. Inverting an op set means writing
+   * an inverse for each of the eight and getting every one right — and a `move`
+   * whose inverse must account for position-derived ids renaming its own
+   * neighbours is the kind of thing that is wrong for months. A design is a few
+   * kilobytes of text; keeping a hundred of them costs less than getting one
+   * inverse wrong, and a snapshot cannot drift from what it restores.
+   *
+   * Deliberately local to this editor and not the document's history: the
+   * document's history is a record of *saved versions* and belongs to everyone,
+   * while this is the last thing your hand did.
+   */
+  const past = useRef<string[]>([]);
+  const future = useRef<string[]>([]);
+  /** What the last push was, so a run of keystrokes collapses into one step. */
+  const lastPush = useRef<{ key: string; at: number } | null>(null);
   /**
    * Which mode the canvas is drawing in.
    *
@@ -106,6 +127,11 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
     // every edit as somebody else's and drop the selection each keystroke.
     if (mine.current === null || props.source.trimEnd() === mine.current.trimEnd()) return;
     mine.current = null;
+    // The undo stack goes too. It holds versions of a document that somebody
+    // else has since changed, and "undo" that reverts a collaborator's edit is
+    // not undo — it is a silent overwrite.
+    past.current = [];
+    future.current = [];
     setSelection((current) => (current.ids.length > 0 || current.focus ? NOTHING : current));
   }, [props.source]);
 
@@ -140,12 +166,64 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
         return null;
       }
       const next = serializeDesign(result.design, { durable: props.anchored ?? new Set() });
+      // Typing in the inspector produces one op per keystroke, so consecutive
+      // edits of the same kind to the same layer collapse into one undo step.
+      // Without this, undoing a renamed button means pressing ⌘Z fourteen times
+      // — which is the behaviour every text field learned not to have decades
+      // ago.
+      const key = ops.length === 1 && COALESCING.has(ops[0]!.op) ? `${ops[0]!.op}:${idOf(ops[0]!)}` : '';
+      const now = performance.now();
+      const runOn = key !== '' && lastPush.current?.key === key && now - lastPush.current.at < COALESCE_MS;
+      if (!runOn) {
+        past.current = [...past.current.slice(-(UNDO_DEPTH - 1)), props.source];
+        future.current = [];
+      }
+      lastPush.current = key === '' ? null : { key, at: now };
+
       mine.current = next;
       props.onChange(next);
       return result.design;
     },
     [design, props],
   );
+
+  /**
+   * Step back, or forward again.
+   *
+   * The source that comes off the stack is announced as this editor's own, so
+   * the collaborator check above does not mistake an undo for somebody else's
+   * edit and throw away the rest of the stack.
+   */
+  const step = useCallback(
+    (direction: 'undo' | 'redo'): void => {
+      if (props.readOnly) return;
+      const from = direction === 'undo' ? past : future;
+      const to = direction === 'undo' ? future : past;
+      const previous = from.current.at(-1);
+      if (previous === undefined) return;
+      from.current = from.current.slice(0, -1);
+      to.current = [...to.current, props.source];
+      lastPush.current = null;
+      mine.current = previous;
+      props.onChange(previous);
+    },
+    [props],
+  );
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return;
+      // A field has its own undo and it is better than this one — it works on
+      // words. Taking ⌘Z away from the Words box would be a regression from
+      // having no undo at all.
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      event.preventDefault();
+      step(event.shiftKey ? 'redo' : 'undo');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [step]);
 
   /** Rewrite one layer, as an op. */
   const edit = useCallback(
@@ -302,7 +380,9 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
             <button
               key={layer.id}
               type="button"
-              className={`design-tree-row ${selected === layer.id ? 'is-selected' : ''} ${
+              className={`design-tree-row ${selection.ids.includes(layer.id) ? 'is-selected' : ''} ${
+                selection.focus === layer.id ? 'is-focus' : ''
+              } ${
                 findings.some((f) => f.layerId === layer.id) ? 'has-problem' : ''
               }`}
               style={{ paddingLeft: 10 + depth * 14 }}
@@ -322,6 +402,27 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
         </aside>
 
         <div className="design-canvas">
+          {design && selection.focus && (
+            /**
+             * Where you are, and the way back out.
+             *
+             * The focus model is only learnable if the level you are on is
+             * legible — otherwise "why did my click select the card this time"
+             * has no answer anywhere on screen. A dashed rectangle at 50%
+             * opacity was the entire cue, and at 100% zoom it is invisible.
+             * Webflow puts a breadcrumb under the canvas for the same reason.
+             */
+            <nav className="design-crumbs" aria-label="Inside">
+              <button type="button" onClick={() => setSelection(NOTHING)}>
+                {design.name}
+              </button>
+              {trail(design, selection.focus).map((step) => (
+                <button key={step.id} type="button" onClick={() => reveal(step.id)}>
+                  <span aria-hidden="true">›</span> {step.name}
+                </button>
+              ))}
+            </nav>
+          )}
           {design && (
             <Stage
               design={design}
@@ -331,6 +432,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
               selection={selection}
               onSelection={setSelection}
               onEscape={props.onClose}
+              onMeasure={setRects}
               onMove={moveLayer}
               onEditText={(id) => {
                 reveal(id);
@@ -338,7 +440,13 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
                 // put the caret where the text actually is.
                 queueMicrotask(() => wordsRef.current?.focus());
               }}
-              onDelete={(id) => run([{ op: 'delete', id }]) && setSelection((at) => ({ focus: at.focus, ids: [] }))}
+              onDelete={(ids) => {
+                // One batch, so a multiple delete is one undo step and one
+                // save rather than three of each.
+                if (run(ids.map((id) => ({ op: 'delete', id }) as const))) {
+                  setSelection((at) => ({ focus: at.focus, ids: [] }));
+                }
+              }}
             />
           )}
         </div>
@@ -353,6 +461,8 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
               // across it. Without it the control would have to guess, and a
               // size control that guesses is one that silently does nothing.
               flow={design ? flowOf(design, current.id) : null}
+              measured={rects.get(current.id) ?? null}
+              onFrame={(change) => run([{ op: 'set-frame', id: current.id, ...change }])}
               readOnly={props.readOnly ?? false}
               findings={findings.filter((finding) => finding.layerId === current.id)}
               onEdit={(change) => edit(current.id, change)}
@@ -398,6 +508,25 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
 
 const KIND_GLYPH: Record<string, string> = { box: '▢', text: 'T', image: '🖼' };
 
+/**
+ * How many steps back you can go.
+ *
+ * A design is a few kilobytes, so a hundred of them is a rounding error against
+ * the document itself. The bound exists because an unbounded stack in a
+ * long-lived editor is a leak, not because a hundred is expensive.
+ */
+const UNDO_DEPTH = 100;
+
+/** Ops that a run of keystrokes produces, and that should collapse into one step. */
+const COALESCING = new Set(['set-text', 'set-name', 'set-image', 'set-classes']);
+
+/** Long enough to cover typing, short enough that a pause is a new step. */
+const COALESCE_MS = 700;
+
+function idOf(op: DesignOp): string {
+  return 'id' in op ? op.id : `${op.parent}:${op.index}`;
+}
+
 /** The modes every theme has. Adding a third axis is refused — see the theme. */
 const MODES = ['light', 'dark'] as const;
 
@@ -412,17 +541,23 @@ const MODES = ['light', 'dark'] as const;
 function Inspector({
   layer,
   flow,
+  measured,
   wordsRef,
   readOnly,
   findings,
   onEdit,
+  onFrame,
 }: {
-  layer: Layer | { id: string; name: string; classes: readonly string[] };
+  layer: Layer | Frame;
   flow: 'x' | 'y' | null;
+  /** What the browser actually laid this layer out as, for seeding a fixed size. */
+  measured?: { width: number; height: number } | null;
   wordsRef?: Ref<HTMLTextAreaElement>;
   readOnly: boolean;
   findings: readonly LintFinding[];
   onEdit(change: (layer: Layer) => Layer): void;
+  /** A frame's own dimensions, which are attributes rather than classes. */
+  onFrame?(change: { width?: number; height?: number | 'auto' }): void;
 }): JSX.Element {
   const classes = layer.classes;
   const has = (name: string): boolean => classes.includes(name);
@@ -524,7 +659,21 @@ function Inspector({
         </>
       )}
 
-      {'kind' in layer && layer.kind !== 'text' && (
+      {!('kind' in layer) && onFrame && (
+        <label className="inspector-field">
+          <span>Frame width</span>
+          <input
+            type="number"
+            min={80}
+            max={4000}
+            value={layer.width}
+            disabled={readOnly}
+            onChange={(event) => onFrame({ width: Math.max(80, Math.min(4000, Number(event.target.value) || 80)) })}
+          />
+        </label>
+      )}
+
+      {(!('kind' in layer) || layer.kind !== 'text') && (
         <fieldset className="inspector-group" disabled={readOnly}>
           <legend>Arrangement</legend>
           <div className="inspector-row">
@@ -587,8 +736,8 @@ function Inspector({
         <fieldset className="inspector-group" disabled={readOnly}>
           <legend>Size</legend>
           <div className="inspector-row">
-            <Size axis="w" flow={flow} classes={classes} onEdit={onEdit} />
-            <Size axis="h" flow={flow} classes={classes} onEdit={onEdit} />
+            <Size axis="w" flow={flow} classes={classes} measured={measured} onEdit={onEdit} />
+            <Size axis="h" flow={flow} classes={classes} measured={measured} onEdit={onEdit} />
           </div>
         </fieldset>
       )}
@@ -650,33 +799,52 @@ function Inspector({
 /**
  * Fixed, Hug, or Fill — the three things a size can be.
  *
- * Figma's vocabulary, and it is worth borrowing exactly because it is the one
- * every designer already knows and because all three are expressible here:
- * *hug* is the flexbox default, *fill* is `grow` along the flow and stretch
- * across it, and *fixed* is the one place this format admits a raw pixel.
+ * Figma's vocabulary, borrowed exactly because it is the one every designer
+ * already knows and because all three are expressible here. The mapping is
+ * where the care goes, and getting it wrong makes the panel a liar:
  *
- * "Fill" resolving to two different classes depending on the parent is not a
- * leak — it is the whole reason this control needs to know the parent's
- * direction. A single `grow` on the cross axis does nothing at all, silently,
- * which is exactly the failure the linter exists to catch.
+ * - **Along the flow**, the default is hug and `grow` is fill. Straightforward.
+ * - **Across the flow**, flexbox's default is already `stretch` — so a box with
+ *   no size class at all is *filling*, not hugging, and a panel that reads
+ *   "Hug" next to a box visibly spanning its parent teaches people to distrust
+ *   it. Fill is therefore the default across the flow, and hugging takes an
+ *   explicit `self-start`.
+ *
+ * That asymmetry is not a leak of CSS into the interface. It is the reason this
+ * control has to know which way the parent runs, and the alternative — one
+ * meaning for both axes — is a control that is wrong half the time.
  */
 function Size({
   axis,
   flow,
   classes,
+  measured,
   onEdit,
 }: {
   axis: 'w' | 'h';
   flow: 'x' | 'y' | null;
   classes: readonly string[];
+  measured?: { width: number; height: number } | null;
   onEdit(change: (layer: Layer) => Layer): void;
 }): JSX.Element {
   const alongTheFlow = flow === (axis === 'w' ? 'x' : 'y');
   const fillClass = alongTheFlow ? 'grow' : 'self-stretch';
+  const hugClass = alongTheFlow ? null : 'self-start';
   const fixed = classes.find((name) => new RegExp(`^${axis}-\\d+$`).test(name)) ?? null;
   const owned = (name: string): boolean =>
-    new RegExp(`^${axis}-(\\d+|full|auto|fit)$`).test(name) || name === fillClass;
-  const mode: 'fixed' | 'fill' | 'hug' = fixed ? 'fixed' : classes.includes(fillClass) ? 'fill' : 'hug';
+    new RegExp(`^${axis}-(\\d+|full|auto|fit)$`).test(name) ||
+    name === fillClass ||
+    (hugClass !== null && HUGGERS.has(name));
+
+  const mode: 'fixed' | 'fill' | 'hug' = fixed
+    ? 'fixed'
+    : classes.includes(fillClass)
+      ? 'fill'
+      : alongTheFlow
+        ? 'hug'
+        : classes.some((name) => HUGGERS.has(name))
+          ? 'hug'
+          : 'fill';
 
   /** Replace whatever this control owns, in place, with whatever it now says. */
   const write = (next: readonly string[]): void => {
@@ -696,9 +864,16 @@ function Size({
           value={mode}
           onChange={(event) => {
             const chosen = event.target.value;
-            if (chosen === 'hug') write([]);
-            else if (chosen === 'fill') write([fillClass]);
-            else write([`${axis}-${fixed ? fixed.slice(2) : 120}`]);
+            if (chosen === 'hug') write(hugClass ? [hugClass] : []);
+            else if (chosen === 'fill') write(alongTheFlow ? [fillClass] : []);
+            else {
+              // Seeded from what the browser is *currently* drawing, not from a
+              // constant. Jumping a 508px button to 120px because someone
+              // opened a menu is a destructive default, and there is no reason
+              // to guess when the layout has already answered.
+              const now = measured ? Math.round(axis === 'w' ? measured.width : measured.height) : 0;
+              write([`${axis}-${fixed ? fixed.slice(2) : Math.max(1, Math.min(2000, now || 120))}`]);
+            }
           }}
         >
           <option value="hug">Hug</option>
@@ -721,6 +896,28 @@ function Size({
       </div>
     </label>
   );
+}
+
+/** Classes that make a layer hug its content across the flow. */
+const HUGGERS = new Set(['self-start', 'self-center', 'self-end', 'self-baseline']);
+
+/**
+ * The chain from the design down to the container we are inside.
+ *
+ * Outermost first, because that is the order a person reads a path in — and
+ * because the useful click is usually the one near the start, on the way back
+ * out.
+ */
+function trail(design: DesignDocument, focus: string): { id: string; name: string }[] {
+  const steps: { id: string; name: string }[] = [];
+  let at: string | null = focus;
+  while (at) {
+    const node = find(design, at);
+    if (!node) break;
+    steps.unshift({ id: node.id, name: node.name });
+    at = holderOf(design, at)?.id ?? null;
+  }
+  return steps;
 }
 
 /**

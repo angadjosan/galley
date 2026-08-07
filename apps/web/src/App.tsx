@@ -25,6 +25,7 @@ import { STARTERS, embedDesign, extractDesign, type DesignStarter } from '@galle
 import { Editor, type EditorHandle } from './editor/Editor.js';
 import { INSERT_TABLE, insertDesignLink, insertDiagram, insertImage } from './editor/commands.js';
 import { DIAGRAM_TEMPLATES } from './editor/diagram.js';
+import { Boundary } from './chrome/Boundary.js';
 import { DesignEditor } from './design/DesignEditor.js';
 import { MenuBar } from './chrome/MenuBar.js';
 import { Toolbar } from './chrome/Toolbar.js';
@@ -956,6 +957,7 @@ function DocumentView({
             </button>
           </div>
         )}
+        <Boundary what="the design canvas">
         <DesignEditor
           source={asDesign.source}
           // A layer with a note on it keeps its id in the file. Same rule as a
@@ -980,6 +982,7 @@ function DocumentView({
           // what the document list is for.
           onClose={onToggleLibrary}
         />
+        </Boundary>
         {shareOpen && <Share path={loaded.path} onClose={() => setShareOpen(false)} />}
       </>
     );
