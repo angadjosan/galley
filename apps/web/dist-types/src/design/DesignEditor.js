@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { STATES, VOCABULARY, applyOps, find, idAfter, lintDesign, parseDesign, serializeDesign, slotsOf, splitState, walk, } from '@galley/design';
 import { Stage } from './Stage.js';
 import { NOTHING, addToSelection, focusFor, reconcile } from './selection.js';
-import { parentOf as holderOf } from './tree.js';
+import { parentOf as holderOf, slotOf } from './tree.js';
 export function DesignEditor(props) {
     /**
      * What is selected, and what container we are inside.
@@ -16,8 +16,6 @@ export function DesignEditor(props) {
     const [showSource, setShowSource] = useState(false);
     /** What the canvas measured, for the one control that needs a real number. */
     const [rects, setRects] = useState(new Map());
-    /** The inspector's Words field, so a double-click on the canvas can reach it. */
-    const wordsRef = useRef(null);
     /** The last markup this editor emitted, to tell its own edits from everyone else's. */
     const mine = useRef(null);
     /**
@@ -271,6 +269,35 @@ export function DesignEditor(props) {
                 setSelection({ focus: focusFor(grown, id), ids: [id] });
         }
     }, [design, run, selected]);
+    /**
+     * Another one like this, right after it.
+     *
+     * The gesture a design tool needs most after "change this": three cards that
+     * differ in two words each start as one card copied twice. Doing it by hand
+     * means add, then restyle from memory, then move — three chances to get it
+     * subtly wrong.
+     */
+    const duplicate = useCallback((ids) => {
+        if (!design || ids.length === 0)
+            return;
+        const ops = [];
+        for (const id of ids) {
+            const layer = find(design, id);
+            if (!layer || !('kind' in layer))
+                continue;
+            const where = slotOf(design, id);
+            if (!where)
+                continue;
+            ops.push({ op: 'insert', parent: where.parentId, index: where.index + 1, layer: copyOf(layer) });
+        }
+        const grown = run(ops);
+        if (grown && ids.length === 1) {
+            const where = slotOf(design, ids[0]);
+            const made = where && idAfter(grown, where.parentId, where.index + 1);
+            if (made)
+                setSelection({ focus: focusFor(grown, made), ids: [made] });
+        }
+    }, [design, run]);
     const remove = useCallback(() => {
         if (!selected)
             return;
@@ -310,18 +337,13 @@ export function DesignEditor(props) {
                              * opacity was the entire cue, and at 100% zoom it is invisible.
                              * Webflow puts a breadcrumb under the canvas for the same reason.
                              */
-                            _jsxs("nav", { className: "design-crumbs", "aria-label": "Inside", children: [_jsx("button", { type: "button", onClick: () => setSelection(NOTHING), children: design.name }), trail(design, selection.focus).map((step) => (_jsxs("button", { type: "button", onClick: () => reveal(step.id), children: [_jsx("span", { "aria-hidden": "true", children: "\u203A" }), " ", step.name] }, step.id)))] })), design && (_jsx(Stage, { design: design, mode: mode, readOnly: props.readOnly ?? false, anchored: props.anchored, state: state, selection: selection, onSelection: setSelection, onEscape: props.onClose, onMeasure: setRects, onMove: moveLayer, onEditText: (id) => {
-                                    reveal(id);
-                                    // The words live in the inspector, so "edit the text" means
-                                    // put the caret where the text actually is.
-                                    queueMicrotask(() => wordsRef.current?.focus());
-                                }, onDelete: (ids) => {
+                            _jsxs("nav", { className: "design-crumbs", "aria-label": "Inside", children: [_jsx("button", { type: "button", onClick: () => setSelection(NOTHING), children: design.name }), trail(design, selection.focus).map((step) => (_jsxs("button", { type: "button", onClick: () => reveal(step.id), children: [_jsx("span", { "aria-hidden": "true", children: "\u203A" }), " ", step.name] }, step.id)))] })), design && (_jsx(Stage, { design: design, mode: mode, readOnly: props.readOnly ?? false, anchored: props.anchored, state: state, selection: selection, onSelection: setSelection, onEscape: props.onClose, onMeasure: setRects, onMove: moveLayer, onText: (id, content) => run([{ op: 'set-text', id, content }]), onEdit: edit, onDuplicate: duplicate, onDelete: (ids) => {
                                     // One batch, so a multiple delete is one undo step and one
                                     // save rather than three of each.
                                     if (run(ids.map((id) => ({ op: 'delete', id })))) {
                                         setSelection((at) => ({ focus: at.focus, ids: [] }));
                                     }
-                                } }))] }), _jsx("aside", { className: "design-inspector", "aria-label": "Properties", children: chosen.length > 0 ? (_jsx(Inspector, { layers: chosen, wordsRef: wordsRef, 
+                                } }))] }), _jsx("aside", { className: "design-inspector", "aria-label": "Properties", children: chosen.length > 0 ? (_jsx(Inspector, { layers: chosen, 
                             // Which way this layer's siblings run, so "Fill" can write the
                             // class that actually fills: `grow` along the flow, stretch
                             // across it. Without it the control would have to guess, and a
@@ -358,7 +380,7 @@ const MODES = ['light', 'dark'];
  * that could express something the format cannot store would be a control that
  * silently loses work on save.
  */
-function Inspector({ layers, state, flow, measured, wordsRef, readOnly, findings, onEdit, onFrame, slots = [], onSlot, }) {
+function Inspector({ layers, state, flow, measured, readOnly, findings, onEdit, onFrame, slots = [], onSlot, }) {
     const layer = layers[0];
     const many = layers.length > 1;
     /**
@@ -435,9 +457,6 @@ function Inspector({ layers, state, flow, measured, wordsRef, readOnly, findings
                 : [...current.classes, owned],
         }));
     };
-    const directions = ['flex-col', 'flex-row'];
-    const gaps = VOCABULARY.spacing.map((step) => `gap-${step}`);
-    const pads = VOCABULARY.spacing.map((step) => `p-${step}`);
     const backgrounds = VOCABULARY.colors.map((role) => `bg-${role}`);
     const inks = VOCABULARY.colors.map((role) => `text-${role}`);
     const scales = VOCABULARY.type.map((scale) => `text-${scale}`);
@@ -447,42 +466,11 @@ function Inspector({ layers, state, flow, measured, wordsRef, readOnly, findings
             // for "set all three of these to the same name" to mean. The panel says
             // what it is editing instead of showing a field that would flatten
             // three labels into one.
-            _jsxs("p", { className: "inspector-count", children: [layers.length, " layers selected"] })) : (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Name" }), _jsx("input", { value: layer.name, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, name: event.target.value })) })] })), !many && 'kind' in layer && layer.kind === 'text' && (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Words" }), _jsx("textarea", { ref: wordsRef, value: layer.content, disabled: readOnly, rows: 3, onChange: (event) => onEdit((current) => ({ ...current, content: event.target.value })) })] })), !many && 'kind' in layer && layer.kind === 'use' && onSlot && (_jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: layer.component }), slots.length === 0 ? (
+            _jsxs("p", { className: "inspector-count", children: [layers.length, " layers selected"] })) : (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Name" }), _jsx("input", { value: layer.name, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, name: event.target.value })) })] })), !many && 'kind' in layer && layer.kind === 'use' && onSlot && (_jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: layer.component }), slots.length === 0 ? (
                     // Not an error: a component with nothing that varies is a perfectly
                     // good component. The panel says so rather than showing an empty
                     // box that looks broken.
-                    _jsxs("p", { className: "inspector-count", children: ["Nothing about this one differs. Edit \u201C", layer.component, "\u201D to change it."] })) : (slots.map((slot) => (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: slot }), _jsx("input", { value: layer.slots[slot] ?? '', placeholder: "as defined", disabled: readOnly, onChange: (event) => onSlot(slot, event.target.value || null) })] }, slot))))] })), !many && 'kind' in layer && layer.kind === 'image' && (_jsxs(_Fragment, { children: [_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Address" }), _jsx("input", { value: layer.src, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, src: event.target.value })) })] }), _jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Description" }), _jsx("input", { value: layer.alt, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, alt: event.target.value })) })] })] })), !many && !('kind' in layer) && onFrame && (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Frame width" }), _jsx("input", { type: "number", min: 80, max: 4000, value: layer.width, disabled: readOnly, onChange: (event) => onFrame({ width: Math.max(80, Math.min(4000, Number(event.target.value) || 80)) }) })] })), layers.some((one) => !('kind' in one) || one.kind !== 'text') && (_jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Arrangement" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Direction", options: [
-                                    { value: null, label: 'None' },
-                                    { value: 'flex-col', label: 'Column' },
-                                    { value: 'flex-row', label: 'Row' },
-                                ], current: family(directions), mixed: mixed(directions), onChange: (next) => {
-                                    // `flex` and the direction always travel together: a direction
-                                    // without `flex` is the single most common way a design ends
-                                    // up looking nothing like its source. Written back in place,
-                                    // for the same reason `setFamily` is.
-                                    onEdit((current) => {
-                                        const mine = [...directions, 'flex'].map(stated);
-                                        const at = current.classes.findIndex((name) => mine.includes(name));
-                                        const without = current.classes.filter((name) => !mine.includes(name));
-                                        if (!next)
-                                            return { ...current, classes: without };
-                                        const insertAt = at === -1 ? 0 : at;
-                                        return {
-                                            ...current,
-                                            classes: [
-                                                ...without.slice(0, insertAt),
-                                                stated('flex'),
-                                                stated(next),
-                                                ...without.slice(insertAt),
-                                            ],
-                                        };
-                                    });
-                                } }), _jsx(Choice, { label: "Gap", options: [{ value: null, label: 'None' }, ...gaps.map((name) => ({ value: name, label: name.slice(4) }))], current: family(gaps), mixed: mixed(gaps), onChange: (next) => setFamily(gaps, next) })] }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Padding", options: [{ value: null, label: 'None' }, ...pads.map((name) => ({ value: name, label: name.slice(2) }))], current: family(pads), mixed: mixed(pads), onChange: (next) => setFamily(pads, next) }), _jsx(Choice, { label: "Align", options: [
-                                    { value: null, label: 'Default' },
-                                    { value: 'items-start', label: 'Start' },
-                                    { value: 'items-center', label: 'Centre' },
-                                    { value: 'items-end', label: 'End' },
-                                ], current: family(ALIGNMENTS), mixed: mixed(ALIGNMENTS), onChange: (next) => setFamily(ALIGNMENTS, next) })] })] })), !many && 'kind' in layer && layer.kind !== 'text' && (_jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Size" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Size, { axis: "w", flow: flow, classes: classes, measured: measured, stated: stated, onEdit: onEdit }), _jsx(Size, { axis: "h", flow: flow, classes: classes, measured: measured, stated: stated, onEdit: onEdit })] })] })), _jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Paint" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Background", options: [{ value: null, label: 'None' }, ...backgrounds.map((name) => ({ value: name, label: name.slice(3) }))], current: family(backgrounds), mixed: mixed(backgrounds), onChange: (next) => setFamily(backgrounds, next) }), _jsx(Choice, { label: "Ink", options: [{ value: null, label: 'Default' }, ...inks.map((name) => ({ value: name, label: name.slice(5) }))], current: family(inks), mixed: mixed(inks), onChange: (next) => setFamily(inks, next) })] }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Type", options: [{ value: null, label: 'Default' }, ...scales.map((name) => ({ value: name, label: name.slice(5) }))], current: family(scales), mixed: mixed(scales), onChange: (next) => setFamily(scales, next) }), _jsx(Choice, { label: "Corners", options: [{ value: null, label: 'Square' }, ...radii.map((name) => ({ value: name, label: name.slice(8) }))], current: family(radii), mixed: mixed(radii), onChange: (next) => setFamily(radii, next) })] }), _jsxs("div", { className: "inspector-row inspector-toggles", children: [_jsx(Toggle, { label: "Border", on: has('border'), mixed: layers.some((one) => inState(one).includes('border')) && !has('border'), onChange: () => toggle('border') }), _jsx(Toggle, { label: "Shadow", on: has('shadow-sm'), mixed: layers.some((one) => inState(one).includes('shadow-sm')) && !has('shadow-sm'), onChange: () => toggle('shadow-sm') })] })] }), findings.length > 0 && (_jsx("ul", { className: "inspector-findings", children: findings.map((finding, index) => (_jsx("li", { className: `is-${finding.severity}`, children: finding.message }, index))) })), _jsxs("details", { className: "inspector-raw", children: [_jsx("summary", { children: "All classes" }), layers.map((one) => (_jsx("code", { children: one.classes.join(' ') || 'none' }, one.id)))] })] }));
+                    _jsxs("p", { className: "inspector-count", children: ["Nothing about this one differs. Edit \u201C", layer.component, "\u201D to change it."] })) : (slots.map((slot) => (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: slot }), _jsx("input", { value: layer.slots[slot] ?? '', placeholder: "as defined", disabled: readOnly, onChange: (event) => onSlot(slot, event.target.value || null) })] }, slot))))] })), !many && 'kind' in layer && layer.kind === 'image' && (_jsxs(_Fragment, { children: [_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Address" }), _jsx("input", { value: layer.src, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, src: event.target.value })) })] }), _jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Description" }), _jsx("input", { value: layer.alt, disabled: readOnly, onChange: (event) => onEdit((current) => ({ ...current, alt: event.target.value })) })] })] })), !many && !('kind' in layer) && onFrame && (_jsxs("label", { className: "inspector-field", children: [_jsx("span", { children: "Frame width" }), _jsx("input", { type: "number", min: 80, max: 4000, value: layer.width, disabled: readOnly, onChange: (event) => onFrame({ width: Math.max(80, Math.min(4000, Number(event.target.value) || 80)) }) })] })), !many && 'kind' in layer && layer.kind !== 'text' && (_jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Size" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Size, { axis: "w", flow: flow, classes: classes, measured: measured, stated: stated, onEdit: onEdit }), _jsx(Size, { axis: "h", flow: flow, classes: classes, measured: measured, stated: stated, onEdit: onEdit })] })] })), _jsxs("fieldset", { className: "inspector-group", disabled: readOnly, children: [_jsx("legend", { children: "Paint" }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Background", options: [{ value: null, label: 'None' }, ...backgrounds.map((name) => ({ value: name, label: name.slice(3) }))], current: family(backgrounds), mixed: mixed(backgrounds), onChange: (next) => setFamily(backgrounds, next) }), _jsx(Choice, { label: "Ink", options: [{ value: null, label: 'Default' }, ...inks.map((name) => ({ value: name, label: name.slice(5) }))], current: family(inks), mixed: mixed(inks), onChange: (next) => setFamily(inks, next) })] }), _jsxs("div", { className: "inspector-row", children: [_jsx(Choice, { label: "Type", options: [{ value: null, label: 'Default' }, ...scales.map((name) => ({ value: name, label: name.slice(5) }))], current: family(scales), mixed: mixed(scales), onChange: (next) => setFamily(scales, next) }), _jsx(Choice, { label: "Corners", options: [{ value: null, label: 'Square' }, ...radii.map((name) => ({ value: name, label: name.slice(8) }))], current: family(radii), mixed: mixed(radii), onChange: (next) => setFamily(radii, next) })] }), _jsxs("div", { className: "inspector-row inspector-toggles", children: [_jsx(Toggle, { label: "Border", on: has('border'), mixed: layers.some((one) => inState(one).includes('border')) && !has('border'), onChange: () => toggle('border') }), _jsx(Toggle, { label: "Shadow", on: has('shadow-sm'), mixed: layers.some((one) => inState(one).includes('shadow-sm')) && !has('shadow-sm'), onChange: () => toggle('shadow-sm') })] })] }), findings.length > 0 && (_jsx("ul", { className: "inspector-findings", children: findings.map((finding, index) => (_jsx("li", { className: `is-${finding.severity}`, children: finding.message }, index))) })), _jsxs("details", { className: "inspector-raw", children: [_jsx("summary", { children: "All classes" }), layers.map((one) => (_jsx("code", { children: one.classes.join(' ') || 'none' }, one.id)))] })] }));
 }
 /**
  * Fixed, Hug, or Fill — the three things a size can be.
@@ -556,6 +544,28 @@ function Size({ axis, flow, classes, measured, stated, onEdit, }) {
 }
 /** Classes that make a layer hug its content across the flow. */
 const HUGGERS = new Set(['self-start', 'self-center', 'self-end', 'self-baseline']);
+/**
+ * A layer, as something to insert.
+ *
+ * Ids are dropped: they are positional, and the copy is about to be somewhere
+ * else. Everything else comes along, including the whole subtree — duplicating
+ * a card that keeps its contents is the only reading of "duplicate" anybody
+ * has.
+ */
+function copyOf(layer) {
+    if (layer.kind === 'text') {
+        return { kind: 'text', name: layer.name, classes: [...layer.classes], content: layer.content };
+    }
+    if (layer.kind === 'image') {
+        return { kind: 'image', name: layer.name, classes: [...layer.classes], src: layer.src, alt: layer.alt };
+    }
+    if (layer.kind === 'use') {
+        // A copy of a use is another use of the same component, which is the whole
+        // point of having them.
+        return { kind: 'use', name: layer.name, classes: [...layer.classes], component: layer.component, slots: { ...layer.slots } };
+    }
+    return { kind: 'box', name: layer.name, classes: [...layer.classes], children: layer.children.map(copyOf) };
+}
 /** A definition's layers, flattened for the tree, its root at depth 0. */
 function componentRows(component) {
     const rows = [];

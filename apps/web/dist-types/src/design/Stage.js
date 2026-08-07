@@ -4,6 +4,7 @@ import { expandDesign, find, useOf } from '@galley/design';
 import { IDENTITY, MAX_ZOOM, MIN_ZOOM, fit, toViewport, unionOf, useLayerRects, zoomAbout, } from './camera.js';
 import { DIRECTION_WINDOW, DRAG_ACTIVATE, EDGE_INSET, axisOf, dropLine, moveIndex, resolveDrop, sameTarget, slotOf, } from './drop.js';
 import { Overlay } from './Overlay.js';
+import { SelectionBar } from './SelectionBar.js';
 import { childrenOf } from './tree.js';
 import { DesignView } from './render.js';
 import { clickSelect, enterSelection, exitSelection, focusFor, marqueeSelect, resolveClick, } from './selection.js';
@@ -15,6 +16,19 @@ export function Stage(props) {
     const [hovered, setHovered] = useState(null);
     const [target, setTarget] = useState(null);
     const [spacePan, setSpacePan] = useState(false);
+    /**
+     * The text layer being typed into, right here on the canvas.
+     *
+     * A design tool where changing a label means finding a field in a side panel
+     * is a form with a picture attached. The words are *on* the thing; that is
+     * where they should be edited, and every editor anyone has used — Figma,
+     * Keynote, Google Slides, this app's own prose surface — agrees.
+     *
+     * Held here rather than in the renderer because the canvas owns every
+     * gesture: while this is set, clicks, drags and the keymap all have to stand
+     * aside, and one place has to know that.
+     */
+    const [editing, setEditing] = useState(null);
     /**
      * The design as it is drawn.
      *
@@ -51,6 +65,8 @@ export function Stage(props) {
     latest.current = props;
     const gestureRef = useRef(gesture);
     gestureRef.current = gesture;
+    const editingRef = useRef(editing);
+    editingRef.current = editing;
     // ---------------------------------------------------------------------
     // Camera
     // ---------------------------------------------------------------------
@@ -167,6 +183,10 @@ export function Stage(props) {
     // ---------------------------------------------------------------------
     useEffect(() => {
         const onDown = (event) => {
+            // Typing on the canvas is typing, not a shortcut. Escape is handled by
+            // the editable itself.
+            if (editingRef.current)
+                return;
             if (event.key === ' ' && !isTyping(event.target) && !isControl(event.target)) {
                 // Space-drag pans, the one gesture every canvas tool shares. Held
                 // rather than toggled, so it cannot be left on.
@@ -198,6 +218,15 @@ export function Stage(props) {
             }
             if (event.key === 'Enter') {
                 event.preventDefault();
+                const one = latest.current.selection.ids.length === 1 ? latest.current.selection.ids[0] : null;
+                const node = one ? find(latest.current.design, one) : null;
+                // Enter on words means edit the words. It is what Enter does on a
+                // selected label in every design tool, and there is nothing to go
+                // inside of.
+                if (node && 'kind' in node && node.kind === 'text' && !latest.current.readOnly) {
+                    setEditing(one);
+                    return;
+                }
                 latest.current.onSelection(enterSelection(latest.current.design, latest.current.selection));
                 return;
             }
@@ -327,6 +356,17 @@ export function Stage(props) {
         // Capturing the pointer for them would mean the button never sees its own
         // click — the control would be visible, hoverable and completely dead.
         if (event.target?.closest('.design-zoom'))
+            return;
+        // Inside the words being edited, the pointer belongs to the caret. Anywhere
+        // else, a press commits the edit and then means what it usually means.
+        if (editing) {
+            if (event.target?.closest('[data-editing="true"]'))
+                return;
+            setEditing(null);
+        }
+        // The floating bar is inside the stage so it can sit over the design.
+        // Capturing the pointer for it would leave its buttons visible and dead.
+        if (event.target?.closest('.design-bar'))
             return;
         // One gesture at a time. A second finger — the stage sets `touch-action:
         // none`, so it gets one — would otherwise overwrite the gesture mid-drag
@@ -477,10 +517,22 @@ export function Stage(props) {
         const target = resolveClick(props.design, hit, props.selection.focus) ?? hit;
         const node = find(props.design, target);
         if (node && 'kind' in node && node.kind === 'text') {
-            // Double-clicking words means edit the words. There is nothing to be
-            // inside, so without this the gesture does nothing at all.
+            // Double-clicking words means edit the words, in place.
             props.onSelection({ focus: props.selection.focus, ids: [target] });
-            props.onEditText?.(target);
+            if (!props.readOnly)
+                setEditing(target);
+            return;
+        }
+        // Not on the text itself but on something that only contains text — a
+        // button is a box with a label — goes straight in too. Two levels of
+        // double-click to reach a word that is the only word there is friction
+        // with no decision in it.
+        const only = node && 'kind' in node && node.kind === 'box' && node.children.length === 1
+            ? node.children[0]
+            : null;
+        if (only?.kind === 'text' && !props.readOnly) {
+            props.onSelection({ focus: target, ids: [only.id] });
+            setEditing(only.id);
             return;
         }
         props.onSelection(enterSelection(props.design, props.selection, hit));
@@ -504,7 +556,15 @@ export function Stage(props) {
                         state: props.state,
                         anchored: props.anchored,
                         ghostId: gesture.kind === 'drag' ? gesture.id : null,
-                    } }) }), _jsx(Overlay, { camera: camera, rects: rects, selected: props.selection.ids, hovered: gesture.kind === 'drag' ? null : hovered, focus: props.selection.focus, anchored: props.anchored, dropLine: line, dropInto: into, marquee: marquee }), _jsxs("div", { className: "design-zoom", role: "group", "aria-label": "Zoom", children: [_jsx("button", { type: "button", onClick: () => zoomBy(1 / 1.2), disabled: camera.zoom <= MIN_ZOOM, "aria-label": "Zoom out", children: "\u2212" }), _jsxs("button", { type: "button", onClick: fitAll, title: "Fit the design in the window", children: [Math.round(camera.zoom * 100), "%"] }), _jsx("button", { type: "button", onClick: () => zoomBy(1.2), disabled: camera.zoom >= MAX_ZOOM, "aria-label": "Zoom in", children: "+" })] })] }));
+                        editingId: editing,
+                        onText: (id, content) => props.onText(id, content),
+                        onEditDone: () => setEditing(null),
+                    } }) }), _jsx(Overlay, { camera: camera, rects: rects, selected: props.selection.ids, hovered: gesture.kind === 'drag' ? null : hovered, focus: props.selection.focus, anchored: props.anchored, dropLine: line, dropInto: into, marquee: marquee }), _jsx(SelectionBar, { camera: camera, rects: rects, layers: props.selection.ids
+                    .map((id) => find(props.design, id))
+                    .filter((node) => node !== null), readOnly: props.readOnly, 
+                // Out of the way while something is happening. A bar that follows a
+                // drag is a bar under the pointer.
+                hidden: gesture.kind !== 'none' || editing !== null, onEdit: (change) => props.onEdit(props.selection.ids, change), onDelete: () => props.onDelete(props.selection.ids), onDuplicate: () => props.onDuplicate(props.selection.ids) }), _jsxs("div", { className: "design-zoom", role: "group", "aria-label": "Zoom", children: [_jsx("button", { type: "button", onClick: () => zoomBy(1 / 1.2), disabled: camera.zoom <= MIN_ZOOM, "aria-label": "Zoom out", children: "\u2212" }), _jsxs("button", { type: "button", onClick: fitAll, title: "Fit the design in the window", children: [Math.round(camera.zoom * 100), "%"] }), _jsx("button", { type: "button", onClick: () => zoomBy(1.2), disabled: camera.zoom >= MAX_ZOOM, "aria-label": "Zoom in", children: "+" })] })] }));
 }
 /**
  * The slot, resolved with the direction that matters for *this* parent.

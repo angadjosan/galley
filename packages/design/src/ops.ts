@@ -28,12 +28,22 @@ import type { DesignDocument, Frame, Layer, LayerId } from './types.js';
 
 /** A layer being created. It has no id yet — position will give it one. */
 export interface NewLayer {
-  readonly kind: 'box' | 'text' | 'image';
+  readonly kind: 'box' | 'text' | 'image' | 'use';
   readonly name?: string;
   readonly classes?: readonly string[];
   readonly content?: string;
   readonly src?: string;
   readonly alt?: string;
+  /**
+   * A whole subtree, for the one gesture that needs it: duplicate.
+   *
+   * "Another one like this" that arrived empty would be a card with nothing in
+   * it, which is not what anybody means. Insert is still layer-scoped — it puts
+   * one thing in one slot — and that thing is allowed to have contents.
+   */
+  readonly children?: readonly NewLayer[];
+  readonly component?: string;
+  readonly slots?: Readonly<Record<string, string>>;
 }
 
 export type DesignOp =
@@ -352,19 +362,27 @@ function clamp(index: number, length: number): number {
 }
 
 function made(layer: NewLayer, parent: Working): Working {
-  return {
+  const node: Working = {
     // A placeholder. The real id comes from position, on the next read — which
     // is why it never has to be right here, only unique enough not to collide
     // with a resolved one during this batch.
     id: `new_${Math.random().toString(36).slice(2, 8)}`,
     kind: layer.kind,
-    name: layer.name ?? defaultLayerName(layer.kind, 0),
+    name: layer.name ?? defaultLayerName(layer.kind, layer.children?.length ?? 0),
     classes: [...(layer.classes ?? [])],
     children: [],
     parent,
     ...(layer.kind === 'text' ? { content: layer.content ?? '' } : {}),
     ...(layer.kind === 'image' ? { src: layer.src ?? '', alt: layer.alt ?? '' } : {}),
+    ...(layer.kind === 'use'
+      ? {
+          component: layer.component ?? '',
+          slots: Object.assign(Object.create(null) as Record<string, string>, layer.slots),
+        }
+      : {}),
   };
+  if (layer.kind === 'box') node.children = (layer.children ?? []).map((child) => made(child, node));
+  return node;
 }
 
 /**

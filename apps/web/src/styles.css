@@ -3291,3 +3291,101 @@ kbd {
   text-transform: uppercase;
   color: var(--text-3);
 }
+
+/* Words being typed, on the canvas where they live. No box, no field — the
+   text keeps its exact typography and only picks up a caret and a ring, so
+   what you are editing looks like what you will get. */
+.design-layer.is-editing {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+  cursor: text;
+  min-width: 1ch;
+}
+
+.design-layer.is-editing:focus {
+  outline: 2px solid var(--accent);
+}
+
+/* A text layer is a thing you type on, and the pointer should say so before
+   you commit to a double-click. */
+.design-stage .design-layer {
+  cursor: default;
+}
+
+/* The controls that belong to the thing you are pointing at.
+   Arrangement is *about* the shape on the canvas, so it lives over the shape.
+   Paint — colour, type, corners — is a choice from a palette, and a palette
+   wants a column with room for names, which is what the right rail is. */
+.design-bar {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--page);
+  box-shadow: var(--sh-float);
+  font-size: var(--fs-small);
+  white-space: nowrap;
+  /* Constant screen size: a toolbar that shrank at 50% zoom would be unusable
+     exactly when you most need to see what you are doing. */
+  transform-origin: 0 0;
+}
+
+.design-bar-group {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.design-bar-group + .design-bar-group::before {
+  content: '';
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 4px 2px 0;
+  background: var(--line-2);
+}
+
+.design-bar button {
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  min-width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.design-bar button:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.design-bar button.is-on {
+  background: var(--accent-tint);
+  color: var(--accent-text);
+}
+
+.design-bar-stepper {
+  padding: 0 2px;
+}
+
+.design-bar-glyph {
+  color: var(--text-3);
+  padding: 0 2px;
+  font-size: var(--fs-micro);
+}
+
+.design-bar-value {
+  min-width: 16px;
+  text-align: center;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}

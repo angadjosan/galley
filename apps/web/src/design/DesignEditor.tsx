@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type Ref } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import {
   STATES,
   VOCABULARY,
@@ -23,7 +23,7 @@ import {
 } from '@galley/design';
 import { Stage } from './Stage.js';
 import { NOTHING, addToSelection, focusFor, reconcile, type Selection } from './selection.js';
-import { parentOf as holderOf } from './tree.js';
+import { parentOf as holderOf, slotOf } from './tree.js';
 
 /**
  * The design editor.
@@ -72,8 +72,6 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
   const [showSource, setShowSource] = useState(false);
   /** What the canvas measured, for the one control that needs a real number. */
   const [rects, setRects] = useState<ReadonlyMap<string, { width: number; height: number }>>(new Map());
-  /** The inspector's Words field, so a double-click on the canvas can reach it. */
-  const wordsRef = useRef<HTMLTextAreaElement>(null);
   /** The last markup this editor emitted, to tell its own edits from everyone else's. */
   const mine = useRef<string | null>(null);
   /**
@@ -346,6 +344,35 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
     [design, run, selected],
   );
 
+  /**
+   * Another one like this, right after it.
+   *
+   * The gesture a design tool needs most after "change this": three cards that
+   * differ in two words each start as one card copied twice. Doing it by hand
+   * means add, then restyle from memory, then move — three chances to get it
+   * subtly wrong.
+   */
+  const duplicate = useCallback(
+    (ids: readonly string[]) => {
+      if (!design || ids.length === 0) return;
+      const ops: DesignOp[] = [];
+      for (const id of ids) {
+        const layer = find(design, id);
+        if (!layer || !('kind' in layer)) continue;
+        const where = slotOf(design, id);
+        if (!where) continue;
+        ops.push({ op: 'insert', parent: where.parentId, index: where.index + 1, layer: copyOf(layer) });
+      }
+      const grown = run(ops);
+      if (grown && ids.length === 1) {
+        const where = slotOf(design, ids[0]!);
+        const made = where && idAfter(grown, where.parentId, where.index + 1);
+        if (made) setSelection({ focus: focusFor(grown, made), ids: [made] });
+      }
+    },
+    [design, run],
+  );
+
   const remove = useCallback(() => {
     if (!selected) return;
     if (run([{ op: 'delete', id: selected }])) setSelection((current) => ({ focus: current.focus, ids: [] }));
@@ -546,12 +573,9 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
               onEscape={props.onClose}
               onMeasure={setRects}
               onMove={moveLayer}
-              onEditText={(id) => {
-                reveal(id);
-                // The words live in the inspector, so "edit the text" means
-                // put the caret where the text actually is.
-                queueMicrotask(() => wordsRef.current?.focus());
-              }}
+              onText={(id, content) => run([{ op: 'set-text', id, content }])}
+              onEdit={edit}
+              onDuplicate={duplicate}
               onDelete={(ids) => {
                 // One batch, so a multiple delete is one undo step and one
                 // save rather than three of each.
@@ -567,7 +591,6 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
           {chosen.length > 0 ? (
             <Inspector
               layers={chosen}
-              wordsRef={wordsRef}
               // Which way this layer's siblings run, so "Fill" can write the
               // class that actually fills: `grow` along the flow, stretch
               // across it. Without it the control would have to guess, and a
@@ -664,7 +687,6 @@ function Inspector({
   state,
   flow,
   measured,
-  wordsRef,
   readOnly,
   findings,
   onEdit,
@@ -685,7 +707,6 @@ function Inspector({
   flow: 'x' | 'y' | null;
   /** What the browser actually laid this layer out as, for seeding a fixed size. */
   measured?: { width: number; height: number } | null;
-  wordsRef?: Ref<HTMLTextAreaElement>;
   readOnly: boolean;
   findings: readonly LintFinding[];
   onEdit(change: (layer: Layer) => Layer): void;
@@ -778,9 +799,6 @@ function Inspector({
     }));
   };
 
-  const directions = ['flex-col', 'flex-row'];
-  const gaps = VOCABULARY.spacing.map((step) => `gap-${step}`);
-  const pads = VOCABULARY.spacing.map((step) => `p-${step}`);
   const backgrounds = VOCABULARY.colors.map((role) => `bg-${role}`);
   const inks = VOCABULARY.colors.map((role) => `text-${role}`);
   const scales = VOCABULARY.type.map((scale) => `text-${scale}`);
@@ -805,18 +823,6 @@ function Inspector({
         </label>
       )}
 
-      {!many && 'kind' in layer && layer.kind === 'text' && (
-        <label className="inspector-field">
-          <span>Words</span>
-          <textarea
-            ref={wordsRef}
-            value={layer.content}
-            disabled={readOnly}
-            rows={3}
-            onChange={(event) => onEdit((current) => ({ ...current, content: event.target.value } as Layer))}
-          />
-        </label>
-      )}
 
       {!many && 'kind' in layer && layer.kind === 'use' && onSlot && (
         <fieldset className="inspector-group" disabled={readOnly}>
@@ -877,74 +883,6 @@ function Inspector({
         </label>
       )}
 
-      {layers.some((one) => !('kind' in one) || one.kind !== 'text') && (
-        <fieldset className="inspector-group" disabled={readOnly}>
-          <legend>Arrangement</legend>
-          <div className="inspector-row">
-            <Choice
-              label="Direction"
-              options={[
-                { value: null, label: 'None' },
-                { value: 'flex-col', label: 'Column' },
-                { value: 'flex-row', label: 'Row' },
-              ]}
-              current={family(directions)}
-              mixed={mixed(directions)}
-              onChange={(next) => {
-                // `flex` and the direction always travel together: a direction
-                // without `flex` is the single most common way a design ends
-                // up looking nothing like its source. Written back in place,
-                // for the same reason `setFamily` is.
-                onEdit((current) => {
-                  const mine = [...directions, 'flex'].map(stated);
-                  const at = current.classes.findIndex((name) => mine.includes(name));
-                  const without = current.classes.filter((name) => !mine.includes(name));
-                  if (!next) return { ...current, classes: without };
-                  const insertAt = at === -1 ? 0 : at;
-                  return {
-                    ...current,
-                    classes: [
-                      ...without.slice(0, insertAt),
-                      stated('flex'),
-                      stated(next),
-                      ...without.slice(insertAt),
-                    ],
-                  };
-                });
-              }}
-            />
-            <Choice
-              label="Gap"
-              options={[{ value: null, label: 'None' }, ...gaps.map((name) => ({ value: name, label: name.slice(4) }))]}
-              current={family(gaps)}
-              mixed={mixed(gaps)}
-              onChange={(next) => setFamily(gaps, next)}
-            />
-          </div>
-          <div className="inspector-row">
-            <Choice
-              label="Padding"
-              options={[{ value: null, label: 'None' }, ...pads.map((name) => ({ value: name, label: name.slice(2) }))]}
-              current={family(pads)}
-              mixed={mixed(pads)}
-              onChange={(next) => setFamily(pads, next)}
-            />
-            <Choice
-              label="Align"
-              options={[
-                { value: null, label: 'Default' },
-                { value: 'items-start', label: 'Start' },
-                { value: 'items-center', label: 'Centre' },
-                { value: 'items-end', label: 'End' },
-              ]}
-              current={family(ALIGNMENTS)}
-              mixed={mixed(ALIGNMENTS)}
-              onChange={(next) => setFamily(ALIGNMENTS, next)}
-            />
-          </div>
-        </fieldset>
-      )}
-
       {!many && 'kind' in layer && layer.kind !== 'text' && (
         <fieldset className="inspector-group" disabled={readOnly}>
           <legend>Size</legend>
@@ -955,6 +893,11 @@ function Inspector({
         </fieldset>
       )}
 
+      {/* What is left here is **paint**: colour, type, corners. Those are
+          choices from a palette rather than manipulations of a shape, and a
+          palette is a list that wants a column with room for names. Everything
+          that is about the shape itself — direction, gap, padding, alignment,
+          and the words — happens on the canvas, on the thing. */}
       <fieldset className="inspector-group" disabled={readOnly}>
         <legend>Paint</legend>
         <div className="inspector-row">
@@ -1140,6 +1083,29 @@ function Size({
 
 /** Classes that make a layer hug its content across the flow. */
 const HUGGERS = new Set(['self-start', 'self-center', 'self-end', 'self-baseline']);
+
+/**
+ * A layer, as something to insert.
+ *
+ * Ids are dropped: they are positional, and the copy is about to be somewhere
+ * else. Everything else comes along, including the whole subtree — duplicating
+ * a card that keeps its contents is the only reading of "duplicate" anybody
+ * has.
+ */
+function copyOf(layer: Layer): NewLayer {
+  if (layer.kind === 'text') {
+    return { kind: 'text', name: layer.name, classes: [...layer.classes], content: layer.content };
+  }
+  if (layer.kind === 'image') {
+    return { kind: 'image', name: layer.name, classes: [...layer.classes], src: layer.src, alt: layer.alt };
+  }
+  if (layer.kind === 'use') {
+    // A copy of a use is another use of the same component, which is the whole
+    // point of having them.
+    return { kind: 'use', name: layer.name, classes: [...layer.classes], component: layer.component, slots: { ...layer.slots } };
+  }
+  return { kind: 'box', name: layer.name, classes: [...layer.classes], children: layer.children.map(copyOf) };
+}
 
 /** A definition's layers, flattened for the tree, its root at depth 0. */
 function componentRows(component: Component): { layer: Layer; depth: number }[] {

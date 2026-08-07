@@ -1,5 +1,5 @@
 import { type JSX } from 'react';
-import { type DesignDocument, type LayerId } from '@galley/design';
+import { type DesignDocument, type Layer, type LayerId } from '@galley/design';
 import { type Rect } from './camera.js';
 import { type Selection } from './selection.js';
 /**
@@ -34,9 +34,12 @@ export interface StageProps {
     onEscape(): void;
     /** A drag that landed. The editor turns it into a `move` op. */
     onMove(id: LayerId, parentId: LayerId, index: number): void;
-    /** Double-click on text, which means edit the words rather than go inside. */
-    onEditText?(id: LayerId): void;
+    /** The words of a text layer, changed on the canvas. */
+    onText(id: LayerId, content: string): void;
     onDelete(ids: readonly LayerId[]): void;
+    /** Arrangement, changed from the bar that floats over the selection. */
+    onEdit(ids: readonly LayerId[], change: (layer: Layer) => Layer): void;
+    onDuplicate(ids: readonly LayerId[]): void;
     /**
      * Where every layer landed, so the inspector can seed a fixed size from what
      * the browser actually drew rather than from a constant.

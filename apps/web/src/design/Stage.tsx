@@ -8,7 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { expandDesign, find, useOf, type DesignDocument, type LayerId } from '@galley/design';
+import { expandDesign, find, useOf, type DesignDocument, type Frame, type Layer, type LayerId } from '@galley/design';
 import {
   IDENTITY,
   MAX_ZOOM,
@@ -34,6 +34,7 @@ import {
   type DropTarget,
 } from './drop.js';
 import { Overlay } from './Overlay.js';
+import { SelectionBar } from './SelectionBar.js';
 import { childrenOf } from './tree.js';
 import { DesignView } from './render.js';
 import {
@@ -79,9 +80,12 @@ export interface StageProps {
   onEscape(): void;
   /** A drag that landed. The editor turns it into a `move` op. */
   onMove(id: LayerId, parentId: LayerId, index: number): void;
-  /** Double-click on text, which means edit the words rather than go inside. */
-  onEditText?(id: LayerId): void;
+  /** The words of a text layer, changed on the canvas. */
+  onText(id: LayerId, content: string): void;
   onDelete(ids: readonly LayerId[]): void;
+  /** Arrangement, changed from the bar that floats over the selection. */
+  onEdit(ids: readonly LayerId[], change: (layer: Layer) => Layer): void;
+  onDuplicate(ids: readonly LayerId[]): void;
   /**
    * Where every layer landed, so the inspector can seed a fixed size from what
    * the browser actually drew rather than from a constant.
@@ -111,6 +115,19 @@ export function Stage(props: StageProps): JSX.Element {
   const [hovered, setHovered] = useState<LayerId | null>(null);
   const [target, setTarget] = useState<DropTarget | null>(null);
   const [spacePan, setSpacePan] = useState(false);
+  /**
+   * The text layer being typed into, right here on the canvas.
+   *
+   * A design tool where changing a label means finding a field in a side panel
+   * is a form with a picture attached. The words are *on* the thing; that is
+   * where they should be edited, and every editor anyone has used — Figma,
+   * Keynote, Google Slides, this app's own prose surface — agrees.
+   *
+   * Held here rather than in the renderer because the canvas owns every
+   * gesture: while this is set, clicks, drags and the keymap all have to stand
+   * aside, and one place has to know that.
+   */
+  const [editing, setEditing] = useState<LayerId | null>(null);
 
   /**
    * The design as it is drawn.
@@ -152,6 +169,8 @@ export function Stage(props: StageProps): JSX.Element {
   latest.current = props;
   const gestureRef = useRef<Gesture>(gesture);
   gestureRef.current = gesture;
+  const editingRef = useRef<LayerId | null>(editing);
+  editingRef.current = editing;
 
   // ---------------------------------------------------------------------
   // Camera
@@ -269,6 +288,9 @@ export function Stage(props: StageProps): JSX.Element {
 
   useEffect(() => {
     const onDown = (event: KeyboardEvent): void => {
+      // Typing on the canvas is typing, not a shortcut. Escape is handled by
+      // the editable itself.
+      if (editingRef.current) return;
       if (event.key === ' ' && !isTyping(event.target) && !isControl(event.target)) {
         // Space-drag pans, the one gesture every canvas tool shares. Held
         // rather than toggled, so it cannot be left on.
@@ -297,6 +319,15 @@ export function Stage(props: StageProps): JSX.Element {
       }
       if (event.key === 'Enter') {
         event.preventDefault();
+        const one = latest.current.selection.ids.length === 1 ? latest.current.selection.ids[0]! : null;
+        const node = one ? find(latest.current.design, one) : null;
+        // Enter on words means edit the words. It is what Enter does on a
+        // selected label in every design tool, and there is nothing to go
+        // inside of.
+        if (node && 'kind' in node && node.kind === 'text' && !latest.current.readOnly) {
+          setEditing(one);
+          return;
+        }
         latest.current.onSelection(enterSelection(latest.current.design, latest.current.selection));
         return;
       }
@@ -428,6 +459,15 @@ export function Stage(props: StageProps): JSX.Element {
     // Capturing the pointer for them would mean the button never sees its own
     // click — the control would be visible, hoverable and completely dead.
     if ((event.target as HTMLElement | null)?.closest('.design-zoom')) return;
+    // Inside the words being edited, the pointer belongs to the caret. Anywhere
+    // else, a press commits the edit and then means what it usually means.
+    if (editing) {
+      if ((event.target as HTMLElement | null)?.closest('[data-editing="true"]')) return;
+      setEditing(null);
+    }
+    // The floating bar is inside the stage so it can sit over the design.
+    // Capturing the pointer for it would leave its buttons visible and dead.
+    if ((event.target as HTMLElement | null)?.closest('.design-bar')) return;
     // One gesture at a time. A second finger — the stage sets `touch-action:
     // none`, so it gets one — would otherwise overwrite the gesture mid-drag
     // and capture a different pointer, and the first finger's release would
@@ -579,10 +619,21 @@ export function Stage(props: StageProps): JSX.Element {
     const target = resolveClick(props.design, hit, props.selection.focus) ?? hit;
     const node = find(props.design, target);
     if (node && 'kind' in node && node.kind === 'text') {
-      // Double-clicking words means edit the words. There is nothing to be
-      // inside, so without this the gesture does nothing at all.
+      // Double-clicking words means edit the words, in place.
       props.onSelection({ focus: props.selection.focus, ids: [target] });
-      props.onEditText?.(target);
+      if (!props.readOnly) setEditing(target);
+      return;
+    }
+    // Not on the text itself but on something that only contains text — a
+    // button is a box with a label — goes straight in too. Two levels of
+    // double-click to reach a word that is the only word there is friction
+    // with no decision in it.
+    const only = node && 'kind' in node && node.kind === 'box' && node.children.length === 1
+      ? node.children[0]
+      : null;
+    if (only?.kind === 'text' && !props.readOnly) {
+      props.onSelection({ focus: target, ids: [only.id] });
+      setEditing(only.id);
       return;
     }
     props.onSelection(enterSelection(props.design, props.selection, hit));
@@ -634,6 +685,9 @@ export function Stage(props: StageProps): JSX.Element {
             state: props.state,
             anchored: props.anchored,
             ghostId: gesture.kind === 'drag' ? gesture.id : null,
+            editingId: editing,
+            onText: (id, content) => props.onText(id, content),
+            onEditDone: () => setEditing(null),
           }}
         />
       </div>
@@ -648,6 +702,21 @@ export function Stage(props: StageProps): JSX.Element {
         dropLine={line}
         dropInto={into}
         marquee={marquee}
+      />
+
+      <SelectionBar
+        camera={camera}
+        rects={rects}
+        layers={props.selection.ids
+          .map((id) => find(props.design, id))
+          .filter((node): node is Layer | Frame => node !== null)}
+        readOnly={props.readOnly}
+        // Out of the way while something is happening. A bar that follows a
+        // drag is a bar under the pointer.
+        hidden={gesture.kind !== 'none' || editing !== null}
+        onEdit={(change) => props.onEdit(props.selection.ids, change)}
+        onDelete={() => props.onDelete(props.selection.ids)}
+        onDuplicate={() => props.onDuplicate(props.selection.ids)}
       />
 
       <div className="design-zoom" role="group" aria-label="Zoom">

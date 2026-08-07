@@ -911,12 +911,19 @@ test.describe('designs', () => {
     expect(buttonId, 'the click selected nothing').not.toBe('');
     await expect(page.locator('.inspector-field input').first()).toHaveValue('Pay button');
 
-    // Double-click goes one level in, and now the label is what a click gets.
+    // Double-click goes one level in — and because a button is a box with one
+    // label, it goes all the way to the words and puts a caret in them. Two
+    // double-clicks to reach the only word there is would be friction with no
+    // decision in it.
     await page.locator('.design-layer', { hasText: 'Pay $42.00' }).last().dblclick();
     await expect(stage).toHaveAttribute('data-focus', buttonId);
-    expect(await stage.getAttribute('data-selected')).not.toBe(buttonId);
+    await expect(page.locator('[data-editing="true"]')).toBeVisible();
 
-    // Escape comes back out — the exact inverse, so the pair is learnable.
+    // Escape stops typing. Escape again comes back out a level — the exact
+    // inverse of going in, so the pair is learnable.
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-editing="true"]')).toHaveCount(0);
+    await expect(stage).toHaveAttribute('data-focus', buttonId);
     await page.keyboard.press('Escape');
     await expect(stage).toHaveAttribute('data-focus', '');
     await expect(stage).toHaveAttribute('data-selected', buttonId);
@@ -947,14 +954,34 @@ test.describe('designs', () => {
     expect(payAt, 'the pay button is gone from the design').toBeGreaterThan(-1);
     expect(payAt, 'the drag did not reorder the layers').toBeLessThan(cardAt);
 
+    // The words are edited on the thing, not in a field across the screen.
+    // Double-click and type, which is what every editor anyone has used does.
+    await page.locator('.design-layer').filter({ hasText: 'Pay $42.00' }).last().dblclick();
+    await expect(page.locator('[data-editing="true"]')).toBeVisible();
+    await page.keyboard.type('Pay in full');
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    expect(await readAsAgent(designPath)).toContain('Pay in full');
+
+    // Arrangement is about the shape, so its controls are over the shape.
+    await page.locator('.design-tree-row', { hasText: 'Pay button' }).first().click();
+    await expect(page.locator('.design-bar')).toBeVisible();
+    await page.locator('.design-bar [aria-label="More padding"]').click();
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    // From nothing, one press lands on the smallest step that is visible —
+    // stepping to `p-0` would be a press that appears to do nothing.
+    expect(await readAsAgent(designPath), 'the bar did not change the design').toMatch(/class="[^"]*\bp-1\b/);
+
     // Arrows reorder. They do not nudge — this format has no coordinates, so a
     // pixel of movement would have nowhere to be written down.
+    const beforeArrow = await readAsAgent(designPath);
     await page.keyboard.press('ArrowDown');
     await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
     // The drag put it first; one press down puts it after the heading.
     expect(payAt, 'the drag did not put the button first').toBeLessThan(source.indexOf('>Payment<'));
+    // "Pay in full" now, because the canvas edit above renamed it.
     const after = await readAsAgent(designPath);
-    expect(after.indexOf('Pay $42.00'), 'the arrow key did not reorder').toBeGreaterThan(
+    expect(after.indexOf('Pay in full'), 'the arrow key did not reorder').toBeGreaterThan(
       after.indexOf('>Payment<'),
     );
     // And across the flow it does nothing, rather than something arbitrary.
@@ -966,7 +993,7 @@ test.describe('designs', () => {
     // immediately, so a canvas without this is a canvas you cannot explore.
     await page.keyboard.press('ControlOrMeta+z');
     await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
-    expect(await readAsAgent(designPath), 'undo did not put the layer back').toBe(source);
+    expect(await readAsAgent(designPath), 'undo did not put the layer back').toBe(beforeArrow);
 
     await page.keyboard.press('ControlOrMeta+Shift+z');
     await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });

@@ -42,6 +42,10 @@ export interface RenderOptions {
      * the same rules that answer `:hover` answer this.
      */
     readonly state?: string | null;
+    /** The text layer being typed into, right here on the canvas. */
+    readonly editingId?: string | null;
+    onText?(id: string, content: string): void;
+    onEditDone?(): void;
 }
 export declare function DesignView({ design, options, }: {
     design: DesignDocument;

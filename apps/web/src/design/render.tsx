@@ -1,6 +1,6 @@
 import type { CSSProperties, JSX } from 'react';
 import { designCss, hasStates, resolveClasses, type DesignDocument, type Frame, type Layer } from '@galley/design';
-import { useId } from 'react';
+import { useEffect, useId, useRef } from 'react';
 
 /**
  * Drawing a design.
@@ -45,6 +45,10 @@ export interface RenderOptions {
    * the same rules that answer `:hover` answer this.
    */
   readonly state?: string | null;
+  /** The text layer being typed into, right here on the canvas. */
+  readonly editingId?: string | null;
+  onText?(id: string, content: string): void;
+  onEditDone?(): void;
 }
 
 /**
@@ -126,6 +130,9 @@ function LayerView({ layer, options }: { layer: Layer; options: RenderOptions })
   };
 
   if (layer.kind === 'text') {
+    if (options.editingId === layer.id) {
+      return <Editable layer={layer} shared={shared} options={options} />;
+    }
     // A span, not a div: text is inline content, and wrapping it in a block
     // would make every label a full-width row inside a flex column — a layout
     // the source does not describe.
@@ -150,9 +157,90 @@ function LayerView({ layer, options }: { layer: Layer; options: RenderOptions })
   );
 }
 
+/**
+ * The words, edited where they are.
+ *
+ * `contentEditable` on the span itself, so the text keeps the exact typography,
+ * width and wrapping it has when it is not being edited. An overlaid input
+ * cannot: it would have to reproduce the font, the size, the line height and
+ * the flex context, and it would be subtly wrong at every zoom.
+ *
+ * Uncontrolled on purpose. React re-rendering the text of a focused editable on
+ * every keystroke moves the caret to the end — the classic contentEditable bug
+ * — so the DOM owns the text for the duration and the document is told what
+ * changed on the way out. That is the same bargain the prose editor makes.
+ */
+function Editable({
+  layer,
+  shared,
+  options,
+}: {
+  layer: Layer & { kind: 'text' };
+  shared: Record<string, unknown>;
+  options: RenderOptions;
+}): JSX.Element {
+  const node = useRef<HTMLSpanElement>(null);
+  const started = useRef(layer.content);
+
+  useEffect(() => {
+    const element = node.current;
+    if (!element) return;
+    element.textContent = started.current;
+    element.focus();
+    // Everything selected, so typing replaces — which is what "double-click the
+    // label and type" means, and what happens in every other editor.
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, []);
+
+  const commit = (): void => {
+    const text = node.current?.textContent ?? '';
+    if (text !== layer.content) options.onText?.(layer.id, text);
+  };
+
+  return (
+    <span
+      {...shared}
+      ref={node}
+      data-editing="true"
+      contentEditable
+      suppressContentEditableWarning
+      role="textbox"
+      spellCheck={false}
+      onBlur={() => {
+        commit();
+        options.onEditDone?.();
+      }}
+      onKeyDown={(event) => {
+        // Enter commits rather than inserting a newline: a text layer holds one
+        // run of words, and a line break in it has nowhere to be stored.
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          commit();
+          options.onEditDone?.();
+          return;
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          // Put it back, then leave. `blur` fires afterwards and finds nothing
+          // to commit.
+          if (node.current) node.current.textContent = layer.content;
+          options.onEditDone?.();
+        }
+      }}
+      // Typing must not reach the canvas, which reads plain keys as commands.
+      onKeyUp={(event) => event.stopPropagation()}
+    />
+  );
+}
+
 function layerClass(base: string, id: string, options: RenderOptions): string {
   const parts = [base];
   if (options.anchored?.has(id)) parts.push('is-anchored');
   if (options.ghostId === id) parts.push('is-ghost');
+  if (options.editingId === id) parts.push('is-editing');
   return parts.join(' ');
 }

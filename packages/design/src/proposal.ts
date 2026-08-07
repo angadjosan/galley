@@ -64,7 +64,7 @@ const OPS = new Set([
   'move',
 ]);
 
-const KINDS = new Set(['box', 'text', 'image']);
+const KINDS = new Set(['box', 'text', 'image', 'use']);
 
 /** The structural ops — the ones that move identity around. */
 const STRUCTURAL = new Set(['insert', 'delete', 'move']);
@@ -262,7 +262,11 @@ function readNewLayer(value: unknown, at: string, errors: string[]): NewLayer | 
   }
   const kind = value.kind;
   if (typeof kind !== 'string' || !KINDS.has(kind)) {
-    errors.push(`${at} (insert): \`layer.kind\` must be "box", "text" or "image".`);
+    errors.push(`${at} (insert): \`layer.kind\` must be ${[...KINDS].map((one) => `"${one}"`).join(', ')}.`);
+    return null;
+  }
+  if (kind === 'use' && (typeof value.component !== 'string' || !value.component)) {
+    errors.push(`${at} (insert): a use needs \`layer.component\`, naming a \`<define>\`.`);
     return null;
   }
   const classes = value.classes;
@@ -281,6 +285,9 @@ function readNewLayer(value: unknown, at: string, errors: string[]): NewLayer | 
     errors.push(`${at} (insert): an image needs \`layer.src\` and \`layer.alt\`. The description is not optional.`);
     return null;
   }
+  // Children are read but not walked for validation: an agent proposing a whole
+  // subtree in one op is a rewrite by another name, and the churn ceiling is
+  // what says so. The canvas's own duplicate builds them in TypeScript.
   return {
     kind: kind as NewLayer['kind'],
     ...(typeof value.name === 'string' ? { name: value.name } : {}),
@@ -288,6 +295,7 @@ function readNewLayer(value: unknown, at: string, errors: string[]): NewLayer | 
     ...(typeof value.content === 'string' ? { content: value.content } : {}),
     ...(typeof value.src === 'string' ? { src: value.src } : {}),
     ...(typeof value.alt === 'string' ? { alt: value.alt } : {}),
+    ...(typeof value.component === 'string' ? { component: value.component } : {}),
   };
 }
 
