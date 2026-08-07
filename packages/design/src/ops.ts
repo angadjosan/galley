@@ -120,7 +120,11 @@ function toWorking(design: DesignDocument): {
       parent,
       ...(layer.kind === 'text' ? { content: layer.content } : {}),
       ...(layer.kind === 'image' ? { src: layer.src, alt: layer.alt } : {}),
-      ...(layer.kind === 'use' ? { component: layer.component, slots: { ...layer.slots } } : {}),
+      // `Object.create(null)`, so a slot called `__proto__` is a slot rather
+      // than a write to the prototype that vanishes and reports success.
+      ...(layer.kind === 'use'
+        ? { component: layer.component, slots: Object.assign(Object.create(null) as Record<string, string>, layer.slots) }
+        : {}),
     };
     byId.set(layer.id, node);
     if (layer.kind === 'box') node.children = layer.children.map((child) => descend(child, node));
@@ -281,6 +285,15 @@ export function applyOps(design: DesignDocument, ops: readonly DesignOp[]): Appl
         if (op.height !== undefined) target!.height = op.height;
         break;
       case 'delete':
+        if (!target!.parent && target!.kind !== 'frame') {
+          // A definition root. It has no parent to be detached from, so the
+          // delete silently succeeded and changed nothing — an op that reports
+          // `ok` and does nothing is worse than one that refuses.
+          errors.push(
+            `\`${op.id}\` is a component's root. Remove its \`<define>\` to delete the component.`,
+          );
+          break;
+        }
         if (target!.kind === 'frame' && roots.length === 1) {
           errors.push('A design needs a frame; this is the only one.');
           break;
@@ -379,6 +392,17 @@ export function idAfter(design: DesignDocument, parentId: LayerId, index: number
     const frame = design.frames[f]!;
     if (frame.id === parentId) return `l_${[f, index].join('_')}`;
     if (walk(frame.children, [f])) return `l_${path.join('_')}`;
+  }
+  // Definitions are numbered in their own namespace. Without this, inserting a
+  // layer into a component returned nothing and the new layer was never
+  // selected — the editor added something and appeared not to.
+  const components = design.components ?? [];
+  for (let c = 0; c < components.length; c++) {
+    const root = components[c]!.layer;
+    const prefix = `c${c}`;
+    if (root.id === parentId) return `l_${prefix}_0_${index}`;
+    path.length = 1;
+    if (root.kind === 'box' && walk(root.children, [0])) return `l_${prefix}_${path.join('_')}`;
   }
   return null;
 }

@@ -104,7 +104,20 @@ function fill(
       children: filled.children.map((child) => fill(child, slots, owner, byName, seen)),
     };
   }
-  if (filled.kind === 'use') return { ...expandLayer(filled, byName, seen), id };
+  if (filled.kind === 'use') {
+    // Expanded against **this** id, not against the nested use's own.
+    // Delegating to `expandLayer` here used the definition-local id as the
+    // owner, so both instances of an outer component produced identical ids
+    // for everything inside the inner one — one instance's rect silently
+    // overwrote the other's, and a click resolved to a layer inside the
+    // *definition*, where an edit changes every instance at once.
+    const inner = byName.get(filled.component);
+    if (!inner || seen.includes(filled.component)) {
+      return { id, name: filled.name, classes: filled.classes, kind: 'box', children: [] };
+    }
+    const nested = fill(inner.layer, filled.slots, id, byName, [...seen, filled.component]);
+    return { ...nested, id, name: filled.name, classes: [...nested.classes, ...filled.classes] };
+  }
   return { ...filled, id };
 }
 
@@ -112,8 +125,24 @@ function fill(
 export function slotsOf(component: Component): string[] {
   const found: string[] = [];
   const descend = (layer: Layer): void => {
+    // Text only, because text is all `fill` substitutes. Listing a slot the
+    // expander ignores put a field in the inspector that wrote a real
+    // attribute to the file and changed nothing on the canvas — a closed
+    // vocabulary silently dropping something is the one thing it must not do.
     const slot = slotName(layer);
-    if (slot !== null && !found.includes(slot)) found.push(slot);
+    if (slot !== null && layer.kind === 'text' && !found.includes(slot)) found.push(slot);
+    if (layer.kind === 'box') layer.children.forEach(descend);
+  };
+  descend(component.layer);
+  return found;
+}
+
+/** Slots declared on something that is not text, which nothing will honour. */
+export function deadSlots(component: Component): { id: LayerId; slot: string }[] {
+  const found: { id: LayerId; slot: string }[] = [];
+  const descend = (layer: Layer): void => {
+    const slot = slotName(layer);
+    if (slot !== null && layer.kind !== 'text') found.push({ id: layer.id, slot });
     if (layer.kind === 'box') layer.children.forEach(descend);
   };
   descend(component.layer);

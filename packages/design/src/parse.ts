@@ -250,7 +250,19 @@ export function parseDesign(source: string): ParseResult {
   // Positional ids are then chosen around them rather than into them.
   const claimed = new Set<string>();
   for (const token of tokens) {
-    if (token.kind === 'open' && token.attrs.id) claimed.add(token.attrs.id);
+    if (token.kind !== 'open' || !token.attrs.id) continue;
+    // `$` separates a component instance from the path inside it, so an
+    // authored id containing one would be read as a layer that does not exist
+    // and the click that selected it would select nothing. The invariant is
+    // load-bearing, so it is enforced here rather than assumed.
+    if (token.attrs.id.includes('$')) {
+      errors.push({
+        line: token.line,
+        message: `\`id="${token.attrs.id}"\` cannot contain \`$\`. That character marks a layer drawn by a component.`,
+      });
+      continue;
+    }
+    claimed.add(token.attrs.id);
   }
 
   let name = 'Untitled design';

@@ -1,6 +1,6 @@
 import { THEME_ROLES, resolveClasses } from './classes.js';
 import { DEFAULT_THEME, contrastRatio, modeOf, type ThemeDocument } from './theme.js';
-import { expandDesign, slotsOf, useOf } from './expand.js';
+import { deadSlots, expandDesign, slotsOf, useOf } from './expand.js';
 import { find, walk, type DesignDocument, type Layer, type LintFinding } from './types.js';
 
 /**
@@ -237,6 +237,30 @@ function componentFindings(design: DesignDocument): LintFinding[] {
   for (const frame of design.frames) frame.children.forEach(check);
   for (const component of components) {
     check(component.layer);
+
+    // A slot on something that is not text. Nothing substitutes it, so the
+    // inspector would offer a field that writes a real attribute and changes
+    // nothing on screen.
+    for (const dead of deadSlots(component)) {
+      findings.push({
+        layerId: dead.id,
+        severity: 'error',
+        message: `\`slot:${dead.slot}\` is on a layer that is not text, and only text can be filled in. Move it to the \`<text>\` inside.`,
+      });
+    }
+
+    // A slot whose name is one of a `<use>`'s own attributes. The value would
+    // be read as that attribute instead — `slot:id` quietly becomes the
+    // layer's identity, which the serializer then writes out as a durable id
+    // nobody asked for and the override is lost on save.
+    for (const slot of slotsOf(component)) {
+      if (!RESERVED_SLOTS.has(slot)) continue;
+      findings.push({
+        layerId: component.layer.id,
+        severity: 'error',
+        message: `\`slot:${slot}\` cannot be a slot — \`${slot}\` is a \`<use>\`'s own attribute, so the value would be read as that instead. Call it something else.`,
+      });
+    }
     // A component that reaches itself, however many steps around. The expander
     // survives it by drawing an empty box; this is what says why.
     const cycle = reaches(component.name, component.name, byName, new Set());
@@ -250,6 +274,9 @@ function componentFindings(design: DesignDocument): LintFinding[] {
   }
   return findings;
 }
+
+/** A `<use>`'s own attributes, which a slot may therefore not be called. */
+const RESERVED_SLOTS: ReadonlySet<string> = new Set(['id', 'name', 'class', 'component']);
 
 function hasUse(design: DesignDocument): boolean {
   for (const { layer } of walk(design)) {

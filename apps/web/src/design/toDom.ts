@@ -34,6 +34,7 @@ export function designToDom(authored: DesignDocument, mode?: string): HTMLElemen
   for (const frame of design.frames) {
     const surface = document.createElement('div');
     surface.className = 'design-surface';
+    surface.dataset.layerId = frame.id;
     if (mode) surface.dataset.mode = mode;
     surface.style.width = `${frame.width}px`;
     if (frame.height !== 'auto') surface.style.height = `${frame.height}px`;
@@ -47,6 +48,7 @@ export function designToDom(authored: DesignDocument, mode?: string): HTMLElemen
 function layerToDom(layer: Layer): HTMLElement {
   if (layer.kind === 'text') {
     const span = document.createElement('span');
+    span.dataset.layerId = layer.id;
     // `textContent`, never `innerHTML`. A design's text is content, and the
     // markup it came from was already parsed — re-interpreting it here would be
     // a second parse of an author's words, which is how injection happens.
@@ -56,12 +58,17 @@ function layerToDom(layer: Layer): HTMLElement {
   }
   if (layer.kind === 'image') {
     const img = document.createElement('img');
+    img.dataset.layerId = layer.id;
     img.src = layer.src;
     img.alt = layer.alt;
     apply(img, layer.classes);
     return img;
   }
   const box = document.createElement('div');
+  // The state rules are keyed on this. Without it every rule the preview
+  // mounted matched nothing, so the one interactive thing a preview does —
+  // respond when you hover it — silently did not happen.
+  box.dataset.layerId = layer.id;
   apply(box, layer.classes);
   // A `<use>` that reached here was not expanded, which is a bug upstream. An
   // empty box keeps the preview drawable rather than throwing inside a

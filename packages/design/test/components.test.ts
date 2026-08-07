@@ -270,6 +270,101 @@ describe('what the linter catches', () => {
   });
 });
 
+describe('the ways a component can lie', () => {
+  it('gives two instances of a nested component different ids', () => {
+    // The seam, at its sharpest. Expanding a nested use against its own
+    // definition-local id made both instances of the outer component produce
+    // identical ids for everything inside the inner one — so one instance's
+    // measured rect overwrote the other's, and a click resolved to a layer
+    // inside the *definition*, where an edit changes every instance at once.
+    const nested = design(
+      [
+        '<design name="x">',
+        '  <define name="Inner"><box class="flex"><text name="slot:label" class="text-body">hi</text></box></define>',
+        '  <define name="Outer"><box class="flex"><use component="Inner" /></box></define>',
+        '  <frame width="390" class="flex flex-col"><use component="Outer" /><use component="Outer" /></frame>',
+        '</design>',
+      ].join('\n'),
+    );
+    const ids = drawnTexts(expandDesign(nested)).map((layer) => layer.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size, ids.join(' ')).toBe(2);
+    // And each maps back to a use that is actually on the frame.
+    for (const id of ids) {
+      expect(nested.frames[0]!.children.some((child) => child.id === useOf(id))).toBe(true);
+    }
+  });
+
+  it('refuses a slot named after one of a use’s own attributes', () => {
+    // `slot:id` was read as the layer's identity: the override became a durable
+    // id nobody asked for, and the value was destroyed on the next save.
+    const clash = design(
+      [
+        '<design name="x">',
+        '  <define name="B"><box class="flex"><text name="slot:id" class="text-body">a</text></box></define>',
+        '  <frame width="390" class="flex"><use component="B" /></frame>',
+        '</design>',
+      ].join('\n'),
+    );
+    expect(lintDesign(clash).map((one) => one.message).join(' ')).toMatch(/cannot be a slot/);
+  });
+
+  it('refuses a slot on something that is not text', () => {
+    // Nothing substitutes it, so the inspector offered a field that wrote a
+    // real attribute to the file and changed nothing on screen.
+    const wrong = design(
+      [
+        '<design name="x">',
+        '  <define name="Card"><box name="slot:body" class="flex"><text class="text-body">x</text></box></define>',
+        '  <frame width="390" class="flex"><use component="Card" /></frame>',
+        '</design>',
+      ].join('\n'),
+    );
+    const messages = lintDesign(wrong).map((one) => one.message).join(' ');
+    expect(messages).toMatch(/only text can be filled in/);
+    expect(slotsOf(wrong.components![0]!), 'a slot nothing honours must not be offered').toEqual([]);
+  });
+
+  it('refuses to delete a component’s root rather than doing nothing', () => {
+    // It has no parent to detach from, so the op reported success and left the
+    // file byte-identical — an affordance that appears to work and does not.
+    const before = serializeDesign(KIT);
+    const applied = applyOps(KIT, [{ op: 'delete', id: KIT.components![0]!.layer.id }]);
+    expect(applied.ok).toBe(false);
+    expect(!applied.ok && applied.errors.join(' ')).toMatch(/Remove its `<define>`/);
+    expect(serializeDesign(KIT)).toBe(before);
+  });
+
+  it('treats a slot called __proto__ as a slot', () => {
+    const target = KIT.frames[0]!.children[0]!.id;
+    const applied = applyOps(KIT, [{ op: 'set-slot', id: target, slot: '__proto__', value: 'x' }]);
+    expect(applied.ok).toBe(true);
+    const first = applied.ok ? applied.design.frames[0]!.children[0]! : null;
+    expect(first?.kind === 'use' && Object.keys(first.slots)).toEqual(['label', '__proto__']);
+  });
+
+  it('refuses an authored id containing the character that marks an expanded one', () => {
+    const result = parseDesign('<design name="x"><frame width="100"><box id="a$b" class="flex"></box></frame></design>');
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.errors.map((e) => e.message).join(' ')).toMatch(/cannot contain/);
+  });
+
+  it('does not add a name to a line nobody touched when a box loses its last child', () => {
+    // The invented name for a box depends on its child count, so deleting the
+    // last child flipped it from "Group" to "Box" and the serializer started
+    // writing `name="Group"` onto an untouched line.
+    const box = design(
+      '<design name="x"><frame width="100" class="flex"><box class="flex"><text class="text-body">x</text></box></frame></design>',
+    );
+    const applied = applyOps(box, [{ op: 'delete', id: 'l_0_0_0' }]);
+    expect(applied.ok).toBe(true);
+    const line = applied.ok
+      ? serializeDesign(applied.design).split('\n').find((one) => one.includes('<box'))
+      : '';
+    expect(line?.trim()).toBe('<box class="flex"></box>');
+  });
+});
+
 describe('reading a component', () => {
   it('lists the slots it offers', () => {
     expect(slotsOf(KIT.components![0]!)).toEqual(['label']);

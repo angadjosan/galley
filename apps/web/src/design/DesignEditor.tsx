@@ -176,6 +176,10 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
     // not undo — it is a silent overwrite.
     past.current = [];
     future.current = [];
+    // With them: a stale key makes the first edit after a collaborator's change
+    // coalesce into a step that is no longer there, so it lands no undo entry
+    // at all.
+    lastPush.current = null;
     setSelection((current) => (current.ids.length > 0 || current.focus ? NOTHING : current));
   }, [props.source]);
 
@@ -989,13 +993,13 @@ function Inspector({
           <Toggle
             label="Border"
             on={has('border')}
-            mixed={layers.some((one) => one.classes.includes('border')) && !has('border')}
+            mixed={layers.some((one) => inState(one).includes('border')) && !has('border')}
             onChange={() => toggle('border')}
           />
           <Toggle
             label="Shadow"
             on={has('shadow-sm')}
-            mixed={layers.some((one) => one.classes.includes('shadow-sm')) && !has('shadow-sm')}
+            mixed={layers.some((one) => inState(one).includes('shadow-sm')) && !has('shadow-sm')}
             onChange={() => toggle('shadow-sm')}
           />
         </div>

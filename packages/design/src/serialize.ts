@@ -1,4 +1,4 @@
-import { defaultFrameName, defaultLayerName } from './names.js';
+import { defaultFrameName, isInventedName } from './names.js';
 import { encode } from './parse.js';
 import type { DesignDocument, Frame, Layer } from './types.js';
 
@@ -113,8 +113,7 @@ function nameAttribute(layer: Layer): string {
   // A `<use>` is named after what it uses, so repeating the component's name in
   // a `name` attribute says nothing twice.
   if (layer.kind === 'use') return layer.name === layer.component ? '' : `name="${attribute(layer.name)}"`;
-  const invented = defaultLayerName(layer.kind, layer.kind === 'box' ? layer.children.length : 0);
-  return layer.name === invented ? '' : `name="${attribute(layer.name)}"`;
+  return isInventedName(layer.kind, layer.name) ? '' : `name="${attribute(layer.name)}"`;
 }
 
 function classAttribute(classes: readonly string[]): string {

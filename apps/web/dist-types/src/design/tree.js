@@ -32,6 +32,17 @@ export function parentOf(design, id) {
         if (found)
             return found;
     }
+    // Definitions too. `walk` and `find` reach into them, so a parent lookup that
+    // did not made every definition layer look top-level — which is what let a
+    // click inside a component land on a definition layer and edit every
+    // instance at once.
+    for (const component of design.components ?? []) {
+        if (component.layer.id === id)
+            return null;
+        const found = search(component.layer);
+        if (found)
+            return found;
+    }
     return null;
 }
 /**
