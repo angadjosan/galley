@@ -603,11 +603,42 @@ export class Store {
    * than `limit` revisions was rehydrating its **oldest** window, so a timeline
    * on a long-lived document showed ancient history and no recent edits.
    */
-  listRevisions<T>(docId: string, limit = 200): T[] {
-    const rows = this.prepare(
-      'SELECT payload FROM revisions WHERE doc_id = ? ORDER BY ticket DESC LIMIT ?',
-    ).all(docId, limit) as { payload: string }[];
+  listRevisions<T>(docId: string, limit = 200, before?: number): T[] {
+    const rows = (
+      before === undefined
+        ? this.prepare(
+            'SELECT payload FROM revisions WHERE doc_id = ? ORDER BY ticket DESC LIMIT ?',
+          ).all(docId, limit)
+        : this.prepare(
+            'SELECT payload FROM revisions WHERE doc_id = ? AND ticket < ? ORDER BY ticket DESC LIMIT ?',
+          ).all(docId, before, limit)
+    ) as { payload: string }[];
     return rows.reverse().map((r) => JSON.parse(r.payload) as T);
+  }
+
+  /**
+   * One revision by ticket, straight from storage.
+   *
+   * The actor's in-memory `History` is a *window*, not the archive — it holds
+   * the newest few hundred and evicts the rest. Reading an older version has to
+   * come from here or the timeline can only show what it can already reach.
+   *
+   * `<=` and not `=`: a ticket names a moment, and the version of the document
+   * at that moment is the one written by the last revision at or before it.
+   */
+  revisionAt<T>(docId: string, ticket: number): T | undefined {
+    const row = this.prepare(
+      'SELECT payload FROM revisions WHERE doc_id = ? AND ticket <= ? ORDER BY ticket DESC LIMIT 1',
+    ).get(docId, ticket) as { payload: string } | undefined;
+    return row ? (JSON.parse(row.payload) as T) : undefined;
+  }
+
+  /** How many revisions this document has, ever. Nothing here is pruned. */
+  countRevisions(docId: string): number {
+    const row = this.prepare('SELECT COUNT(*) AS n FROM revisions WHERE doc_id = ?').get(docId) as
+      | { n: number }
+      | undefined;
+    return Number(row?.n ?? 0);
   }
 
   putCheckpoint(docId: string, id: string, checkpoint: unknown): void {

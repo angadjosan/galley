@@ -2117,3 +2117,48 @@ after the move, because by then nothing is attached.
 the way out, `detach` does not, and callers that need the snapshot current
 persist first and then detach. `purge` still uses the bare form — flushing a
 row that is about to be destroyed is work for nobody.
+
+---
+
+## D69 — History was already permanent; only the read path was short
+
+**Context:** "how long is version history, and can it be infinite?" The answer
+turned out to be that **nothing has ever pruned a revision on disk.**
+`putRevision` upserts and the only `DELETE FROM revisions` is document deletion.
+A document's whole timeline has been sitting in SQLite the entire time.
+
+What made it look otherwise was three bounds on the *read* path, none of them
+retention:
+
+| Where | Bound | What it is |
+|---|---|---|
+| Actor memory | 500 revisions / 4 MiB / floor 20 | a cache |
+| Cold reopen | newest 200 rehydrated | a latency choice |
+| HTTP | 100 default, 500 ceiling | a page size |
+
+The memory bound is the only one that cannot simply be raised, and the reason is
+in `history.ts`: **a `Revision` carries the entire document.** Retention in
+memory is O(revisions × document size), measured there at a 493–498× blowup and
+about a gigabyte at 256 open documents. Holding every revision of every open
+document is not a configuration change, it is a different design.
+
+**Decision:** keep the memory window as a cache and make the archive readable.
+
+- `GET /history` takes a `before` ticket cursor and reads from **storage**, not
+  from the actor. Paging reaches the first edit a document ever had.
+- `GET /history/:ticket` falls back to storage when the ticket is older than the
+  window. It used to 404, which made the older half of a long timeline visible
+  but unopenable — the worst of both.
+- The response carries `total`, so the UI can say *"Show older — 30 more"* and
+  then *"That is all 130 versions, back to the beginning."* A timeline that
+  stops without saying whether anything is below it reads as a limit.
+
+**A short page is the end of the timeline.** The first attempt used "the oldest
+ticket is 1", which is wrong: tickets are sequencer cursors, so a document's
+first revision is whatever number the sequencer had reached, almost never 1. It
+left the UI offering "show older" for ever with nothing behind it — visible
+immediately in a browser, and now pinned by a test.
+
+**So: history is unbounded, and the honest statement is that it always was.**
+What is bounded is how much of it is in memory at once, and that is a cache
+whose size is a latency decision rather than a promise about what is kept.

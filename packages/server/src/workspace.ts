@@ -33,6 +33,15 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_TRASH_DAYS = 30;
 
 /**
+ * How much of a document's timeline is loaded when it is opened cold.
+ *
+ * Deliberately a *window*. Anything older is read from storage on demand, so
+ * this is a latency choice rather than a retention one — nothing on disk is
+ * ever pruned.
+ */
+const REHYDRATE_REVISIONS = 200;
+
+/**
  * Who the sweep acts as.
  *
  * The audit log records an actor for every entry, and the actor here is not a
@@ -441,8 +450,13 @@ export class Workspace {
     for (const comment of this.store.listComments(docId)) actor.adoptComment(comment);
     for (const suggestion of this.store.listSuggestions(docId)) actor.adoptSuggestion(suggestion);
     for (const orphan of this.store.listOrphans(docId)) actor.adoptOrphan(orphan);
+    // The newest window, not the whole archive: a revision carries the entire
+    // document, so rehydrating every one of them would put a copy of the
+    // document per edit into memory. The rest is not lost — it is in SQLite,
+    // and `GET /history?before=` pages back through it. This is a cache of the
+    // recent past, sized to what a timeline shows without a round trip.
     actor.adoptHistory(
-      this.store.listRevisions<Revision>(docId),
+      this.store.listRevisions<Revision>(docId, REHYDRATE_REVISIONS),
       this.store.listCheckpoints<Checkpoint>(docId),
     );
   }

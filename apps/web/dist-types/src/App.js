@@ -266,7 +266,7 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
     const [comments, setComments] = useState([]);
     const [suggestions, setSuggestions] = useState([]);
     const [orphans, setOrphans] = useState([]);
-    const [history, setHistory] = useState({ revisions: [], checkpoints: [], attribution: [] });
+    const [history, setHistory] = useState({ revisions: [], checkpoints: [], attribution: [], total: 0, more: null });
     const [peers, setPeers] = useState([]);
     const [activeBlock, setActiveBlock] = useState(null);
     const [notice, setNotice] = useState(null);
@@ -804,7 +804,19 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
                     catch (err) {
                         setNotice(failure('That design could not be created.', err));
                     }
-                } })), shareOpen && (_jsx(Share, { path: loaded.path, onClose: () => setShareOpen(false) })), historyOpen && (_jsx(HistoryOverlay, { revisions: history.revisions, checkpoints: history.checkpoints, attribution: history.attribution, activeBlock: activeBlock, nameOf: nameOf, onClose: () => setHistoryOpen(false), onCheckpoint: async (name) => {
+                } })), shareOpen && (_jsx(Share, { path: loaded.path, onClose: () => setShareOpen(false) })), historyOpen && (_jsx(HistoryOverlay, { revisions: history.revisions, checkpoints: history.checkpoints, attribution: history.attribution, activeBlock: activeBlock, nameOf: nameOf, total: history.total, more: history.more, onClose: () => setHistoryOpen(false), onOlder: async () => {
+                    if (history.more == null)
+                        return;
+                    const page = await client.history(docId, 100, history.more);
+                    // Appended, not replaced, and deduped by ticket: the timeline is
+                    // one list that grows backwards, and a page boundary is not a
+                    // reason for the reader to lose their place.
+                    setHistory((current) => {
+                        const seen = new Set(current.revisions.map((revision) => revision.ticket));
+                        const older = page.revisions.filter((revision) => !seen.has(revision.ticket));
+                        return { ...current, revisions: [...older, ...current.revisions], more: page.more };
+                    });
+                }, onCheckpoint: async (name) => {
                     await client.checkpoint(docId, name);
                     setHistory(await client.history(docId));
                 }, onRestore: async (ticket) => {
@@ -861,8 +873,9 @@ function Share({ path, onClose }) {
  * It is an overlay rather than a permanent tab because it is visited monthly,
  * and a monthly destination should not charge rent on every screen.
  */
-function HistoryOverlay({ revisions, checkpoints, attribution, activeBlock, nameOf, onClose, onCheckpoint, onRestore, }) {
+function HistoryOverlay({ revisions, checkpoints, attribution, activeBlock, nameOf, total, more, onClose, onOlder, onCheckpoint, onRestore, }) {
     const [name, setName] = useState('');
+    const [loadingOlder, setLoadingOlder] = useState(false);
     const byTicket = useMemo(() => new Map(checkpoints.map((c) => [c.ticket, c])), [checkpoints]);
     const current = activeBlock ? attribution.find((a) => a.blockId === activeBlock) : undefined;
     return (_jsx(Overlay, { title: "Version history", onClose: onClose, children: _jsxs("div", { className: "history", "data-testid": "history-rail", children: [current && (_jsxs("div", { className: "attribution", "data-testid": "attribution", children: [_jsx("span", { className: "attribution-label", children: "This paragraph" }), _jsxs("span", { className: "who-name", children: [current.authorName, current.byAgent && _jsx("span", { className: "agent-chip", children: "Agent" })] }), _jsx("time", { dateTime: current.at, children: when(current.at) })] })), _jsxs("form", { className: "composer compact", onSubmit: async (event) => {
@@ -874,7 +887,10 @@ function HistoryOverlay({ revisions, checkpoints, attribution, activeBlock, name
                     }, children: [_jsx("input", { value: name, onChange: (event) => setName(event.target.value), placeholder: "Name this version", "data-testid": "checkpoint-input" }), _jsx("button", { type: "submit", className: "ghost", disabled: !name.trim(), "data-testid": "checkpoint-submit", children: "Save" })] }), revisions.length === 0 && _jsx("p", { className: "lane-empty", children: "Nothing has changed yet." }), _jsx("ol", { className: "timeline", children: revisions.map((revision) => {
                         const checkpoint = byTicket.get(revision.ticket);
                         return (_jsxs("li", { className: "revision", "data-testid": "revision", children: [_jsx("span", { className: `dot ${revision.byAgent ? 'agent' : ''}` }), _jsxs("div", { className: "revision-body", children: [checkpoint && _jsx("span", { className: "checkpoint-name", children: checkpoint.name }), _jsx("span", { className: "revision-summary", children: revision.summary }), _jsxs("span", { className: "revision-meta", children: [revision.authorName || nameOf(revision.authorId), revision.byAgent && _jsx("span", { className: "agent-chip", children: "Agent" }), " \u00B7 ", when(revision.at)] })] }), _jsx("button", { className: "ghost tiny", onClick: () => void onRestore(revision.ticket), "data-testid": `restore-${revision.ticket}`, title: "Bring this version back", children: "Restore" })] }, revision.ticket));
-                    }) })] }) }));
+                    }) }), more !== null && (_jsx("button", { className: "ghost history-older", "data-testid": "history-older", disabled: loadingOlder, onClick: () => {
+                        setLoadingOlder(true);
+                        void onOlder().finally(() => setLoadingOlder(false));
+                    }, children: loadingOlder ? 'Loading…' : `Show older — ${total - revisions.length} more` })), more === null && total > 0 && (_jsxs("p", { className: "history-all", "data-testid": "history-all", children: ["That is all ", total, " version", total === 1 ? '' : 's', ", back to the beginning."] }))] }) }));
 }
 /**
  * "Are you sure?", asked properly.

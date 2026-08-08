@@ -592,7 +592,10 @@ function DocumentView({
     revisions: RevisionSummary[];
     checkpoints: CheckpointSummary[];
     attribution: AttributionSummary[];
-  }>({ revisions: [], checkpoints: [], attribution: [] });
+    total: number;
+    /** Cursor for the next page back, or null once the timeline is exhausted. */
+    more: number | null;
+  }>({ revisions: [], checkpoints: [], attribution: [], total: 0, more: null });
   const [peers, setPeers] = useState<PeerPresence[]>([]);
   const [activeBlock, setActiveBlock] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -1430,7 +1433,21 @@ function DocumentView({
           attribution={history.attribution}
           activeBlock={activeBlock}
           nameOf={nameOf}
+          total={history.total}
+          more={history.more}
           onClose={() => setHistoryOpen(false)}
+          onOlder={async () => {
+            if (history.more == null) return;
+            const page = await client.history(docId, 100, history.more);
+            // Appended, not replaced, and deduped by ticket: the timeline is
+            // one list that grows backwards, and a page boundary is not a
+            // reason for the reader to lose their place.
+            setHistory((current) => {
+              const seen = new Set(current.revisions.map((revision) => revision.ticket));
+              const older = page.revisions.filter((revision) => !seen.has(revision.ticket));
+              return { ...current, revisions: [...older, ...current.revisions], more: page.more };
+            });
+          }}
           onCheckpoint={async (name) => {
             await client.checkpoint(docId, name);
             setHistory(await client.history(docId));
@@ -1619,7 +1636,10 @@ function HistoryOverlay({
   attribution,
   activeBlock,
   nameOf,
+  total,
+  more,
   onClose,
+  onOlder,
   onCheckpoint,
   onRestore,
 }: {
@@ -1628,11 +1648,16 @@ function HistoryOverlay({
   attribution: AttributionSummary[];
   activeBlock: string | null;
   nameOf(id: string): string;
+  /** Every revision this document has ever had. Nothing is ever pruned. */
+  total: number;
+  more: number | null;
   onClose(): void;
+  onOlder(): Promise<void>;
   onCheckpoint(name: string): Promise<void>;
   onRestore(ticket: number): Promise<void>;
 }): JSX.Element {
   const [name, setName] = useState('');
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const byTicket = useMemo(() => new Map(checkpoints.map((c) => [c.ticket, c])), [checkpoints]);
   const current = activeBlock ? attribution.find((a) => a.blockId === activeBlock) : undefined;
 
@@ -1697,6 +1722,31 @@ function HistoryOverlay({
             );
           })}
         </ol>
+
+        {/*
+          The timeline is kept in full — nothing on the server prunes a
+          revision — so this is paging, not a truncation notice. It says how
+          many there are so that "older" is a known quantity rather than a
+          guess about whether anything is down there.
+        */}
+        {more !== null && (
+          <button
+            className="ghost history-older"
+            data-testid="history-older"
+            disabled={loadingOlder}
+            onClick={() => {
+              setLoadingOlder(true);
+              void onOlder().finally(() => setLoadingOlder(false));
+            }}
+          >
+            {loadingOlder ? 'Loading…' : `Show older — ${total - revisions.length} more`}
+          </button>
+        )}
+        {more === null && total > 0 && (
+          <p className="history-all" data-testid="history-all">
+            That is all {total} version{total === 1 ? '' : 's'}, back to the beginning.
+          </p>
+        )}
       </div>
     </Overlay>
   );

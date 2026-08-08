@@ -376,15 +376,28 @@ export class GalleyClient {
     return citation;
   }
 
+  /**
+   * A page of the timeline, newest first.
+   *
+   * `before` is a ticket cursor: pass the previous page's `more` to keep going.
+   * Nothing on the server prunes revisions, so paging reaches the first edit a
+   * document ever had.
+   */
   async history(
     ref: string,
     limit = 100,
+    before?: number,
   ): Promise<{
     revisions: RevisionSummary[];
     checkpoints: CheckpointSummary[];
     attribution: AttributionSummary[];
+    /** How many revisions exist in total, not how many came back. */
+    total: number;
+    /** Cursor for the next page back, or null at the beginning of time. */
+    more: number | null;
   }> {
-    return this.call('GET', `/v1/docs/${encodeURIComponent(ref)}/history?limit=${limit}`);
+    const cursor = before === undefined ? '' : `&before=${before}`;
+    return this.call('GET', `/v1/docs/${encodeURIComponent(ref)}/history?limit=${limit}${cursor}`);
   }
 
   async revisionAt(ref: string, ticket: number): Promise<{ revision: RevisionSummary & { content: string } }> {

@@ -976,3 +976,105 @@ describe('a title is not plumbing', () => {
     expect(title).not.toContain('<!--');
   });
 });
+
+describe('version history', () => {
+  /** Make `count` separate edits, so there is a real timeline to read. */
+  async function edits(h: Harness, docId: string, blockId: string, count: number): Promise<void> {
+    for (let i = 0; i < count; i++) {
+      await h.json(`/v1/docs/${docId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ ops: [{ kind: 'replace', target: blockId, markdown: `Take ${i}.` }] }),
+      });
+    }
+  }
+
+  it('keeps every revision, and says how many there are', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await edits(h, docId, blockIds[1]!, 40);
+
+    const { revisions, total } = await h.json<{ revisions: unknown[]; total: number }>(
+      `/v1/docs/${docId}/history?limit=10`,
+    );
+    expect(revisions).toHaveLength(10);
+    // Nothing prunes on disk. The page is a page, not the whole archive.
+    expect(total).toBeGreaterThanOrEqual(40);
+  });
+
+  it('pages all the way back to the first edit', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await edits(h, docId, blockIds[1]!, 30);
+
+    const seen = new Set<number>();
+    let before: number | null | undefined;
+    for (let page = 0; page < 20; page++) {
+      const query: string = before == null ? '?limit=5' : `?limit=5&before=${before}`;
+      const body = await h.json<{ revisions: { ticket: number }[]; more: number | null }>(
+        `/v1/docs/${docId}/history${query}`,
+      );
+      for (const revision of body.revisions) seen.add(revision.ticket);
+      before = body.more;
+      if (before == null) break;
+    }
+    // Every revision reachable, five at a time, with no gaps and no repeats.
+    expect(seen.size).toBeGreaterThanOrEqual(30);
+    expect(before).toBeNull();
+  });
+
+  it('opens a revision older than the window the actor holds in memory', async () => {
+    // This is the bug the paging fixes. The actor's History is a cache of the
+    // newest few hundred; asking for anything older used to 404, which made the
+    // older half of a long timeline unopenable even though it was all on disk.
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await edits(h, docId, blockIds[1]!, 12);
+
+    const { revisions } = await h.json<{ revisions: { ticket: number }[] }>(
+      `/v1/docs/${docId}/history?limit=500`,
+    );
+    const earliest = revisions[0]!.ticket;
+
+    // Evict it, so nothing is in memory at all, then read the oldest revision.
+    await h.server.workspace.close(docId);
+    const { revision } = await h.json<{ revision: { ticket: number; content: string } }>(
+      `/v1/docs/${docId}/history/${earliest}`,
+    );
+    expect(revision.ticket).toBeLessThanOrEqual(earliest);
+    expect(revision.content).toBeTruthy();
+  });
+
+  it('survives a cold reopen with its whole timeline still readable', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await edits(h, docId, blockIds[1]!, 25);
+    await h.server.workspace.close(docId);
+
+    const { total, revisions } = await h.json<{ total: number; revisions: unknown[] }>(
+      `/v1/docs/${docId}/history?limit=500`,
+    );
+    expect(total).toBeGreaterThanOrEqual(25);
+    expect(revisions.length).toBe(total);
+  });
+});
+
+describe('the end of a timeline', () => {
+  it('stops offering older pages once there are none', async () => {
+    // `more` used to be "the oldest ticket is not 1", but tickets are sequencer
+    // cursors and a document's first revision is rarely numbered 1 — so the
+    // timeline offered "show older" for ever, with nothing behind it.
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    for (let i = 0; i < 3; i++) {
+      await h.json(`/v1/docs/${docId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ ops: [{ kind: 'replace', target: blockIds[1], markdown: `Take ${i}.` }] }),
+      });
+    }
+    const body = await h.json<{ revisions: unknown[]; more: number | null; total: number }>(
+      `/v1/docs/${docId}/history?limit=100`,
+    );
+    expect(body.revisions.length).toBe(body.total);
+    expect(body.more).toBeNull();
+  });
+});

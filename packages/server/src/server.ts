@@ -11,6 +11,7 @@ import {
   renderCleanMarkdown,
   type DocumentActor,
   type Principal,
+  type Revision,
 } from '@galley/core';
 import type { BlockOp } from '@galley/markdown';
 import { Auth, AuthError, type Session } from './auth.js';
@@ -526,18 +527,50 @@ export function build(options: ServerOptions = {}): GalleyServer {
     return { suggestion };
   });
 
+  /**
+   * The timeline, read from storage rather than from memory.
+   *
+   * **Nothing prunes revisions on disk — history is kept for as long as the
+   * document exists.** What used to make it look otherwise was the read path:
+   * the actor's `History` is a *window* of the newest few hundred, held in
+   * memory because each revision carries the whole document, and a cold open
+   * rehydrated only the newest 200 of them. Everything older was still in
+   * SQLite and unreachable through any API.
+   *
+   * `before` is a ticket cursor, so a client can page all the way back to the
+   * first edit a document ever had. The window in memory stays exactly as it
+   * was: it is a cache for the recent past, not the archive.
+   */
   app.get('/v1/docs/:ref/history', async (request) => {
     const session = sessionOf(request);
+    const query = request.query as { limit?: string; before?: string };
     const actor = await resolve((request.params as { ref: string }).ref);
     await authorizeDoc(session, actor, 'read');
-    const limit = Math.min(500, Number((request.query as { limit?: string }).limit) || 100);
+    const limit = Math.min(500, Number(query.limit) || 100);
+    const before = query.before === undefined ? undefined : Number(query.before);
+
+    const revisions = await store.read(() =>
+      store.listRevisions<Revision>(actor.docId, limit, Number.isFinite(before) ? before : undefined),
+    );
+    const oldest = revisions[0]?.ticket;
     return {
       // The content of each revision is deliberately omitted from the list: a
       // timeline is a list of moments, and shipping every version of the
       // document to render one is a megabyte to draw a scrollbar.
-      revisions: actor.listRevisions(limit).map(({ content: _content, ...rest }) => rest),
+      revisions: revisions.map(({ content: _content, ...rest }) => rest),
       checkpoints: actor.listCheckpoints(),
       attribution: actor.allAttribution(),
+      total: await store.read(() => store.countRevisions(actor.docId)),
+      /**
+       * The cursor for the next page back, or null at the beginning of time.
+       *
+       * A short page is the end. Not "the oldest ticket is 1": tickets are
+       * sequencer cursors, so a document's first revision is whatever number
+       * the sequencer had reached — usually not 1 — and testing for that left
+       * the timeline offering "show older" for ever with nothing behind it.
+       * An exact multiple of the limit costs one empty page, which then ends.
+       */
+      more: revisions.length === limit ? (oldest ?? null) : null,
     };
   });
 
@@ -546,7 +579,12 @@ export function build(options: ServerOptions = {}): GalleyServer {
     const { ref, ticket } = request.params as { ref: string; ticket: string };
     const actor = await resolve(ref);
     await authorizeDoc(session, actor, 'read');
-    const revision = actor.history.at(Number(ticket));
+    // Memory first, storage second. The window holds the recent past and
+    // answers instantly; anything older is still on disk, and 404ing on it
+    // would make the older half of a timeline unopenable.
+    const revision =
+      actor.history.at(Number(ticket)) ??
+      (await store.read(() => store.revisionAt<Revision>(actor.docId, Number(ticket))));
     if (!revision) return reply.code(404).send({ error: `no revision at or before ${ticket}` });
     return { revision: { ...revision, content: renderCleanMarkdown(revision.content) } };
   });

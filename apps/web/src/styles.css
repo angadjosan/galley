@@ -3782,3 +3782,22 @@ kbd {
   background: var(--danger-tint);
   color: var(--danger);
 }
+
+/**
+ * Paging the timeline, not truncating it.
+ *
+ * Nothing on the server prunes a revision, so this is a "there is more below"
+ * control rather than a limit notice — and the count is shown so that "older"
+ * is a known quantity rather than a guess about whether anything is down there.
+ */
+.history-older {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.history-all {
+  margin: 10px 0 0;
+  font-size: var(--fs-small);
+  color: var(--text-3);
+  text-align: center;
+}
