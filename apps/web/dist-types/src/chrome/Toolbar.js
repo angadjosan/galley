@@ -1,7 +1,7 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BOLD, BULLETED_LIST, CHECKLIST, CLEAR_FORMATTING, HIGHLIGHT, INDENT, INLINE_CODE, ITALIC, NUMBERED_LIST, OUTDENT, REDO, STRIKETHROUGH, STYLES, UNDERLINE, UNDO, currentStyle, } from '../editor/commands.js';
-import { BoldIcon, BulletsIcon, ChecklistIcon, CheckIcon, ChevronIcon, ClearFormatIcon, CodeIcon, CommentIcon, DesignIcon, DiagramIcon, HighlightIcon, ImageIcon, IndentIcon, ItalicIcon, LinkIcon, NumbersIcon, OutdentIcon, RedoIcon, StrikeIcon, TableIcon, UndoIcon, UnderlineIcon, } from './icons.js';
+import { BoldIcon, BulletsIcon, ChecklistIcon, CheckIcon, ChevronIcon, ClearFormatIcon, CodeIcon, CommentIcon, DesignIcon, HighlightIcon, ImageIcon, IndentIcon, ItalicIcon, LinkIcon, NumbersIcon, OutdentIcon, RedoIcon, StrikeIcon, TableIcon, UndoIcon, UnderlineIcon, } from './icons.js';
 export function Toolbar(props) {
     const { state, readOnly } = props;
     const bar = useRef(null);
@@ -121,7 +121,7 @@ function buildGroups(props) {
         {
             id: 'insert',
             width: 216,
-            render: (current, disabled) => (_jsxs(_Fragment, { children: [_jsx(ToolButton, { label: "Insert link", shortcut: "\u2318K", icon: _jsx(LinkIcon, {}), enabled: !disabled && !!current, onClick: props.onLink }), _jsx(ToolButton, { label: "Add comment", shortcut: "\u2318\u2325M", icon: _jsx(CommentIcon, {}), enabled: !!current, onClick: props.onComment }), _jsx(ToolButton, { label: "Insert image", icon: _jsx(ImageIcon, {}), enabled: !disabled && !!current, onClick: props.onImage }), _jsx(ToolButton, { label: "Insert diagram", icon: _jsx(DiagramIcon, {}), enabled: !disabled && !!current, onClick: props.onDiagram }), _jsx(ToolButton, { label: "Insert design", icon: _jsx(DesignIcon, {}), enabled: !disabled && !!current, onClick: props.onDesign }), _jsx(ToolButton, { label: "Insert table", icon: _jsx(TableIcon, {}), enabled: !disabled && !!current, onClick: props.onTable })] })),
+            render: (current, disabled) => (_jsxs(_Fragment, { children: [_jsx(ToolButton, { label: "Insert link", shortcut: "\u2318K", icon: _jsx(LinkIcon, {}), enabled: !disabled && !!current, onClick: props.onLink }), _jsx(ToolButton, { label: "Add comment", shortcut: "\u2318\u2325M", icon: _jsx(CommentIcon, {}), enabled: !!current, onClick: props.onComment }), _jsx(ToolButton, { label: "Insert image", icon: _jsx(ImageIcon, {}), enabled: !disabled && !!current, onClick: props.onImage }), _jsx(ToolButton, { label: "Insert design", icon: _jsx(DesignIcon, {}), enabled: !disabled && !!current, onClick: props.onDesign }), _jsx(ToolButton, { label: "Insert table", icon: _jsx(TableIcon, {}), enabled: !disabled && !!current, onClick: props.onTable })] })),
         },
         {
             id: 'lists',

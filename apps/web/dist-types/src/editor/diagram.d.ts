@@ -39,19 +39,4 @@ export declare function resetDiagramTheme(): void;
 /** Ask to be told when every diagram needs redrawing. */
 export declare function onDiagramThemeChange(listener: () => void): () => void;
 export declare function renderDiagram(lang: string, code: string): Promise<DiagramRender>;
-/**
- * The Insert menu's diagram choices.
- *
- * A writer who has never seen Mermaid cannot start from a blank box, and the
- * product's whole premise is that they should not have to learn a syntax to get
- * a picture. Each of these is a working diagram with real placeholder labels —
- * the first edit is renaming a box, not discovering a grammar.
- */
-export interface DiagramTemplate {
-    readonly id: string;
-    readonly label: string;
-    readonly hint: string;
-    readonly code: string;
-}
-export declare const DIAGRAM_TEMPLATES: readonly DiagramTemplate[];
 //# sourceMappingURL=diagram.d.ts.map

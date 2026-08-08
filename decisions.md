@@ -2251,3 +2251,50 @@ worth keeping; the deterministic place to make it is a unit test on the
 reconciler, where the selection is mapped through known splices and no shared
 fixture can drift underneath it. A brittle test of a true property teaches
 people to re-run the suite until it goes green.
+
+---
+
+## D73 — No gallery in front of a design, and no diagram insert at all
+
+**Context:** both insert flows opened a gallery first. "Pick a shape to start
+from" for a diagram, six templates; "Insert a design", five starters. Each was
+justified the same way when it was built — a blank canvas is a churn surface,
+and a writer who has never seen Mermaid cannot start from an empty box.
+
+That argument was better before the canvas had a palette. It is a question asked
+*before the writer has anything to say about the answer*, and a starter is a
+guess at what they are making. The cost of a wrong guess is not zero: you have
+to work out which parts of it were meant for you, then delete the rest. Deleting
+somebody else's placeholder text is a worse first interaction than typing into
+an empty frame.
+
+**Decision, in two parts.**
+
+**A design is created blank, immediately.** One press of `Insert design` makes
+the document and links to it. The choosing has a better home — the palette on
+the canvas, one click away, with every piece drawn as itself (D60, D61). Two
+places now make a new design and they share one `blankDesign` helper, so the
+library's `New → Design` and the in-document button cannot drift into producing
+different things under the same name.
+
+**Diagram insertion is removed outright** — the button, the Insert-menu entry,
+the picker and its six templates. Not narrowed to "blank diagram", because a
+blank Mermaid fence is not a thing anyone can start from: unlike a design,
+whose canvas is direct manipulation, a diagram is *syntax*, and an empty one
+offers a writer who does not know that syntax nothing at all. The honest
+position is that this app has no diagram authoring surface.
+
+**Diagram *rendering* stays, and that is not an inconsistency.** A document can
+arrive with a fence in it from an agent, a paste, or a `galley push`, and it
+must draw rather than show its own syntax — that is Principle IV holding for a
+picture, and it is the same reason a design keeps drawing inside prose. The e2e
+test that covered inserting a diagram was rewritten to cover exactly this: a
+document seeded with a fence renders, and the fence on disk is untouched.
+
+**Two tests moved rather than died.** The component and selection walkthroughs
+genuinely need particular designs — one with definitions, one with a form — and
+were getting them by clicking a starter. They now seed the document over HTTP
+from the same `STARTERS` the package exports. The starters are still worth
+having: they are worked examples an agent can read to learn the format, which is
+what `starters.ts` said they were for. What they are no longer is a question
+put to a person who just wanted to draw something.

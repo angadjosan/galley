@@ -22,10 +22,9 @@ import type {
 import type { EditorState } from 'prosemirror-state';
 import { diffToBlockOps } from '@galley/core/diff';
 import { parseDocument } from '@galley/markdown';
-import { STARTERS, embedDesign, extractDesign, parseDesign, type DesignStarter } from '@galley/design';
+import { embedDesign, extractDesign, parseDesign } from '@galley/design';
 import { Editor, type EditorHandle } from './editor/Editor.js';
-import { INSERT_TABLE, insertDesignLink, insertDiagram, insertImage } from './editor/commands.js';
-import { DIAGRAM_TEMPLATES } from './editor/diagram.js';
+import { INSERT_TABLE, insertDesignLink, insertImage } from './editor/commands.js';
 import { Boundary } from './chrome/Boundary.js';
 import { DesignIcon, DocumentIcon, TrashIcon } from './chrome/icons.js';
 import { DesignEditor } from './design/DesignEditor.js';
@@ -187,6 +186,28 @@ function parseInvite(value: string): { baseUrl: string; token: string } | null {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * A new design, as a document.
+ *
+ * One definition for both ways in — the library's `New → Design` and the
+ * `Insert design` button inside a document — so the two cannot drift into
+ * producing different things called the same name.
+ *
+ * An empty frame with nothing in it. The canvas's palette is where the choosing
+ * happens, with every piece drawn as itself; a gallery of starters in front of
+ * that asks the same question worse, before the writer has anything to say
+ * about the answer.
+ */
+function blankDesign(name: string): string {
+  const source = [
+    `<design name="${name}">`,
+    '  <frame name="Screen" width="390" class="flex flex-col gap-4 p-6 bg-canvas">',
+    '  </frame>',
+    '</design>',
+  ].join('\n');
+  return `# ${name}\n\n\`\`\`design\n${source}\n\`\`\`\n`;
+}
+
 function Workspace({
   credentials,
   onSignOut,
@@ -292,12 +313,11 @@ function Workspace({
   const createDocument = async (kind: 'doc' | 'design'): Promise<void> => {
     const stamp = new Date().toISOString().slice(0, 10);
     const suffix = Math.random().toString(36).slice(2, 6);
-    const blank = STARTERS.find((starter) => starter.id === 'blank');
     const seed =
-      kind === 'design' && blank
+      kind === 'design'
         ? {
             path: `design/untitled-${stamp}-${suffix}`,
-            content: `# Untitled design\n\n\`\`\`design\n${blank.source}\n\`\`\`\n`,
+            content: blankDesign('Untitled design'),
           }
         : {
             path: `untitled-${stamp}-${suffix}`,
@@ -609,7 +629,13 @@ function DocumentView({
    */
   const [editorState, setEditorState] = useState<EditorState | null>(null);
   /** Which insert picker is open, if any. */
-  const [inserting, setInserting] = useState<'image' | 'diagram' | 'design' | null>(null);
+  /**
+   * Which insert overlay is open.
+   *
+   * Only images have one now. A design is created on the spot, and diagrams are
+   * no longer inserted from here at all — see the two decisions this replaced.
+   */
+  const [inserting, setInserting] = useState<'image' | null>(null);
   /**
    * The markup of every design this document links to, by path.
    *
@@ -1060,6 +1086,31 @@ function DocumentView({
 
   if (!loaded) return <main className="desk"><div className="spread"><div className="page page-loading" /></div></main>;
 
+  /**
+   * Put a design in this document.
+   *
+   * **Blank, and immediately.** There used to be a gallery of starters in the
+   * way — "pick a shape to start from" — which is a question asked before the
+   * writer has anything to say about the answer. A starter is a guess at what
+   * you are making, and the cost of a wrong guess is higher than the cost of an
+   * empty frame: you have to recognise which parts are yours, then delete the
+   * rest. The palette on the canvas is where choosing what to add belongs, and
+   * it is one click away with every piece drawn as itself.
+   *
+   * A design is its own document, so this creates one and links to it. The link
+   * is ordinary CommonMark — Galley draws it live, everything else shows a
+   * link, and the design keeps its own history and its own comments.
+   */
+  const insertDesign = async (): Promise<void> => {
+    const slug = `${loaded.path}-design-${Math.random().toString(36).slice(2, 6)}`;
+    try {
+      await client.create(slug, blankDesign('Untitled design'));
+      editor.current?.run(insertDesignLink(slug, 'Untitled design'));
+    } catch (err) {
+      setNotice(failure('That design could not be created.', err));
+    }
+  };
+
   const title = titleOf(loaded.content, loaded.path);
   const folder = loaded.path.includes('/') ? loaded.path.slice(0, loaded.path.lastIndexOf('/')) : '';
 
@@ -1201,8 +1252,7 @@ function DocumentView({
           onLink={() => editor.current?.openLink()}
           onComment={() => editor.current?.openComment()}
           onImage={() => setInserting('image')}
-          onDiagram={() => setInserting('diagram')}
-          onDesign={() => setInserting('design')}
+          onDesign={() => void insertDesign()}
           onTable={() => editor.current?.run(INSERT_TABLE)}
           onShare={() => setShareOpen(true)}
           onHistory={() => setHistoryOpen(true)}
@@ -1220,8 +1270,7 @@ function DocumentView({
           onLink={() => editor.current?.openLink()}
           onComment={() => editor.current?.openComment()}
           onImage={() => setInserting('image')}
-          onDiagram={() => setInserting('diagram')}
-          onDesign={() => setInserting('design')}
+          onDesign={() => void insertDesign()}
           onTable={() => editor.current?.run(INSERT_TABLE)}
         />
       </header>
@@ -1379,45 +1428,6 @@ function DocumentView({
           onInsert={(src, alt) => {
             setInserting(null);
             editor.current?.run(insertImage(src, alt));
-          }}
-        />
-      )}
-
-      {inserting === 'diagram' && (
-        <DiagramPicker
-          onClose={() => {
-            setInserting(null);
-            editor.current?.focus();
-          }}
-          onInsert={(code) => {
-            setInserting(null);
-            editor.current?.run(insertDiagram(code));
-          }}
-        />
-      )}
-
-      {inserting === 'design' && (
-        <DesignPicker
-          onClose={() => {
-            setInserting(null);
-            editor.current?.focus();
-          }}
-          onInsert={async (starter) => {
-            setInserting(null);
-            try {
-              // A design is its own document, so inserting one creates a
-              // document and links to it. The link is ordinary CommonMark —
-              // Galley draws it live, everything else shows a link, and the
-              // design keeps its own history and its own comments.
-              const slug = `${loaded.path}-design-${Math.random().toString(36).slice(2, 6)}`;
-              await client.create(
-                slug,
-                `# ${starter.label}\n\n\`\`\`design\n${starter.source}\n\`\`\`\n`,
-              );
-              editor.current?.run(insertDesignLink(slug, starter.label));
-            } catch (err) {
-              setNotice(failure('That design could not be created.', err));
-            }
           }}
         />
       )}
@@ -2139,50 +2149,6 @@ function downloadMarkdown(path: string, content: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-/**
- * Choosing a diagram.
- *
- * A gallery of finished diagrams rather than an empty box, because "insert a
- * flowchart" and "learn a diagram syntax from nothing" are very different asks
- * and only the first one is what the writer wanted. Every card is a working
- * diagram with real placeholder labels, so the first edit is renaming a box.
- */
-function DiagramPicker({
-  onInsert,
-  onClose,
-}: {
-  onInsert(code: string): void;
-  onClose(): void;
-}): JSX.Element {
-  return (
-    <Overlay title="Insert a diagram" onClose={onClose}>
-      <p className="overlay-lead">Pick a shape to start from. You can change everything about it.</p>
-      <div className="diagram-gallery">
-        {DIAGRAM_TEMPLATES.map((template) => (
-          <button
-            key={template.id}
-            type="button"
-            className="diagram-card"
-            data-testid={`diagram-${template.id}`}
-            onClick={() => onInsert(template.code)}
-          >
-            <span className="diagram-card-name">{template.label}</span>
-            <span className="diagram-card-hint">{template.hint}</span>
-          </button>
-        ))}
-      </div>
-    </Overlay>
-  );
-}
-
-/**
- * Choosing an image.
- *
- * By address only, for now. A paste-and-upload path needs somewhere to put the
- * bytes, and there is no asset route yet — offering a file picker that silently
- * embedded a multi-megabyte data URI into a document meant to be read by agents
- * would be worse than not offering one.
- */
 function ImagePicker({
   onInsert,
   onClose,
@@ -2230,45 +2196,6 @@ function ImagePicker({
           </button>
         </div>
       </form>
-    </Overlay>
-  );
-}
-
-/**
- * Choosing a design to start from.
- *
- * Same reasoning as the diagram gallery, and the same evidence behind it: a
- * blank canvas is a churn surface. Every starter is a real design in the
- * closed vocabulary, so the first edit is renaming a label rather than
- * learning a layout language.
- */
-function DesignPicker({
-  onInsert,
-  onClose,
-}: {
-  onInsert(starter: DesignStarter): void;
-  onClose(): void;
-}): JSX.Element {
-  return (
-    <Overlay title="Insert a design" onClose={onClose}>
-      <p className="overlay-lead">
-        A design is its own document, so it keeps its own history and its own notes — and any
-        document can point at it.
-      </p>
-      <div className="diagram-gallery">
-        {STARTERS.map((starter) => (
-          <button
-            key={starter.id}
-            type="button"
-            className="diagram-card"
-            data-testid={`design-${starter.id}`}
-            onClick={() => onInsert(starter)}
-          >
-            <span className="diagram-card-name">{starter.label}</span>
-            <span className="diagram-card-hint">{starter.hint}</span>
-          </button>
-        ))}
-      </div>
     </Overlay>
   );
 }

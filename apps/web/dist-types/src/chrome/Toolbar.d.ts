@@ -31,7 +31,6 @@ export interface ToolbarProps {
     onLink(): void;
     onComment(): void;
     onImage(): void;
-    onDiagram(): void;
     onDesign(): void;
     onTable(): void;
 }

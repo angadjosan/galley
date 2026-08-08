@@ -29,7 +29,6 @@ import {
   CodeIcon,
   CommentIcon,
   DesignIcon,
-  DiagramIcon,
   HighlightIcon,
   ImageIcon,
   IndentIcon,
@@ -76,7 +75,6 @@ export interface ToolbarProps {
   onLink(): void;
   onComment(): void;
   onImage(): void;
-  onDiagram(): void;
   onDesign(): void;
   onTable(): void;
 }
@@ -315,12 +313,6 @@ function buildGroups(props: ToolbarProps): Group[] {
             icon={<ImageIcon />}
             enabled={!disabled && !!current}
             onClick={props.onImage}
-          />
-          <ToolButton
-            label="Insert diagram"
-            icon={<DiagramIcon />}
-            enabled={!disabled && !!current}
-            onClick={props.onDiagram}
           />
           <ToolButton
             label="Insert design"

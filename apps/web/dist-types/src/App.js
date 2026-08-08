@@ -2,10 +2,9 @@ import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-run
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, } from 'react';
 import { diffToBlockOps } from '@galley/core/diff';
 import { parseDocument } from '@galley/markdown';
-import { STARTERS, embedDesign, extractDesign, parseDesign } from '@galley/design';
+import { embedDesign, extractDesign, parseDesign } from '@galley/design';
 import { Editor } from './editor/Editor.js';
-import { INSERT_TABLE, insertDesignLink, insertDiagram, insertImage } from './editor/commands.js';
-import { DIAGRAM_TEMPLATES } from './editor/diagram.js';
+import { INSERT_TABLE, insertDesignLink, insertImage } from './editor/commands.js';
 import { Boundary } from './chrome/Boundary.js';
 import { DesignIcon, DocumentIcon, TrashIcon } from './chrome/icons.js';
 import { DesignEditor } from './design/DesignEditor.js';
@@ -80,6 +79,27 @@ function parseInvite(value) {
     }
 }
 // ---------------------------------------------------------------------------
+/**
+ * A new design, as a document.
+ *
+ * One definition for both ways in — the library's `New → Design` and the
+ * `Insert design` button inside a document — so the two cannot drift into
+ * producing different things called the same name.
+ *
+ * An empty frame with nothing in it. The canvas's palette is where the choosing
+ * happens, with every piece drawn as itself; a gallery of starters in front of
+ * that asks the same question worse, before the writer has anything to say
+ * about the answer.
+ */
+function blankDesign(name) {
+    const source = [
+        `<design name="${name}">`,
+        '  <frame name="Screen" width="390" class="flex flex-col gap-4 p-6 bg-canvas">',
+        '  </frame>',
+        '</design>',
+    ].join('\n');
+    return `# ${name}\n\n\`\`\`design\n${source}\n\`\`\`\n`;
+}
 function Workspace({ credentials, onSignOut, }) {
     const client = useMemo(() => makeClient(credentials), [credentials]);
     const [documents, setDocuments] = useState([]);
@@ -176,11 +196,10 @@ function Workspace({ credentials, onSignOut, }) {
     const createDocument = async (kind) => {
         const stamp = new Date().toISOString().slice(0, 10);
         const suffix = Math.random().toString(36).slice(2, 6);
-        const blank = STARTERS.find((starter) => starter.id === 'blank');
-        const seed = kind === 'design' && blank
+        const seed = kind === 'design'
             ? {
                 path: `design/untitled-${stamp}-${suffix}`,
-                content: `# Untitled design\n\n\`\`\`design\n${blank.source}\n\`\`\`\n`,
+                content: blankDesign('Untitled design'),
             }
             : {
                 path: `untitled-${stamp}-${suffix}`,
@@ -280,6 +299,12 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
      */
     const [editorState, setEditorState] = useState(null);
     /** Which insert picker is open, if any. */
+    /**
+     * Which insert overlay is open.
+     *
+     * Only images have one now. A design is created on the spot, and diagrams are
+     * no longer inserted from here at all — see the two decisions this replaced.
+     */
     const [inserting, setInserting] = useState(null);
     /**
      * The markup of every design this document links to, by path.
@@ -692,6 +717,31 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
     }, []);
     if (!loaded)
         return _jsx("main", { className: "desk", children: _jsx("div", { className: "spread", children: _jsx("div", { className: "page page-loading" }) }) });
+    /**
+     * Put a design in this document.
+     *
+     * **Blank, and immediately.** There used to be a gallery of starters in the
+     * way — "pick a shape to start from" — which is a question asked before the
+     * writer has anything to say about the answer. A starter is a guess at what
+     * you are making, and the cost of a wrong guess is higher than the cost of an
+     * empty frame: you have to recognise which parts are yours, then delete the
+     * rest. The palette on the canvas is where choosing what to add belongs, and
+     * it is one click away with every piece drawn as itself.
+     *
+     * A design is its own document, so this creates one and links to it. The link
+     * is ordinary CommonMark — Galley draws it live, everything else shows a
+     * link, and the design keeps its own history and its own comments.
+     */
+    const insertDesign = async () => {
+        const slug = `${loaded.path}-design-${Math.random().toString(36).slice(2, 6)}`;
+        try {
+            await client.create(slug, blankDesign('Untitled design'));
+            editor.current?.run(insertDesignLink(slug, 'Untitled design'));
+        }
+        catch (err) {
+            setNotice(failure('That design could not be created.', err));
+        }
+    };
     const title = titleOf(loaded.content, loaded.path);
     const folder = loaded.path.includes('/') ? loaded.path.slice(0, loaded.path.lastIndexOf('/')) : '';
     /**
@@ -736,7 +786,7 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
                         // what the document list is for.
                         onClose: onToggleLibrary }) }), shareOpen && _jsx(Share, { path: loaded.path, onClose: () => setShareOpen(false) })] }));
     }
-    return (_jsxs(_Fragment, { children: [_jsxs("header", { className: "chrome", children: [_jsxs("div", { className: "chrome-top", children: [_jsx("button", { className: "icon-button chrome-menu", onClick: onToggleLibrary, "aria-label": "Documents", children: _jsx("span", { "aria-hidden": "true", children: "\u2630" }) }), _jsxs("nav", { className: "breadcrumb", "aria-label": "Location", children: [folder && (_jsxs(_Fragment, { children: [_jsx("span", { className: "crumb", children: prettyName(folder) }), _jsx("span", { className: "crumb-sep", "aria-hidden": "true", children: "\u203A" })] })), _jsx("span", { className: "crumb is-current", "data-testid": "doc-title", children: title })] }), _jsxs("div", { className: "chrome-right", children: [_jsx(SaveBadge, { state: save }), _jsx(Presence, { peers: peers }), _jsx("button", { className: "chrome-button chrome-share", onClick: () => setShareOpen(true), children: "Share" })] })] }), _jsx(MenuBar, { state: editorState, readOnly: false, run: (command) => editor.current?.run(command), onLink: () => editor.current?.openLink(), onComment: () => editor.current?.openComment(), onImage: () => setInserting('image'), onDiagram: () => setInserting('diagram'), onDesign: () => setInserting('design'), onTable: () => editor.current?.run(INSERT_TABLE), onShare: () => setShareOpen(true), onHistory: () => setHistoryOpen(true), onNewDocument: onNewDocument, onToggleLibrary: onToggleLibrary, onCopyMarkdown: () => void navigator.clipboard?.writeText(editor.current?.markdown() ?? loaded.content), onDownload: () => downloadMarkdown(loaded.path, editor.current?.markdown() ?? loaded.content), onSignOut: onSignOut }), _jsx(Toolbar, { state: editorState, readOnly: false, run: (command) => editor.current?.run(command), onLink: () => editor.current?.openLink(), onComment: () => editor.current?.openComment(), onImage: () => setInserting('image'), onDiagram: () => setInserting('diagram'), onDesign: () => setInserting('design'), onTable: () => editor.current?.run(INSERT_TABLE) })] }), notice && (_jsxs("div", { className: `banner banner-${notice.tone}`, "data-testid": "notice", children: [_jsx("span", { children: notice.text }), notice.action && (_jsx("button", { className: "link-quiet", onClick: notice.action.run, children: notice.action.label })), _jsx("button", { className: "icon-button", onClick: () => setNotice(null), "aria-label": "Dismiss", children: _jsx("span", { "aria-hidden": "true", children: "\u2715" }) })] })), _jsx("div", { className: "desk", ref: desk, children: _jsxs("div", { className: "spread", children: [_jsx("main", { className: "page", children: _jsx(Editor, { ref: editor, markdown: loaded.content, revision: loaded.version, highlights: highlights, designs: designs, suggestions: inlineSuggestions, suggestionHandlers: suggestionHandlers, onChange: (markdown) => {
+    return (_jsxs(_Fragment, { children: [_jsxs("header", { className: "chrome", children: [_jsxs("div", { className: "chrome-top", children: [_jsx("button", { className: "icon-button chrome-menu", onClick: onToggleLibrary, "aria-label": "Documents", children: _jsx("span", { "aria-hidden": "true", children: "\u2630" }) }), _jsxs("nav", { className: "breadcrumb", "aria-label": "Location", children: [folder && (_jsxs(_Fragment, { children: [_jsx("span", { className: "crumb", children: prettyName(folder) }), _jsx("span", { className: "crumb-sep", "aria-hidden": "true", children: "\u203A" })] })), _jsx("span", { className: "crumb is-current", "data-testid": "doc-title", children: title })] }), _jsxs("div", { className: "chrome-right", children: [_jsx(SaveBadge, { state: save }), _jsx(Presence, { peers: peers }), _jsx("button", { className: "chrome-button chrome-share", onClick: () => setShareOpen(true), children: "Share" })] })] }), _jsx(MenuBar, { state: editorState, readOnly: false, run: (command) => editor.current?.run(command), onLink: () => editor.current?.openLink(), onComment: () => editor.current?.openComment(), onImage: () => setInserting('image'), onDesign: () => void insertDesign(), onTable: () => editor.current?.run(INSERT_TABLE), onShare: () => setShareOpen(true), onHistory: () => setHistoryOpen(true), onNewDocument: onNewDocument, onToggleLibrary: onToggleLibrary, onCopyMarkdown: () => void navigator.clipboard?.writeText(editor.current?.markdown() ?? loaded.content), onDownload: () => downloadMarkdown(loaded.path, editor.current?.markdown() ?? loaded.content), onSignOut: onSignOut }), _jsx(Toolbar, { state: editorState, readOnly: false, run: (command) => editor.current?.run(command), onLink: () => editor.current?.openLink(), onComment: () => editor.current?.openComment(), onImage: () => setInserting('image'), onDesign: () => void insertDesign(), onTable: () => editor.current?.run(INSERT_TABLE) })] }), notice && (_jsxs("div", { className: `banner banner-${notice.tone}`, "data-testid": "notice", children: [_jsx("span", { children: notice.text }), notice.action && (_jsx("button", { className: "link-quiet", onClick: notice.action.run, children: notice.action.label })), _jsx("button", { className: "icon-button", onClick: () => setNotice(null), "aria-label": "Dismiss", children: _jsx("span", { "aria-hidden": "true", children: "\u2715" }) })] })), _jsx("div", { className: "desk", ref: desk, children: _jsxs("div", { className: "spread", children: [_jsx("main", { className: "page", children: _jsx(Editor, { ref: editor, markdown: loaded.content, revision: loaded.version, highlights: highlights, designs: designs, suggestions: inlineSuggestions, suggestionHandlers: suggestionHandlers, onChange: (markdown) => {
                                     setDraft(markdown);
                                     setSave('dirty');
                                 }, onStateChange: setEditorState, imageUploader: imageUploader, onSelectBlock: (blockId) => {
@@ -781,29 +831,6 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
                 }, onInsert: (src, alt) => {
                     setInserting(null);
                     editor.current?.run(insertImage(src, alt));
-                } })), inserting === 'diagram' && (_jsx(DiagramPicker, { onClose: () => {
-                    setInserting(null);
-                    editor.current?.focus();
-                }, onInsert: (code) => {
-                    setInserting(null);
-                    editor.current?.run(insertDiagram(code));
-                } })), inserting === 'design' && (_jsx(DesignPicker, { onClose: () => {
-                    setInserting(null);
-                    editor.current?.focus();
-                }, onInsert: async (starter) => {
-                    setInserting(null);
-                    try {
-                        // A design is its own document, so inserting one creates a
-                        // document and links to it. The link is ordinary CommonMark —
-                        // Galley draws it live, everything else shows a link, and the
-                        // design keeps its own history and its own comments.
-                        const slug = `${loaded.path}-design-${Math.random().toString(36).slice(2, 6)}`;
-                        await client.create(slug, `# ${starter.label}\n\n\`\`\`design\n${starter.source}\n\`\`\`\n`);
-                        editor.current?.run(insertDesignLink(slug, starter.label));
-                    }
-                    catch (err) {
-                        setNotice(failure('That design could not be created.', err));
-                    }
                 } })), shareOpen && (_jsx(Share, { path: loaded.path, onClose: () => setShareOpen(false) })), historyOpen && (_jsx(HistoryOverlay, { revisions: history.revisions, checkpoints: history.checkpoints, attribution: history.attribution, activeBlock: activeBlock, nameOf: nameOf, total: history.total, more: history.more, onClose: () => setHistoryOpen(false), onOlder: async () => {
                     if (history.more == null)
                         return;
@@ -1136,25 +1163,6 @@ function downloadMarkdown(path, content) {
     // browser's own fetch of the blob and produces an empty file on some builds.
     setTimeout(() => URL.revokeObjectURL(url), 0);
 }
-/**
- * Choosing a diagram.
- *
- * A gallery of finished diagrams rather than an empty box, because "insert a
- * flowchart" and "learn a diagram syntax from nothing" are very different asks
- * and only the first one is what the writer wanted. Every card is a working
- * diagram with real placeholder labels, so the first edit is renaming a box.
- */
-function DiagramPicker({ onInsert, onClose, }) {
-    return (_jsxs(Overlay, { title: "Insert a diagram", onClose: onClose, children: [_jsx("p", { className: "overlay-lead", children: "Pick a shape to start from. You can change everything about it." }), _jsx("div", { className: "diagram-gallery", children: DIAGRAM_TEMPLATES.map((template) => (_jsxs("button", { type: "button", className: "diagram-card", "data-testid": `diagram-${template.id}`, onClick: () => onInsert(template.code), children: [_jsx("span", { className: "diagram-card-name", children: template.label }), _jsx("span", { className: "diagram-card-hint", children: template.hint })] }, template.id))) })] }));
-}
-/**
- * Choosing an image.
- *
- * By address only, for now. A paste-and-upload path needs somewhere to put the
- * bytes, and there is no asset route yet — offering a file picker that silently
- * embedded a multi-megabyte data URI into a document meant to be read by agents
- * would be worse than not offering one.
- */
 function ImagePicker({ onInsert, onClose, }) {
     const [src, setSrc] = useState('');
     const [alt, setAlt] = useState('');
@@ -1163,16 +1171,5 @@ function ImagePicker({ onInsert, onClose, }) {
                 if (src.trim())
                     onInsert(src.trim(), alt.trim());
             }, children: [_jsxs("label", { children: [_jsx("span", { children: "Image address" }), _jsx("input", { autoFocus: true, value: src, placeholder: "https://\u2026 or ./images/diagram.png", onChange: (event) => setSrc(event.target.value) })] }), _jsxs("label", { children: [_jsx("span", { children: "Description" }), _jsx("input", { value: alt, placeholder: "What the image shows", onChange: (event) => setAlt(event.target.value) }), _jsx("small", { children: "Read aloud to anyone who cannot see it, and to every agent." })] }), _jsxs("div", { className: "overlay-actions", children: [_jsx("button", { type: "button", className: "ghost", onClick: onClose, children: "Cancel" }), _jsx("button", { type: "submit", className: "primary", disabled: !src.trim(), children: "Insert" })] })] }) }));
-}
-/**
- * Choosing a design to start from.
- *
- * Same reasoning as the diagram gallery, and the same evidence behind it: a
- * blank canvas is a churn surface. Every starter is a real design in the
- * closed vocabulary, so the first edit is renaming a label rather than
- * learning a layout language.
- */
-function DesignPicker({ onInsert, onClose, }) {
-    return (_jsxs(Overlay, { title: "Insert a design", onClose: onClose, children: [_jsx("p", { className: "overlay-lead", children: "A design is its own document, so it keeps its own history and its own notes \u2014 and any document can point at it." }), _jsx("div", { className: "diagram-gallery", children: STARTERS.map((starter) => (_jsxs("button", { type: "button", className: "diagram-card", "data-testid": `design-${starter.id}`, onClick: () => onInsert(starter), children: [_jsx("span", { className: "diagram-card-name", children: starter.label }), _jsx("span", { className: "diagram-card-hint", children: starter.hint })] }, starter.id))) })] }));
 }
 //# sourceMappingURL=App.js.map
