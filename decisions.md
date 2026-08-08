@@ -1883,3 +1883,57 @@ button is still uncapped.
 Fitting is two operations wearing one name. Shrinking something that overflows
 is always what was meant. *Enlarging* something small is a choice — right when
 someone asked for it, wrong as the thing that happens on open.
+
+---
+
+## D63 — A design renders to HTML, and the browser turns that into pixels
+
+**Context:** an agent could already *read* a design — the outline and the markup
+are text, which is what a model handles best — but it could not *see* one. Some
+questions about a screen have no textual answer: whether two things line up,
+whether a label is swallowed by its own button, whether the whole thing is the
+wrong shape for a phone. Those are the questions a designer answers by looking,
+and nothing in the pipeline produced anything to look at.
+
+**Decision:** `designToHtml` in `@galley/design` emits one self-contained HTML
+document; `galley design image` screenshots it with headless Chromium;
+`galley design html` writes the file for anyone who would rather open it.
+
+**Why not SVG,** since "an image the code can make" is the obvious answer and it
+is wrong twice:
+
+- **Pure SVG means laying the design out ourselves**, which means *measuring
+  text* — the one thing this format is built never to do (`types.ts`, property
+  3: advance width is a function of the font file, and a model cannot know it).
+  A hand-rolled layout would disagree with the canvas, and every disagreement is
+  a picture that lies about the design.
+- **SVG with a `foreignObject`** dodges the layout problem and loses the
+  rasterizers. resvg and librsvg — most of what turns SVG into pixels outside a
+  browser — both ignore `foreignObject` and would produce a blank rectangle. An
+  image format that renders blank in the tools that consume images is not an
+  image format.
+
+HTML hands the arithmetic back to the engine that owns it, and every path that
+turns HTML into pixels is a browser. The picture cannot disagree with the
+canvas, because it is drawn by the same kind of thing.
+
+**Self-contained, with no network at all.** One file, styles inline or in one
+`<style>`, no fonts fetched, no scripts. A screenshot pipeline that has to be
+online renders differently on a bad day, and there is a test asserting no
+`http`, no `<script>`, no `<link>`, no `@import` for every starter.
+
+**Playwright is imported lazily and its absence is an error with the fix in it.**
+It is heavy and only this one command needs it. What it must not do is fail with
+a module-not-found stack — an agent that gets one has no way to know the command
+would have worked after a single install.
+
+**Two details that were each wrong once.** The body is `width: max-content`,
+because without it a 390px design arrived as a 1280px picture and spent two
+thirds of a model's attention on empty background. And frames are uncaptioned by
+default: a picture meant for a model should be the design and nothing else, and
+the frame's name is already in the markup it can read.
+
+**The string renderer is a sibling of `toDom.ts`, not an abstraction over it.**
+One builds strings for a package with no browser dependency; the other builds
+DOM for a ProseMirror decoration. A shared node-factory abstraction would be
+longer than either of them.

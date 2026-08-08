@@ -83,6 +83,7 @@ export {
   type Vetted,
 } from './proposal.js';
 export { designCss, hasStates } from './css.js';
+export { designToHtml, type HtmlOptions } from './html.js';
 export {
   EXPANDED,
   expandDesign,

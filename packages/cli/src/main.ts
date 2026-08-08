@@ -19,6 +19,7 @@ import {
   DEFAULT_THEME,
   VOCABULARY,
   checkContrast,
+  designToHtml,
   embedDesign,
   extractDesign,
   extractTheme,
@@ -55,6 +56,8 @@ usage: galley <command> [options]
   rm <path> --yes                             delete a document and its annotations
   search <query> [--limit n]                  matching blocks, as doc#block refs
   design <sub> <ref> [--under id]             outline | source | lint | classes | tokens
+  design image <ref> [--out f.png]            a picture of it, for anything that can see
+  design html <ref> [--out f.html]            the same, as one self-contained file
   design apply <ref> --ops <file|->           propose a change as design ops
   comment <ref> <body> [--run <id>]           anchored comment
   suggest <ref> --from <file>                 propose an edit as block-scoped ops
@@ -281,6 +284,58 @@ async function workspaceTheme(): Promise<typeof DEFAULT_THEME> {
   return DEFAULT_THEME;
 }
 
+/**
+ * A design as pixels.
+ *
+ * **The browser does the layout, because the browser is the layout.** The whole
+ * format rests on never measuring text (`types.ts`, property 3) — advance width
+ * is a function of the font file, so the design says "a column with a gap" and
+ * something else does the arithmetic. A rasterizer written here would have to
+ * do that arithmetic, badly, and every disagreement with the canvas would be a
+ * picture that lies about the design. Screenshotting the same HTML a browser
+ * would draw makes disagreement impossible.
+ *
+ * **Playwright is imported lazily and its absence is an error with a fix in
+ * it.** It is a heavy dependency and only this one command needs it, so an
+ * install that never renders an image should never pay for it. What it must not
+ * do is fail with a module-not-found stack: an agent that gets one has no way
+ * to know the command would have worked after one install.
+ */
+async function renderImage(html: string, args: ParsedArgs, io: Io): Promise<number> {
+  const out = flagString(args, 'out', 'design.png');
+  const scale = flagNumber(args, 'scale', 2);
+
+  let chromium: typeof import('playwright').chromium;
+  try {
+    ({ chromium } = await import('playwright'));
+  } catch {
+    io.err(
+      'galley: rendering an image needs a browser, and playwright is not installed.\n' +
+        '  npm i -D playwright && npx playwright install chromium\n' +
+        '  or use `galley design html` and open the file yourself.\n',
+    );
+    return 1;
+  }
+
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ deviceScaleFactor: scale });
+    // `setContent`, not a temp file and a `file://` load: the document is
+    // self-contained by construction, so there is nothing on disk for it to
+    // reference and nothing to clean up if this throws.
+    await page.setContent(html, { waitUntil: 'load' });
+    // Clipped to the content rather than the viewport. A design is whatever
+    // size it is; padding it out to 1280×720 would put every frame in the
+    // corner of a mostly-empty picture, which wastes most of the pixels a
+    // model is given to look at.
+    await page.locator('body').screenshot({ path: out });
+    io.err(`wrote ${out}\n`);
+    return 0;
+  } finally {
+    await browser.close();
+  }
+}
+
 async function designCommand(args: ParsedArgs, io: Io): Promise<number> {
   const sub = args.positional[0];
   if (!sub) throw new Error('usage: galley design <outline|source|lint|classes|apply> [ref]');
@@ -350,6 +405,25 @@ async function designCommand(args: ParsedArgs, io: Io): Promise<number> {
   if (sub === 'outline') {
     io.out(designOutline(scoped, { depth: flagNumber(args, 'depth', 0) || null }));
     return 0;
+  }
+  if (sub === 'html' || sub === 'image') {
+    const html = designToHtml(scoped, {
+      mode: flagString(args, 'mode', '') || undefined,
+      theme: await workspaceTheme(),
+      labels: flagBool(args, 'labels'),
+      background: flagString(args, 'background', '') || undefined,
+    });
+    if (sub === 'html') {
+      const out = flagString(args, 'out', '');
+      if (!out) {
+        io.out(html.endsWith('\n') ? html : `${html}\n`);
+        return 0;
+      }
+      writeFileSync(out, html);
+      io.err(`wrote ${out}\n`);
+      return 0;
+    }
+    return renderImage(html, args, io);
   }
   if (sub === 'lint') {
     const findings = lintDesign(scoped, { theme: await workspaceTheme() });

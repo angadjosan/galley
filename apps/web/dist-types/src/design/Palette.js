@@ -30,11 +30,12 @@ const SHELVES = [
     { group: 'layout', title: 'Layout' },
 ];
 /** The width the previews are composed at, before being scaled down to fit. */
-const PREVIEW_WIDTH = 300;
-/** Must match `.design-palette-preview-scale`'s transform. */
-const PREVIEW_SCALE = 0.3;
+const PREVIEW_WIDTH = 220;
+/** How far down the composed block is drawn. Bigger than it looks it should
+  be: at 0.3 a card renders 25px tall, which is a smudge rather than a picture. */
+const PREVIEW_SCALE = 0.5;
 /** So a divider — one pixel of block — still reads as a card. */
-const PREVIEW_MIN_HEIGHT = 24;
+const PREVIEW_MIN_HEIGHT = 14;
 /**
  * The frame the previews are composed in: no padding, no fill.
  *
@@ -107,9 +108,9 @@ function BlockPreview({ block, mode }) {
         setHeight(Math.max(PREVIEW_MIN_HEIGHT, Math.round(drawn)));
     }, [design, mode]);
     return (_jsx("span", { className: "design-palette-preview", style: { height }, "aria-hidden": "true", children: _jsx("span", { className: "design-palette-preview-scale", 
-            // Width and scale together, here rather than in the stylesheet: the
-            // measurement above divides by this exact number, and a scale that
-            // lived in CSS could be changed without the measurement noticing.
+            // Width and scale together, here rather than in the stylesheet. Both
+            // are numbers the measurement above depends on, and a scale that lived
+            // in CSS could be changed without anything here noticing.
             style: { width: PREVIEW_WIDTH, transform: `scale(${PREVIEW_SCALE})` }, ref: host }) }));
 }
 export function Palette({ mode, disabled, onAdd, }) {
