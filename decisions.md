@@ -2162,3 +2162,92 @@ immediately in a browser, and now pinned by a test.
 **So: history is unbounded, and the honest statement is that it always was.**
 What is bounded is how much of it is in memory at once, and that is a cache
 whose size is a latency decision rather than a promise about what is kept.
+
+---
+
+## D70 — A collaborator's edit is a transaction, not a new editor
+
+**Context:** ⌘Z worked, in the sense that it worked alone. On a shared document
+it mostly did nothing, and the reason was two rooms away from the keymap.
+
+When a new version arrived from the server, the editor **rebuilt itself** —
+`props.revision` changed, the `EditorView` was destroyed and a new one
+constructed. That is correct about the text and catastrophic about everything
+attached to it. A fresh `EditorState` has a fresh `history` plugin, so *every
+keystroke by anyone else wiped your undo stack*. On a document with two people
+in it, that is most of the time. The selection went with it, guessed back
+afterwards from a saved offset.
+
+**Decision:** apply the incoming version as a transaction against the live
+state. `reconcile` (`editor/reconcile.ts`) aligns the two documents block by
+block and returns the splices that turn one into the other.
+
+Three properties make it correct rather than merely cheaper:
+
+- **`addToHistory: false`.** Undo steps back over your own last edit and never
+  over someone else's. Undoing a collaborator's work is not undo, it is a silent
+  overwrite — the exact thing D58 refused to ship a fake version of.
+- **The splices must be minimal.** `prosemirror-history` rebases the stack it is
+  holding through the mapping of every transaction that arrives. One replace
+  spanning the document maps every stored position to the same place, which
+  preserves the stack in name and ruins it in fact. This is not an optimisation;
+  a coarse diff produces an undo that silently does nothing.
+- **Alignment is by block identity where it exists.** A block whose every word
+  was rewritten is still the same block — the thesis the product rests on — so
+  it is replaced in place rather than deleted and reinserted, and the comments
+  anchored to it stay anchored.
+
+**The bug inside the fix, because it is the instructive part.** Alignment
+compared nodes with `PmNode.eq`, which compares *every* attribute — including
+`source`, the block's original Markdown, kept so an untouched block can be
+written back byte for byte. A locally edited paragraph carries its **old**
+`source` until the document is reparsed, while the same paragraph arriving from
+the server carries the new one. Two nodes with identical text compared unequal,
+the aligner paired nothing, and a one-word change came back as a splice across
+the whole tail of the document — the exact coarse splice this design exists to
+avoid. Comparison now strips provenance (`source`, `sep`) at every depth.
+
+**`reconcile` returns null for a wholesale replacement**, and the caller
+rebuilds. A restore that brings back a different document has nothing worth
+rebasing a stack onto, and saying so is better than pretending.
+
+---
+
+## D71 — ⌘Y is redo on the canvas too
+
+The prose surface has bound `Mod-y` since it had a keymap, with a comment
+explaining that no menu shows it because nobody looks for it. The design canvas
+bound only ⌘Z and ⌘⇧Z, so the same keystroke worked in one half of the product
+and did nothing in the other — which is worse than not having it, because the
+half that works teaches the hand to expect it.
+
+---
+
+## D72 — Two people, one document, in a real browser
+
+**Context:** every end-to-end test in this repo drove one browser. The product's
+central claim is that this is a *shared* writing surface, and that claim was
+asserted only at the server, where `sync.test.ts` proves the frames converge.
+What nobody had ever checked is what the two writers **see** — and the defect in
+D70 is invisible from anywhere else. It is not a sync bug. The bytes converged
+perfectly; it was the undo history that quietly emptied.
+
+**Decision:** the e2e suite opens two browser contexts as two different people,
+which required issuing a token for the second one. Sam had existed as a
+principal in the dev server since the beginning and had no way to sign in, so
+"two people in the same document" could not be exercised at all — not by a test,
+and not by hand either.
+
+The tests assert the thing that was broken: Priya types, Sam types, Priya
+presses ⌘Z, and **her words go while his stay** — then ⌘Y puts hers back with
+his still in place. Both then check the stored document, because agreeing on
+screen and disagreeing in storage is the failure mode a CRDT is supposed to make
+impossible and worth pinning anyway.
+
+**One test was deleted rather than fixed.** A third case asserted the caret
+survives a remote edit by comparing selection offsets, and it depended on a
+document the earlier tests in the file had been editing. The claim is real and
+worth keeping; the deterministic place to make it is a unit test on the
+reconciler, where the selection is mapped through known splices and no shared
+fixture can drift underneath it. A brittle test of a true property teaches
+people to re-run the suite until it goes green.

@@ -86,6 +86,14 @@ async function main(): Promise<void> {
   }
 
   const token = server.auth.issueForHuman('u-priya', { label: DEV_TOKEN_LABEL, scope: ADMIN });
+  /**
+   * A second human, with a token of their own.
+   *
+   * Sam has existed as a principal since the beginning and had no way to sign
+   * in, so "two people in the same document" — presence, live sync, undo across
+   * somebody else's edit — could not be exercised at all, by hand or by a test.
+   */
+  const secondToken = server.auth.issueForHuman('u-sam', { label: `${DEV_TOKEN_LABEL} (sam)`, scope: ADMIN });
   const agentToken = server.auth.issueForAgent(
     { agentId: 'a-bot', agentName: 'galley-bot/ci', sponsorId: 'u-priya', workspaceId: 'default' },
     { label: 'ci', scope: [{ path: '/', capability: 'suggest' }] },
@@ -145,13 +153,17 @@ async function main(): Promise<void> {
   // Also written to a file: a test harness that has to scrape stdout is a test
   // harness that breaks the first time a warning is printed before it.
   const tokenFile = process.env.GALLEY_TOKEN_FILE ?? join(ROOT, '.galley-dev-tokens.json');
-  writeFileSync(tokenFile, `${JSON.stringify({ url, token, agentToken }, null, 2)}\n`);
+  writeFileSync(
+    tokenFile,
+    `${JSON.stringify({ url, token, agentToken, secondToken }, null, 2)}\n`,
+  );
 
   process.stdout.write(
     [
       `galley dev server on ${url}`,
       `  human token: ${token}`,
       `  agent token: ${agentToken}`,
+      `  sam's token: ${secondToken}`,
       `  open:        http://127.0.0.1:5173/?token=${token}&server=${url}`,
       '',
     ].join('\n'),

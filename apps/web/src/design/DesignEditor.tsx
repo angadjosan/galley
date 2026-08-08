@@ -276,14 +276,21 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return;
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      // ⌘Y is redo everywhere Windows conventions reach, and the prose surface
+      // in this app has always bound it. The canvas had only ⌘Z and ⌘⇧Z, so
+      // the same keystroke worked in one half of the product and did nothing in
+      // the other.
+      const direction = key === 'z' ? (event.shiftKey ? 'redo' : 'undo') : key === 'y' ? 'redo' : null;
+      if (!direction) return;
       // A field has its own undo and it is better than this one — it works on
       // words. Taking ⌘Z away from the Words box would be a regression from
       // having no undo at all.
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
       event.preventDefault();
-      step(event.shiftKey ? 'redo' : 'undo');
+      step(direction);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

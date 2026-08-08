@@ -11,7 +11,9 @@ import { createPortal } from 'react-dom';
 import { toggleMark } from 'prosemirror-commands';
 import { EditorState, Selection, TextSelection, type Command, type Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
+import type { Node as PmNode } from 'prosemirror-model';
 import { schema } from './schema.js';
+import { REMOTE, reconcile } from './reconcile.js';
 import {
   activeBlock,
   activeBlockId,
@@ -158,6 +160,13 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
   // per document rather than once per render.
   const callbacks = useRef(props);
   callbacks.current = props;
+  /**
+   * Bumped to force a full rebuild, which is now the exception rather than the
+   * rule — see the effect below.
+   */
+  const [rebuildKey, setRebuildKey] = useState(0);
+  /** The last revision this component has dealt with, either way. */
+  const applied = useRef<number | null>(null);
   const suggestionRef = useRef<SuggestionHandlers>(props.suggestionHandlers);
   suggestionRef.current = props.suggestionHandlers;
 
@@ -254,7 +263,10 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
       dispatchTransaction(transaction: Transaction) {
         const next = editor.state.apply(transaction);
         editor.updateState(next);
-        if (transaction.docChanged && loaded.current) {
+        // A transaction carrying somebody else's edit is not a local change,
+        // and reporting it as one would send the server its own words back and
+        // mark the document dirty on arrival.
+        if (transaction.docChanged && loaded.current && !transaction.getMeta(REMOTE)) {
           callbacks.current.onChange?.(docToMarkdown(next.doc, loaded.current));
         }
         if (transaction.selectionSet || transaction.docChanged) {
@@ -280,7 +292,54 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
       callbacks.current.onStateChange?.(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.revision, requestComment]);
+  }, [rebuildKey, requestComment]);
+
+  /**
+   * A new version from the server, applied without throwing the editor away.
+   *
+   * Rebuilding is the obvious way to show a document that changed underneath
+   * you, and it costs more than it looks: a fresh `EditorState` has a fresh
+   * history plugin, so **every collaborator's keystroke used to wipe your undo
+   * stack**. It also dropped the selection, which `restoreCaret` then guessed
+   * back from a saved offset.
+   *
+   * Applying the difference as a transaction keeps the state alive — history,
+   * selection, plugin state and all. `reconcile` returns null when the two
+   * documents have nothing in common, which is a replacement rather than an
+   * edit; there is nothing worth rebasing onto that, so it rebuilds.
+   */
+  useEffect(() => {
+    if (applied.current === null || applied.current === props.revision) {
+      applied.current = props.revision;
+      return;
+    }
+    applied.current = props.revision;
+
+    const editor = view.current;
+    const next = markdownToDoc(callbacks.current.markdown);
+    const splices = editor ? reconcile(editor.state.doc, next.doc) : null;
+    if (!editor || !splices) {
+      setRebuildKey((key) => key + 1);
+      return;
+    }
+
+    // Before the dispatch: `docToMarkdown` matches `pristine` by index, so the
+    // bookkeeping has to describe the document the transaction is producing,
+    // not the one it is replacing.
+    loaded.current = next;
+    if (splices.length === 0) return;
+
+    const tr = editor.state.tr;
+    // Back to front, so each range still refers to the document its positions
+    // were measured against.
+    for (const splice of [...splices].reverse()) {
+      tr.replaceWith(splice.from, splice.to, splice.nodes as PmNode[]);
+    }
+    tr.setMeta('addToHistory', false);
+    tr.setMeta(REMOTE, true);
+    editor.dispatch(tr);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.revision]);
 
   // Highlights change often (a new note, a resolved thread) and must not
   // rebuild the document — they go in through a plugin transaction.

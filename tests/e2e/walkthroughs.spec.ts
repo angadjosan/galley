@@ -20,10 +20,11 @@ import { expect, test, type Page } from '@playwright/test';
 
 const API = 'http://127.0.0.1:8788';
 
-function tokens(): { token: string; agentToken: string } {
+function tokens(): { token: string; agentToken: string; secondToken: string } {
   return JSON.parse(readFileSync('.galley-e2e-tokens.json', 'utf8')) as {
     token: string;
     agentToken: string;
+    secondToken: string;
   };
 }
 
@@ -1217,4 +1218,141 @@ test.describe('the library', () => {
     // And the id marker is plumbing, not part of the name.
     await expect(page.locator('.doc-title', { hasText: '<!--' })).toHaveCount(0);
   });
+});
+
+/**
+ * Two people, one document, at the same time.
+ *
+ * Everything else in this file is one browser. That left the product's central
+ * claim — that this is a *shared* writing surface — asserted only at the server,
+ * where `sync.test.ts` proves the frames converge. What nobody had checked is
+ * what the two writers *see*, and the thing that was broken is only visible
+ * from here: the editor used to rebuild itself whenever a new version arrived,
+ * which threw away the undo history of whoever was not typing.
+ */
+test.describe('undo on the canvas', () => {
+  test('takes back a block, and either redo key puts it back', async ({ page }) => {
+    // The canvas bound ⌘Z and ⌘⇧Z and not ⌘Y, so the same keystroke worked in
+    // the prose half of the product and did nothing in the design half.
+    await openWorkspace(page);
+    await page.getByTestId('new-button').click();
+    await page.getByTestId('new-design').click();
+    await expect(page.getByTestId('design-palette')).toBeVisible();
+
+    await page.getByTestId('block-button').click();
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    await page.getByTestId('pane-layers').click();
+    await expect(page.locator('.design-tree-row', { hasText: 'Button' })).toHaveCount(1);
+
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(page.locator('.design-tree-row', { hasText: 'Button' })).toHaveCount(0);
+
+    await page.keyboard.press('ControlOrMeta+y');
+    await expect(page.locator('.design-tree-row', { hasText: 'Button' })).toHaveCount(1);
+
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(page.locator('.design-tree-row', { hasText: 'Button' })).toHaveCount(0);
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    await expect(page.locator('.design-tree-row', { hasText: 'Button' })).toHaveCount(1);
+
+    // And what the canvas shows is what the document says.
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    const path = (await page.locator('.doc-row .doc-item.is-selected').getAttribute('data-testid'))
+      ?.replace(/^doc-/, '');
+    expect(await readAsAgent(path!)).toContain('bg-accent');
+  });
+});
+
+test.describe('two people in one document', () => {
+  /** Open the spec as somebody, and wait until it is really on screen. */
+  async function openAs(page: Page, token: string): Promise<void> {
+    await page.goto(`/?token=${token}`);
+    await expect(page.getByTestId('doc-list')).toBeVisible();
+    await page.getByTestId('doc-specs/checkout-v2').click();
+    await expect(page.getByTestId('doc-title')).toHaveText('Checkout v2');
+    await expect(page.locator('.prose > p[data-block-id]').first()).toBeVisible();
+  }
+
+  test('each sees the other typing, and undo takes back only their own words', async ({
+    browser,
+  }) => {
+    const priya = await browser.newContext();
+    const sam = await browser.newContext();
+    try {
+      const one = await priya.newPage();
+      const two = await sam.newPage();
+      await openAs(one, tokens().token);
+      await openAs(two, tokens().secondToken);
+
+      // Priya writes into the first paragraph.
+      await caretAtEndOf(one, '.prose > p[data-block-id]');
+      await one.keyboard.type(' PRIYA-WAS-HERE.');
+      await expect(one.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+      // Sam sees it, without having reloaded anything.
+      await expect(two.locator('.prose')).toContainText('PRIYA-WAS-HERE.', { timeout: 15_000 });
+
+      // Sam writes into a different paragraph, and Priya sees that.
+      await caretAtEndOf(two, '.prose > p[data-block-id]', 1);
+      await two.keyboard.type(' SAM-WAS-HERE.');
+      await expect(two.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+      await expect(one.locator('.prose')).toContainText('SAM-WAS-HERE.', { timeout: 15_000 });
+
+      // Now the part that was broken. Priya presses undo. Her own words go;
+      // Sam's stay. Before this, the arrival of Sam's edit had rebuilt Priya's
+      // editor, so her history was empty and undo did nothing at all.
+      await one.locator('.prose').click();
+      await one.keyboard.press('ControlOrMeta+z');
+
+      await expect(one.locator('.prose')).not.toContainText('PRIYA-WAS-HERE.');
+      await expect(one.locator('.prose'), "undo reverted the other writer's edit").toContainText(
+        'SAM-WAS-HERE.',
+      );
+
+      // And that is what the document really says, for everyone.
+      await expect(one.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+      await expect(two.locator('.prose')).not.toContainText('PRIYA-WAS-HERE.', { timeout: 15_000 });
+      await expect(two.locator('.prose')).toContainText('SAM-WAS-HERE.');
+
+      const stored = await readAsAgent('specs/checkout-v2');
+      expect(stored).not.toContain('PRIYA-WAS-HERE.');
+      expect(stored).toContain('SAM-WAS-HERE.');
+    } finally {
+      await priya.close();
+      await sam.close();
+    }
+  });
+
+  test('redo puts back what undo took, with the other writer untouched', async ({ browser }) => {
+    const priya = await browser.newContext();
+    const sam = await browser.newContext();
+    try {
+      const one = await priya.newPage();
+      const two = await sam.newPage();
+      await openAs(one, tokens().token);
+      await openAs(two, tokens().secondToken);
+
+      await caretAtEndOf(one, '.prose > p[data-block-id]');
+      await one.keyboard.type(' REDO-ME.');
+      await expect(one.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+      await caretAtEndOf(two, '.prose > p[data-block-id]', 1);
+      await two.keyboard.type(' OTHER-WRITER.');
+      await expect(one.locator('.prose')).toContainText('OTHER-WRITER.', { timeout: 15_000 });
+
+      await one.locator('.prose').click();
+      await one.keyboard.press('ControlOrMeta+z');
+      await expect(one.locator('.prose')).not.toContainText('REDO-ME.');
+
+      // ⌘⇧Z and ⌘Y are the same command. Both are bound, because both are what
+      // somebody's fingers already know.
+      await one.keyboard.press('ControlOrMeta+y');
+      await expect(one.locator('.prose')).toContainText('REDO-ME.');
+      await expect(one.locator('.prose')).toContainText('OTHER-WRITER.');
+    } finally {
+      await priya.close();
+      await sam.close();
+    }
+  });
+
 });
