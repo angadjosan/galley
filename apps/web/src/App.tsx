@@ -21,7 +21,7 @@ import type {
 import type { EditorState } from 'prosemirror-state';
 import { diffToBlockOps } from '@galley/core/diff';
 import { parseDocument } from '@galley/markdown';
-import { STARTERS, embedDesign, extractDesign, type DesignStarter } from '@galley/design';
+import { STARTERS, embedDesign, extractDesign, parseDesign, type DesignStarter } from '@galley/design';
 import { Editor, type EditorHandle } from './editor/Editor.js';
 import { INSERT_TABLE, insertDesignLink, insertDiagram, insertImage } from './editor/commands.js';
 import { DIAGRAM_TEMPLATES } from './editor/diagram.js';
@@ -490,6 +490,11 @@ function Workspace({
             onToggleLibrary={() => setLibraryOpen((open) => !open)}
             onNewDocument={() => void createDocument('doc')}
             onSignOut={onSignOut}
+            onRenamed={(title) =>
+              setDocuments((list) =>
+                list.map((doc) => (doc.docId === selected ? { ...doc, title } : doc)),
+              )
+            }
             onOpenPath={(path) => {
               const target = documents.find((doc) => doc.path === path);
               if (target) {
@@ -547,6 +552,7 @@ function DocumentView({
   onNewDocument,
   onSignOut,
   onOpenPath,
+  onRenamed,
 }: {
   client: GalleyClient;
   credentials: Credentials;
@@ -558,6 +564,14 @@ function DocumentView({
   onSignOut(): void;
   /** Open another document by its path — how a design reference is followed. */
   onOpenPath(path: string): void;
+  /**
+   * A save changed the document's first heading, which is its name.
+   *
+   * The list in the sidebar is built once and refreshed on create and delete;
+   * without this it would go on showing "Untitled" after someone had typed a
+   * real title over it, until a reload.
+   */
+  onRenamed(title: string): void;
 }): JSX.Element {
   const editor = useRef<EditorHandle>(null);
   const desk = useRef<HTMLDivElement>(null);
@@ -698,11 +712,22 @@ function DocumentView({
     }
     saving.current = true;
     setSave('saving');
+    const titleBefore = titleOf(serverContent.current, path);
     try {
       const result = await client.applyOps(docId, ops);
       // The annotated form, not the clean one: the next diff has to be taken
       // against the same bytes this client holds.
       serverContent.current = result.source;
+      // A document is named by its first heading, so a save that changed that
+      // heading renamed the document, and the list in the sidebar is now wrong.
+      //
+      // The new name is handed up rather than the list being refetched. A
+      // refetch would race the server's *debounced* snapshot — the title in
+      // storage is written when the document is flushed, not when the op lands,
+      // so a list fetched immediately after a save reliably returns the old
+      // name. This client already knows the answer; it just wrote it.
+      const titleNow = titleOf(result.source, path);
+      if (titleNow !== titleBefore) onRenamed(titleNow);
       const [threads, proposals] = await Promise.all([
         client.comments(docId),
         client.suggestions(docId),
@@ -717,7 +742,7 @@ function DocumentView({
       setSave('error');
       setNotice(failure("That change couldn't be saved. It is still here — we'll keep trying.", err));
     }
-  }, [client, docId]);
+  }, [client, docId, path, onRenamed]);
 
   useEffect(() => {
     if (save !== 'dirty') return;
@@ -1101,7 +1126,15 @@ function DocumentView({
             // a title above it, notes below — is copied rather than rewritten.
             // Spliced into the newest draft, so consecutive edits compose
             // rather than each one being applied to the last saved version.
-            setDraft(embedDesign(latestDraft.current || loaded.content, source));
+            const base = latestDraft.current || loaded.content;
+            // The design's name and the document's heading are the same fact
+            // written twice — one inside the fence for the format, one above it
+            // for everything that reads Markdown, including the document list.
+            // Renaming the design on the canvas has to move both, or the
+            // sidebar goes on calling it "Untitled design" after it has one.
+            const parsedDesign = parseDesign(source);
+            const named = parsedDesign.ok ? parsedDesign.design.name : undefined;
+            setDraft(retitle(embedDesign(base, source), named));
             setSave('dirty');
           }}
           // A design *is* a document, so there is nowhere to go "back" to.
@@ -1809,6 +1842,27 @@ function titleOf(content: string, fallback: string): string {
   // The editor reads the annotated form, so the first heading may carry an id
   // marker. It is plumbing; it does not belong in the document's title.
   return heading[1]!.replace(/\s*<!--\s*\^[A-Za-z0-9_-]+\s*-->\s*$/, '').trim();
+}
+
+/**
+ * Rewrite a document's first heading, leaving everything else alone.
+ *
+ * Used when a design is renamed on the canvas: the name lives inside the fence
+ * for the format's benefit and the heading lives above it for everything that
+ * reads Markdown — the document list, `galley ls`, a pull to disk — so the two
+ * have to move together.
+ *
+ * Only the heading's *text* is replaced. The line may carry a block id marker,
+ * and that marker is the document's identity for this block: comments and
+ * citations anchor to it, so a rewrite that swallowed it would silently orphan
+ * every note on the title.
+ */
+function retitle(content: string, name: string | undefined): string {
+  if (!name?.trim()) return content;
+  return content.replace(
+    /^(#{1,6}[ \t]+)(.+?)([ \t]*<!--\s*\^[A-Za-z0-9_-]+\s*-->)?$/m,
+    (_whole, hashes: string, _text: string, marker?: string) => `${hashes}${name.trim()}${marker ?? ''}`,
+  );
 }
 
 /**

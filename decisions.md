@@ -1937,3 +1937,66 @@ the frame's name is already in the markup it can read.
 One builds strings for a package with no browser dependency; the other builds
 DOM for a ProseMirror decoration. A shared node-factory abstraction would be
 longer than either of them.
+
+---
+
+## D64 — A document is named by its heading, and that has to keep being true
+
+**Context:** the app has no rename command anywhere, on purpose — "the title is
+right there to type over" is the whole affordance, and it is why creating a
+document shows no naming dialog. Driving the app as a first-timer showed the
+promise was not kept: a document created as *Untitled*, given a real heading and
+saved, stayed **"Untitled" in the sidebar forever**.
+
+The cause was one `??`. `Workspace.create` stamps a title into the document's
+metadata — derived from the content when none is given — so
+`document.title ?? deriveTitle(markdown)` read behind a value that was always
+set. The fallback never ran. The title was frozen at creation for the life of
+the document.
+
+**Decision:** the heading wins whenever there is one. `deriveTitle` takes the
+stored title as a *fallback*, for a document with no heading at all — an
+importer's explicit title — and the path's last segment when there is neither.
+
+**Two consequences that were each a second bug.**
+
+- **The marker had to be stripped.** This used to run only at create time,
+  against the clean source an author sent. Running it on *persist* means running
+  it on the annotated form, and the first renamed document appeared in the list
+  as `Grocery list <!-- ^notesli0 -->`.
+- **The client cannot refetch the list to find out.** The title in storage is
+  written when the document is *flushed*, and flushing is debounced — so a list
+  fetched immediately after a save reliably returns the old name. The new title
+  is handed up from the save instead. The client already knows it; it just wrote
+  it. No request, no race.
+
+---
+
+## D65 — A design is renamed by typing over its name, in both places at once
+
+**Context:** the design canvas showed the design's name as an `<h2>`. It was the
+one thing about a design that could not be changed from the canvas at all, and
+with `New → Design` making creation easy, a workspace filled up with documents
+indistinguishably called "Untitled design".
+
+**Decision:** the name is a field that reads as a heading — no border until you
+go near it — and renaming moves the name in **both** places it is written.
+
+A design document says its name twice: `<design name="…">` inside the fence, for
+the format, and `# …` above it, for everything that reads Markdown — the
+document list, `galley ls`, a pull to disk. They are the same fact, so they move
+together. The heading rewrite replaces only the heading's *text* and preserves
+any block id marker on the line: that marker is the block's identity, and
+swallowing it would silently orphan every comment anchored to the title.
+
+**`rename` is an op, not a special case.** It is the only one with no `id` —
+its target is the document rather than anything in it — and it earns its place
+for the reason the whole vocabulary exists: the canvas and an agent speak one
+language, so a rename is undoable, attributable and reviewable for free. A
+rename done outside the ops would have been the one edit that is none of those.
+
+**The field holds a draft while it is being typed in.** Bound straight to
+`design.name` it could never be cleared: the op refuses a blank name, so the
+first backspace that emptied the field would be rejected and the old name would
+spring back mid-word. An empty field on blur is a half-finished rename, not a
+request to have no name, so the design keeps what it had.

@@ -725,3 +725,65 @@ describe('deleting a document', () => {
     expect(entry?.detail).toBe('specs/checkout-v2');
   });
 });
+
+describe('what a document is called', () => {
+  it('follows the heading, so retitling is typing over the title', async () => {
+    const h = await open();
+    const created = await h.json<{ docId: string }>('/v1/docs', {
+      method: 'POST',
+      body: JSON.stringify({ path: 'notes/list', content: '# Untitled\n\nSomething.\n' }),
+    });
+    const actor = await h.server.workspace.openDocument(created.docId);
+    const headingId = actor.document.parsed().blocks[0]?.id ?? '@0';
+    await h.json(`/v1/docs/${created.docId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ops: [{ kind: 'replace', target: headingId, markdown: '# Grocery list' }],
+      }),
+    });
+    await h.server.workspace.persist(created.docId, true);
+
+    const { documents } = await h.json<{ documents: { path: string; title: string }[] }>('/v1/docs');
+    expect(documents.find((d) => d.path === 'notes/list')?.title).toBe('Grocery list');
+  });
+
+  it('keeps an explicitly given title for a document with no heading at all', async () => {
+    const h = await open();
+    const created = await h.json<{ docId: string }>('/v1/docs', {
+      method: 'POST',
+      body: JSON.stringify({ path: 'notes/bare', content: 'Just a line.\n', title: 'Imported' }),
+    });
+    await h.server.workspace.persist(created.docId, true);
+
+    const { documents } = await h.json<{ documents: { path: string; title: string }[] }>('/v1/docs');
+    expect(documents.find((d) => d.path === 'notes/bare')?.title).toBe('Imported');
+  });
+});
+
+describe('a title is not plumbing', () => {
+  it('keeps the block id marker out of the name', async () => {
+    // Titles are derived on every persist now, and by then the heading carries
+    // its block id. Before this was handled, a renamed document showed up in
+    // the list as `Grocery list <!-- ^notesli0 -->`.
+    const h = await open();
+    const created = await h.json<{ docId: string }>('/v1/docs', {
+      method: 'POST',
+      body: JSON.stringify({ path: 'notes/list', content: '# Shopping\n\nMilk.\n' }),
+    });
+    const actor = await h.server.workspace.openDocument(created.docId);
+    // Give the heading a durable id, which is what a comment on it would do.
+    const headingId = actor.document.parsed().blocks[0]?.id ?? '@0';
+    await h.json(`/v1/docs/${created.docId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ops: [{ kind: 'materialize', target: headingId, id: 'notesli0' }],
+      }),
+    });
+    await h.server.workspace.persist(created.docId, true);
+
+    const { documents } = await h.json<{ documents: { path: string; title: string }[] }>('/v1/docs');
+    const title = documents.find((d) => d.path === 'notes/list')?.title;
+    expect(title).toBe('Shopping');
+    expect(title).not.toContain('<!--');
+  });
+});

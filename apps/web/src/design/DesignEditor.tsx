@@ -105,6 +105,8 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
   const [mode, setMode] = useState('light');
   /** Which of the left pane's two jobs is showing. Adding, by default. */
   const [pane, setPane] = useState<'add' | 'layers'>('add');
+  /** The name field's contents while it is being typed in. Null when it is not. */
+  const [typing, setTyping] = useState<string | null>(null);
   /**
    * Which state the canvas is showing, and which one the inspector writes to.
    *
@@ -423,7 +425,38 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
   return (
     <div className="design-editor" data-testid="design-editor">
       <header className="design-editor-head">
-        <h2>{design?.name ?? 'Design'}</h2>
+        {/*
+          The name is typed over, not renamed through a dialog — the same
+          bargain the prose surface makes with its first heading, and the reason
+          neither has a rename command. It was the one thing about a design you
+          could not change from the canvas, so a workspace filled up with
+          documents all called "Untitled design".
+        */}
+        <input
+          className="design-editor-name"
+          // The field holds a draft while it is being typed in, and the design
+          // otherwise. Bound straight to `design.name` it could never be
+          // cleared: the op refuses a blank name, so the first backspace that
+          // emptied the field would be rejected and the old name would spring
+          // back mid-word.
+          value={typing ?? design?.name ?? 'Design'}
+          readOnly={props.readOnly}
+          aria-label="What this design is called"
+          data-testid="design-name"
+          onChange={(event) => {
+            const next = event.target.value;
+            setTyping(next);
+            if (next.trim()) run([{ op: 'rename', name: next }]);
+          }}
+          // Leaving an empty field is not a request to have no name; it is a
+          // half-finished rename. The design keeps the name it had.
+          onBlur={() => setTyping(null)}
+          // A name is one line. Enter means "done", and the canvas is where the
+          // hand was going next.
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === 'Escape') event.currentTarget.blur();
+          }}
+        />
         <div className="design-editor-actions">
           <div className="design-mode-switch" role="group" aria-label="State">
             <button
@@ -698,12 +731,20 @@ const KIND_GLYPH: Record<string, string> = { box: '▢', text: 'T', image: '🖼
 const UNDO_DEPTH = 100;
 
 /** Ops that a run of keystrokes produces, and that should collapse into one step. */
-const COALESCING = new Set(['set-text', 'set-name', 'set-image', 'set-classes']);
+const COALESCING = new Set(['set-text', 'set-name', 'set-image', 'set-classes', 'rename']);
 
 /** Long enough to cover typing, short enough that a pause is a new step. */
 const COALESCE_MS = 700;
 
+/**
+ * What an op is *about*, for the purpose of collapsing a run of them.
+ *
+ * `rename` is the one op with no target inside the design — it renames the
+ * design — so it answers with a constant. There is only one document, so every
+ * rename is about the same thing and a run of keystrokes collapses correctly.
+ */
 function idOf(op: DesignOp): string {
+  if (op.op === 'rename') return ':design';
   return 'id' in op ? op.id : `${op.parent}:${op.index}`;
 }
 

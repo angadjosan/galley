@@ -2677,6 +2677,37 @@ kbd {
   font-weight: 600;
 }
 
+/**
+ * The name, which is a field that does not look like one until you go near it.
+ *
+ * Same bargain the document title makes: it reads as a heading, and the border
+ * only appears on hover and focus. A field with a permanent box around it says
+ * "fill this in", which is the wrong instruction for something that already has
+ * an answer.
+ */
+.design-editor-name {
+  min-width: 0;
+  width: 22ch;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-card);
+  font-weight: 600;
+}
+
+.design-editor-name:hover:not(:read-only) {
+  border-color: var(--line);
+}
+
+.design-editor-name:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--page);
+}
+
 .design-editor-actions {
   display: flex;
   gap: 6px;

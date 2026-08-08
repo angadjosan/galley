@@ -2,7 +2,7 @@ import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-run
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, } from 'react';
 import { diffToBlockOps } from '@galley/core/diff';
 import { parseDocument } from '@galley/markdown';
-import { STARTERS, embedDesign, extractDesign } from '@galley/design';
+import { STARTERS, embedDesign, extractDesign, parseDesign } from '@galley/design';
 import { Editor } from './editor/Editor.js';
 import { INSERT_TABLE, insertDesignLink, insertDiagram, insertImage } from './editor/commands.js';
 import { DIAGRAM_TEMPLATES } from './editor/diagram.js';
@@ -231,7 +231,7 @@ function Workspace({ credentials, onSignOut, }) {
                                 }, children: [_jsx("span", { className: "doc-title", children: hit.heading || prettyName(hit.path) }), _jsx("span", { className: "hit-snippet", children: hit.snippet })] }, hit.ref)))] })) : (_jsx("nav", { className: "doc-list", "data-testid": "doc-list", children: grouped.map(([folder, docs]) => (_jsxs("div", { className: "folder", children: [_jsx("div", { className: "folder-label", children: folder ? prettyName(folder) : 'No folder' }), docs.map((doc) => doc.docId === confirmingDelete ? (_jsxs("div", { className: "doc-row is-confirming", children: [_jsxs("span", { className: "doc-confirm-text", children: ["Delete \u201C", doc.title, "\u201D?"] }), _jsx("button", { className: "doc-confirm-yes", onClick: () => void deleteDocument(doc), "data-testid": `confirm-delete-${doc.path}`, children: "Delete" }), _jsx("button", { className: "doc-confirm-no", onClick: () => setConfirmingDelete(null), "aria-label": "Keep this document", children: "Cancel" })] }, doc.docId)) : (_jsxs("div", { className: "doc-row", children: [_jsx("button", { className: `doc-item ${doc.docId === selected ? 'is-selected' : ''}`, onClick: () => {
                                                 setSelected(doc.docId);
                                                 setLibraryOpen(false);
-                                            }, "data-testid": `doc-${doc.path}`, children: _jsx("span", { className: "doc-title", children: doc.title }) }), _jsx("button", { className: "doc-delete", onClick: () => setConfirmingDelete(doc.docId), title: `Delete ${doc.title}`, "aria-label": `Delete ${doc.title}`, "data-testid": `delete-${doc.path}`, children: _jsx(TrashIcon, {}) })] }, doc.docId)))] }, folder))) })), _jsxs("div", { className: "library-foot", children: [_jsxs("div", { className: "new-doc-wrap", children: [creatingOpen && (_jsxs("div", { className: "new-doc-menu", "data-testid": "new-menu", children: [_jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('doc'), children: [_jsx(DocumentIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Document" }), _jsx("em", { children: "Words, in a page" })] })] }), _jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('design'), "data-testid": "new-design", children: [_jsx(DesignIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Design" }), _jsx("em", { children: "A screen, on a canvas" })] })] })] })), _jsxs("button", { className: "new-doc", onClick: () => setCreatingOpen((open) => !open), "aria-expanded": creatingOpen, "data-testid": "new-button", children: [_jsx("span", { "aria-hidden": "true", children: "+" }), " New"] })] }), _jsx("button", { className: "link-quiet", onClick: onSignOut, children: "Sign out" })] })] }), _jsx("button", { className: "scrim", "aria-label": "Close the document list", tabIndex: libraryOpen ? 0 : -1, onClick: () => setLibraryOpen(false) }), _jsxs("div", { className: "main-column", children: [error && _jsx("div", { className: "banner error", children: error }), selected && current ? (_jsx(DocumentView, { client: client, credentials: credentials, docId: selected, path: current.path, people: people, onToggleLibrary: () => setLibraryOpen((open) => !open), onNewDocument: () => void createDocument('doc'), onSignOut: onSignOut, onOpenPath: (path) => {
+                                            }, "data-testid": `doc-${doc.path}`, children: _jsx("span", { className: "doc-title", children: doc.title }) }), _jsx("button", { className: "doc-delete", onClick: () => setConfirmingDelete(doc.docId), title: `Delete ${doc.title}`, "aria-label": `Delete ${doc.title}`, "data-testid": `delete-${doc.path}`, children: _jsx(TrashIcon, {}) })] }, doc.docId)))] }, folder))) })), _jsxs("div", { className: "library-foot", children: [_jsxs("div", { className: "new-doc-wrap", children: [creatingOpen && (_jsxs("div", { className: "new-doc-menu", "data-testid": "new-menu", children: [_jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('doc'), children: [_jsx(DocumentIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Document" }), _jsx("em", { children: "Words, in a page" })] })] }), _jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('design'), "data-testid": "new-design", children: [_jsx(DesignIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Design" }), _jsx("em", { children: "A screen, on a canvas" })] })] })] })), _jsxs("button", { className: "new-doc", onClick: () => setCreatingOpen((open) => !open), "aria-expanded": creatingOpen, "data-testid": "new-button", children: [_jsx("span", { "aria-hidden": "true", children: "+" }), " New"] })] }), _jsx("button", { className: "link-quiet", onClick: onSignOut, children: "Sign out" })] })] }), _jsx("button", { className: "scrim", "aria-label": "Close the document list", tabIndex: libraryOpen ? 0 : -1, onClick: () => setLibraryOpen(false) }), _jsxs("div", { className: "main-column", children: [error && _jsx("div", { className: "banner error", children: error }), selected && current ? (_jsx(DocumentView, { client: client, credentials: credentials, docId: selected, path: current.path, people: people, onToggleLibrary: () => setLibraryOpen((open) => !open), onNewDocument: () => void createDocument('doc'), onSignOut: onSignOut, onRenamed: (title) => setDocuments((list) => list.map((doc) => (doc.docId === selected ? { ...doc, title } : doc))), onOpenPath: (path) => {
                             const target = documents.find((doc) => doc.path === path);
                             if (target) {
                                 setSelected(target.docId);
@@ -251,7 +251,7 @@ function FirstRun({ onCreate }) {
     return (_jsx("div", { className: "desk", children: _jsx("div", { className: "spread", children: _jsxs("main", { className: "page page-empty", children: [_jsx("h1", { children: "Start a document" }), _jsx("p", { children: "Write the way you always do. Galley keeps it in a format your agents can read, cite, and suggest edits to." }), _jsx("button", { className: "primary", onClick: onCreate, children: "Blank document" })] }) }) }));
 }
 // ---------------------------------------------------------------------------
-function DocumentView({ client, credentials, docId, path, people, onToggleLibrary, onNewDocument, onSignOut, onOpenPath, }) {
+function DocumentView({ client, credentials, docId, path, people, onToggleLibrary, onNewDocument, onSignOut, onOpenPath, onRenamed, }) {
     const editor = useRef(null);
     const desk = useRef(null);
     const lane = useRef(null);
@@ -382,11 +382,23 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
         }
         saving.current = true;
         setSave('saving');
+        const titleBefore = titleOf(serverContent.current, path);
         try {
             const result = await client.applyOps(docId, ops);
             // The annotated form, not the clean one: the next diff has to be taken
             // against the same bytes this client holds.
             serverContent.current = result.source;
+            // A document is named by its first heading, so a save that changed that
+            // heading renamed the document, and the list in the sidebar is now wrong.
+            //
+            // The new name is handed up rather than the list being refetched. A
+            // refetch would race the server's *debounced* snapshot — the title in
+            // storage is written when the document is flushed, not when the op lands,
+            // so a list fetched immediately after a save reliably returns the old
+            // name. This client already knows the answer; it just wrote it.
+            const titleNow = titleOf(result.source, path);
+            if (titleNow !== titleBefore)
+                onRenamed(titleNow);
             const [threads, proposals] = await Promise.all([
                 client.comments(docId),
                 client.suggestions(docId),
@@ -402,7 +414,7 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
             setSave('error');
             setNotice(failure("That change couldn't be saved. It is still here — we'll keep trying.", err));
         }
-    }, [client, docId]);
+    }, [client, docId, path, onRenamed]);
     useEffect(() => {
         if (save !== 'dirty')
             return;
@@ -704,7 +716,15 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
                             // a title above it, notes below — is copied rather than rewritten.
                             // Spliced into the newest draft, so consecutive edits compose
                             // rather than each one being applied to the last saved version.
-                            setDraft(embedDesign(latestDraft.current || loaded.content, source));
+                            const base = latestDraft.current || loaded.content;
+                            // The design's name and the document's heading are the same fact
+                            // written twice — one inside the fence for the format, one above it
+                            // for everything that reads Markdown, including the document list.
+                            // Renaming the design on the canvas has to move both, or the
+                            // sidebar goes on calling it "Untitled design" after it has one.
+                            const parsedDesign = parseDesign(source);
+                            const named = parsedDesign.ok ? parsedDesign.design.name : undefined;
+                            setDraft(retitle(embedDesign(base, source), named));
                             setSave('dirty');
                         }, 
                         // A design *is* a document, so there is nowhere to go "back" to.
@@ -950,6 +970,24 @@ function titleOf(content, fallback) {
     // The editor reads the annotated form, so the first heading may carry an id
     // marker. It is plumbing; it does not belong in the document's title.
     return heading[1].replace(/\s*<!--\s*\^[A-Za-z0-9_-]+\s*-->\s*$/, '').trim();
+}
+/**
+ * Rewrite a document's first heading, leaving everything else alone.
+ *
+ * Used when a design is renamed on the canvas: the name lives inside the fence
+ * for the format's benefit and the heading lives above it for everything that
+ * reads Markdown — the document list, `galley ls`, a pull to disk — so the two
+ * have to move together.
+ *
+ * Only the heading's *text* is replaced. The line may carry a block id marker,
+ * and that marker is the document's identity for this block: comments and
+ * citations anchor to it, so a rewrite that swallowed it would silently orphan
+ * every note on the title.
+ */
+function retitle(content, name) {
+    if (!name?.trim())
+        return content;
+    return content.replace(/^(#{1,6}[ \t]+)(.+?)([ \t]*<!--\s*\^[A-Za-z0-9_-]+\s*-->)?$/m, (_whole, hashes, _text, marker) => `${hashes}${name.trim()}${marker ?? ''}`);
 }
 /**
  * What a proposed block would *read* as.

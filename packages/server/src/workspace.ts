@@ -374,7 +374,7 @@ export class Workspace {
                   docId,
                   workspaceId: this.workspaceId,
                   path: entry.path,
-                  title: entry.actor.document.title ?? deriveTitle(markdown, entry.path),
+                  title: deriveTitle(markdown, entry.path, entry.actor.document.title),
                   ownerId: entry.actor.document.owner ?? null,
                   snapshot,
                   updatedAt: new Date().toISOString(),
@@ -678,8 +678,31 @@ export function normalizePath(path: string, allowEmpty = false): string {
   return segments.join('/');
 }
 
-function deriveTitle(source: string, fallback: string): string {
+/**
+ * What to call a document.
+ *
+ * **The heading wins, every time it exists.** The app has no rename dialog on
+ * purpose — "the title is right there to type over" is the whole affordance —
+ * so a stored title that outranks the heading makes that affordance a lie. It
+ * was one: `create` stamps a title into the document's metadata, so the `??`
+ * this used to be read behind never fell through, and a document created as
+ * Untitled and then given a real heading stayed "Untitled" in the list forever.
+ *
+ * `stored` is the fallback for a document with no heading at all — an explicit
+ * title passed to `create` by an importer, say — and the path's last segment is
+ * the fallback for having neither.
+ */
+function deriveTitle(source: string, fallback: string, stored?: string): string {
   const heading = /^#{1,6}\s+(.+)$/m.exec(source);
-  if (heading) return heading[1]!.trim();
+  if (heading) {
+    // The marker is stripped, because by the time this runs on a *persist* the
+    // heading is the annotated form and carries the block's id. This used to
+    // run only at create time, against the clean source an author sent, so
+    // there was nothing to strip — and the first document renamed after that
+    // changed appeared in the list as `Grocery list <!-- ^notesli0 -->`.
+    const title = heading[1]!.replace(/\s*<!--\s*\^[A-Za-z0-9_-]+\s*-->\s*$/, '').trim();
+    if (title) return title;
+  }
+  if (stored) return stored;
   return fallback.split('/').pop() ?? fallback;
 }

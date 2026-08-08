@@ -1096,4 +1096,48 @@ test.describe('the library', () => {
     expect(source).toContain('hover:bg-accent-hover');
     expect(source).toContain('Continue');
   });
+
+  test('a design is renamed by typing over its name, and the list follows', async ({ page }) => {
+    // The one thing about a design you could not change from the canvas. A
+    // workspace filled up with documents all called "Untitled design".
+    await openWorkspace(page);
+    await page.getByTestId('new-button').click();
+    await page.getByTestId('new-design').click();
+    await expect(page.getByTestId('design-name')).toHaveValue('Untitled design');
+
+    await page.getByTestId('design-name').fill('Sign in');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    // The breadcrumb and the sidebar are the same fact seen twice, and both
+    // read the document's heading rather than the design's name attribute.
+    await expect(page.getByTestId('doc-title')).toHaveText('Sign in');
+    await expect(page.locator('.doc-title', { hasText: 'Sign in' }).first()).toBeVisible();
+
+    // The name moved in both places it is written: inside the fence for the
+    // format, and above it as the heading everything else reads.
+    const path = (await page.locator('.doc-row .doc-item.is-selected').getAttribute('data-testid'))
+      ?.replace(/^doc-/, '');
+    const source = await readAsAgent(path!);
+    expect(source).toContain('# Sign in');
+    expect(source).toContain('<design name="Sign in">');
+    expect(source).not.toContain('Untitled design');
+  });
+
+  test('typing a real heading renames a document in the list', async ({ page }) => {
+    // There is no rename command anywhere in this app on purpose: the title is
+    // right there to type over. That was a promise the list did not keep — a
+    // document created as Untitled stayed Untitled in the sidebar forever.
+    await openWorkspace(page);
+    await page.getByTestId('new-button').click();
+    await page.getByRole('button', { name: 'Document Words, in a page' }).click();
+    await expect(page.getByTestId('doc-title')).toHaveText('Untitled');
+
+    await selectContentsOf(page, '.prose h1');
+    await page.keyboard.type('Grocery list');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    await expect(page.locator('.doc-title', { hasText: 'Grocery list' }).first()).toBeVisible();
+    // And the id marker is plumbing, not part of the name.
+    await expect(page.locator('.doc-title', { hasText: '<!--' })).toHaveCount(0);
+  });
 });

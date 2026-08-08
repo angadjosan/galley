@@ -48,6 +48,8 @@ export function DesignEditor(props) {
     const [mode, setMode] = useState('light');
     /** Which of the left pane's two jobs is showing. Adding, by default. */
     const [pane, setPane] = useState('add');
+    /** The name field's contents while it is being typed in. Null when it is not. */
+    const [typing, setTyping] = useState(null);
     /**
      * Which state the canvas is showing, and which one the inspector writes to.
      *
@@ -341,7 +343,27 @@ export function DesignEditor(props) {
             setSelection({ focus: focusFor(moved, landed), ids: [landed] });
         }
     }, [run]);
-    return (_jsxs("div", { className: "design-editor", "data-testid": "design-editor", children: [_jsxs("header", { className: "design-editor-head", children: [_jsx("h2", { children: design?.name ?? 'Design' }), _jsxs("div", { className: "design-editor-actions", children: [_jsxs("div", { className: "design-mode-switch", role: "group", "aria-label": "State", children: [_jsx("button", { type: "button", className: state === null ? 'is-on' : '', "aria-pressed": state === null, onClick: () => setState(null), children: "Default" }), STATES.map((name) => (_jsx("button", { type: "button", className: state === name ? 'is-on' : '', "aria-pressed": state === name, onClick: () => setState(name), children: name === 'press' ? 'Pressed' : name[0].toUpperCase() + name.slice(1) }, name)))] }), _jsx("div", { className: "design-mode-switch", role: "group", "aria-label": "Mode", children: MODES.map((name) => (_jsx("button", { type: "button", className: mode === name ? 'is-on' : '', "aria-pressed": mode === name, onClick: () => setMode(name), children: name === 'light' ? 'Light' : 'Dark' }, name))) }), _jsx("button", { type: "button", className: `chrome-button ${showSource ? 'is-on' : ''}`, "aria-pressed": showSource, onClick: () => setShowSource((on) => !on), children: "Source" })] })] }), !parsed.ok && (_jsxs("div", { className: "design-errors", role: "alert", children: [_jsx("p", { children: "This design could not be read." }), _jsx("ul", { children: parsed.errors.slice(0, 8).map((error, index) => (_jsxs("li", { children: [_jsxs("span", { className: "design-error-line", children: ["Line ", error.line] }), " ", error.message] }, index))) })] })), _jsxs("div", { className: "design-editor-body", children: [_jsxs("aside", { className: "design-side", "aria-label": "Add and layers", children: [_jsxs("div", { className: "design-side-switch", role: "group", "aria-label": "Panel", children: [_jsx("button", { type: "button", className: pane === 'add' ? 'is-on' : '', "aria-pressed": pane === 'add', onClick: () => setPane('add'), "data-testid": "pane-add", children: "Add" }), _jsx("button", { type: "button", className: pane === 'layers' ? 'is-on' : '', "aria-pressed": pane === 'layers', onClick: () => setPane('layers'), "data-testid": "pane-layers", children: "Layers" })] }), pane === 'add' && (_jsx(Palette, { mode: mode, disabled: props.readOnly === true, onAdd: (block) => add(block.layer) })), pane === 'layers' && (_jsxs("div", { className: "design-tree", children: [(design?.components ?? []).length > 0 && (_jsx("p", { className: "design-tree-heading", children: "Components" })), (design?.components ?? []).flatMap((component) => componentRows(component).map(({ layer, depth }) => (_jsxs("button", { type: "button", className: `design-tree-row ${selection.ids.includes(layer.id) ? 'is-selected' : ''} ${selection.focus === layer.id ? 'is-focus' : ''}`, style: { paddingLeft: 10 + depth * 14 }, onClick: (event) => reveal(layer.id, event.shiftKey || event.metaKey || event.ctrlKey), children: [_jsx("span", { className: "design-tree-kind", "aria-hidden": "true", children: depth === 0 ? '◈' : KIND_GLYPH[layer.kind] }), _jsx("span", { className: "design-tree-name", children: depth === 0 ? component.name : layer.name })] }, layer.id)))), (design?.components ?? []).length > 0 && _jsx("p", { className: "design-tree-heading", children: "Layers" }), layers.map(({ layer, depth }) => (_jsxs("button", { type: "button", className: `design-tree-row ${selection.ids.includes(layer.id) ? 'is-selected' : ''} ${selection.focus === layer.id ? 'is-focus' : ''} ${findings.some((f) => f.layerId === layer.id) ? 'has-problem' : ''}`, style: { paddingLeft: 10 + depth * 14 }, onClick: (event) => reveal(layer.id, event.shiftKey || event.metaKey || event.ctrlKey), children: [_jsx("span", { className: "design-tree-kind", "aria-hidden": "true", children: 'kind' in layer ? KIND_GLYPH[layer.kind] : '▦' }), _jsx("span", { className: "design-tree-name", children: layer.name }), props.anchored?.has(layer.id) && (_jsx("span", { className: "design-tree-anchor", title: "Something is anchored here", children: "\u25CF" }))] }, layer.id)))] }))] }), _jsxs("div", { className: "design-canvas", children: [design && selection.focus && (
+    return (_jsxs("div", { className: "design-editor", "data-testid": "design-editor", children: [_jsxs("header", { className: "design-editor-head", children: [_jsx("input", { className: "design-editor-name", 
+                        // The field holds a draft while it is being typed in, and the design
+                        // otherwise. Bound straight to `design.name` it could never be
+                        // cleared: the op refuses a blank name, so the first backspace that
+                        // emptied the field would be rejected and the old name would spring
+                        // back mid-word.
+                        value: typing ?? design?.name ?? 'Design', readOnly: props.readOnly, "aria-label": "What this design is called", "data-testid": "design-name", onChange: (event) => {
+                            const next = event.target.value;
+                            setTyping(next);
+                            if (next.trim())
+                                run([{ op: 'rename', name: next }]);
+                        }, 
+                        // Leaving an empty field is not a request to have no name; it is a
+                        // half-finished rename. The design keeps the name it had.
+                        onBlur: () => setTyping(null), 
+                        // A name is one line. Enter means "done", and the canvas is where the
+                        // hand was going next.
+                        onKeyDown: (event) => {
+                            if (event.key === 'Enter' || event.key === 'Escape')
+                                event.currentTarget.blur();
+                        } }), _jsxs("div", { className: "design-editor-actions", children: [_jsxs("div", { className: "design-mode-switch", role: "group", "aria-label": "State", children: [_jsx("button", { type: "button", className: state === null ? 'is-on' : '', "aria-pressed": state === null, onClick: () => setState(null), children: "Default" }), STATES.map((name) => (_jsx("button", { type: "button", className: state === name ? 'is-on' : '', "aria-pressed": state === name, onClick: () => setState(name), children: name === 'press' ? 'Pressed' : name[0].toUpperCase() + name.slice(1) }, name)))] }), _jsx("div", { className: "design-mode-switch", role: "group", "aria-label": "Mode", children: MODES.map((name) => (_jsx("button", { type: "button", className: mode === name ? 'is-on' : '', "aria-pressed": mode === name, onClick: () => setMode(name), children: name === 'light' ? 'Light' : 'Dark' }, name))) }), _jsx("button", { type: "button", className: `chrome-button ${showSource ? 'is-on' : ''}`, "aria-pressed": showSource, onClick: () => setShowSource((on) => !on), children: "Source" })] })] }), !parsed.ok && (_jsxs("div", { className: "design-errors", role: "alert", children: [_jsx("p", { children: "This design could not be read." }), _jsx("ul", { children: parsed.errors.slice(0, 8).map((error, index) => (_jsxs("li", { children: [_jsxs("span", { className: "design-error-line", children: ["Line ", error.line] }), " ", error.message] }, index))) })] })), _jsxs("div", { className: "design-editor-body", children: [_jsxs("aside", { className: "design-side", "aria-label": "Add and layers", children: [_jsxs("div", { className: "design-side-switch", role: "group", "aria-label": "Panel", children: [_jsx("button", { type: "button", className: pane === 'add' ? 'is-on' : '', "aria-pressed": pane === 'add', onClick: () => setPane('add'), "data-testid": "pane-add", children: "Add" }), _jsx("button", { type: "button", className: pane === 'layers' ? 'is-on' : '', "aria-pressed": pane === 'layers', onClick: () => setPane('layers'), "data-testid": "pane-layers", children: "Layers" })] }), pane === 'add' && (_jsx(Palette, { mode: mode, disabled: props.readOnly === true, onAdd: (block) => add(block.layer) })), pane === 'layers' && (_jsxs("div", { className: "design-tree", children: [(design?.components ?? []).length > 0 && (_jsx("p", { className: "design-tree-heading", children: "Components" })), (design?.components ?? []).flatMap((component) => componentRows(component).map(({ layer, depth }) => (_jsxs("button", { type: "button", className: `design-tree-row ${selection.ids.includes(layer.id) ? 'is-selected' : ''} ${selection.focus === layer.id ? 'is-focus' : ''}`, style: { paddingLeft: 10 + depth * 14 }, onClick: (event) => reveal(layer.id, event.shiftKey || event.metaKey || event.ctrlKey), children: [_jsx("span", { className: "design-tree-kind", "aria-hidden": "true", children: depth === 0 ? '◈' : KIND_GLYPH[layer.kind] }), _jsx("span", { className: "design-tree-name", children: depth === 0 ? component.name : layer.name })] }, layer.id)))), (design?.components ?? []).length > 0 && _jsx("p", { className: "design-tree-heading", children: "Layers" }), layers.map(({ layer, depth }) => (_jsxs("button", { type: "button", className: `design-tree-row ${selection.ids.includes(layer.id) ? 'is-selected' : ''} ${selection.focus === layer.id ? 'is-focus' : ''} ${findings.some((f) => f.layerId === layer.id) ? 'has-problem' : ''}`, style: { paddingLeft: 10 + depth * 14 }, onClick: (event) => reveal(layer.id, event.shiftKey || event.metaKey || event.ctrlKey), children: [_jsx("span", { className: "design-tree-kind", "aria-hidden": "true", children: 'kind' in layer ? KIND_GLYPH[layer.kind] : '▦' }), _jsx("span", { className: "design-tree-name", children: layer.name }), props.anchored?.has(layer.id) && (_jsx("span", { className: "design-tree-anchor", title: "Something is anchored here", children: "\u25CF" }))] }, layer.id)))] }))] }), _jsxs("div", { className: "design-canvas", children: [design && selection.focus && (
                             /**
                              * Where you are, and the way back out.
                              *
@@ -378,10 +400,19 @@ const KIND_GLYPH = { box: '▢', text: 'T', image: '🖼' };
  */
 const UNDO_DEPTH = 100;
 /** Ops that a run of keystrokes produces, and that should collapse into one step. */
-const COALESCING = new Set(['set-text', 'set-name', 'set-image', 'set-classes']);
+const COALESCING = new Set(['set-text', 'set-name', 'set-image', 'set-classes', 'rename']);
 /** Long enough to cover typing, short enough that a pause is a new step. */
 const COALESCE_MS = 700;
+/**
+ * What an op is *about*, for the purpose of collapsing a run of them.
+ *
+ * `rename` is the one op with no target inside the design — it renames the
+ * design — so it answers with a constant. There is only one document, so every
+ * rename is about the same thing and a run of keystrokes collapses correctly.
+ */
 function idOf(op) {
+    if (op.op === 'rename')
+        return ':design';
     return 'id' in op ? op.id : `${op.parent}:${op.index}`;
 }
 /** The modes every theme has. Adding a third axis is refused — see the theme. */
