@@ -366,59 +366,6 @@ kbd {
   color: var(--danger);
 }
 
-/**
- * The confirmation replaces the row rather than floating over it.
- *
- * A dialog would ask "delete this?" somewhere other than the thing being
- * deleted, and would need its own dismissal. Replacing the row keeps the
- * question exactly where the answer is, and the list cannot scroll out from
- * under it.
- */
-.doc-row.is-confirming {
-  gap: 6px;
-  padding: 5px 8px;
-  border-radius: var(--r-sm);
-  background: var(--danger-tint);
-}
-
-.doc-confirm-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-small);
-  color: var(--danger);
-}
-
-.doc-confirm-yes,
-.doc-confirm-no {
-  flex: none;
-  border: none;
-  border-radius: var(--r-sm);
-  padding: 3px 8px;
-  font-size: var(--fs-small);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-/* Ink is `--page`, not white: in dark mode `--danger` is a pale pink, and white
-   text on it is unreadable. `--page` inverts with the theme, so the label stays
-   the opposite of its background in both. */
-.doc-confirm-yes {
-  background: var(--danger);
-  color: var(--page);
-}
-
-.doc-confirm-no {
-  background: none;
-  color: var(--text-2);
-}
-
-.doc-confirm-no:hover {
-  background: var(--surface-2);
-}
-
 .doc-item {
   display: flex;
   flex-direction: column;
@@ -3718,4 +3665,120 @@ kbd {
   top: 0;
   left: 0;
   transform-origin: 0 0;
+}
+
+/* ------------------------------------------------------- delete and trash */
+
+/**
+ * The two buttons a confirmation offers.
+ *
+ * `quiet` is the safe one and `danger` is the destructive one, and the safe one
+ * is the one that looks like the default — it is what the dialog focuses, and
+ * the visual weight has to agree with the focus or the dialog is arguing with
+ * itself.
+ */
+.overlay-actions .quiet,
+.overlay-actions .danger,
+.trash-row .quiet,
+.trash-row .danger {
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: var(--fs-ui);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.overlay-actions .quiet,
+.trash-row .quiet {
+  background: var(--page);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.overlay-actions .quiet:hover,
+.trash-row .quiet:hover {
+  background: var(--surface-2);
+}
+
+.overlay-actions .danger,
+.trash-row .danger {
+  /* Ink is `--page` rather than white: in dark mode `--danger` is a pale pink,
+     and white on it is unreadable. */
+  background: var(--danger);
+  color: var(--page);
+}
+
+.overlay-error {
+  margin: 0 0 10px;
+  color: var(--danger);
+  font-size: var(--fs-small);
+}
+
+.trash-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.trash-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: var(--r-sm);
+}
+
+.trash-row:hover {
+  background: var(--surface);
+}
+
+.trash-name {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.trash-name strong {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-name em {
+  font-style: normal;
+  font-size: var(--fs-small);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-warn {
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.trash-purge {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.trash-purge:hover {
+  background: var(--danger-tint);
+  color: var(--danger);
 }

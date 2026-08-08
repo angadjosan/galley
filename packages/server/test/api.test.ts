@@ -638,8 +638,8 @@ describe('images', () => {
   });
 });
 
-describe('deleting a document', () => {
-  it('removes it from the listing and answers 404 afterwards', async () => {
+describe('deleting a document puts it in the trash', () => {
+  it('takes it out of the listing and out of reach', async () => {
     const h = await open();
     const { docId } = await seedDocument(h);
 
@@ -648,24 +648,28 @@ describe('deleting a document', () => {
 
     const { documents } = await h.json<{ documents: { path: string }[] }>('/v1/docs');
     expect(documents.map((d) => d.path)).not.toContain('specs/checkout-v2');
+    // Not merely hidden from the list: every ordinary route refuses it, which
+    // is guarded once at `openDocument` rather than route by route.
     expect((await h.request(`/v1/docs/${docId}`)).status).toBe(404);
   });
 
-  it('takes the sidecar with it, so a reused id cannot inherit stale comments', async () => {
+  it('keeps everything anchored to it, because a restore has to bring it back', async () => {
     const h = await open();
     const { docId, blockIds } = await seedDocument(h);
     await h.json(`/v1/docs/${docId}/comments`, {
       method: 'POST',
       body: JSON.stringify({ blockId: blockIds[1], body: 'Optional or required?' }),
     });
-    expect(h.server.store.listComments(docId)).toHaveLength(1);
 
     await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
-    expect(h.server.store.listComments(docId)).toHaveLength(0);
-    expect(h.server.store.getDocument(docId)).toBeUndefined();
+
+    // The old behaviour cascaded here. A restore that returned the prose
+    // without the notes on it would be worse than no restore.
+    expect(h.server.store.listComments(docId)).toHaveLength(1);
+    expect(h.server.store.getDocument(docId)?.deletedAt).toBeTruthy();
   });
 
-  it('frees the path, so the same one can be created again', async () => {
+  it('frees the path, so the same name can be used again', async () => {
     const h = await open();
     const { docId } = await seedDocument(h);
     await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
@@ -677,11 +681,19 @@ describe('deleting a document', () => {
     expect(again.docId).not.toBe(docId);
   });
 
-  it('does not resurrect a document whose debounced persist was still pending', async () => {
+  it('refuses to create anything in the reserved tombstone namespace', async () => {
+    const h = await open();
+    await expect(
+      h.json('/v1/docs', {
+        method: 'POST',
+        body: JSON.stringify({ path: '.trash/sneaky', content: '# No\n' }),
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('is not written back by a debounced persist that was already scheduled', async () => {
     const h = await open();
     const { docId, blockIds } = await seedDocument(h);
-    // A write schedules a debounced snapshot. Deleting before it fires must not
-    // leave a timer that writes the row back after the delete removed it.
     await h.json(`/v1/docs/${docId}`, {
       method: 'PATCH',
       body: JSON.stringify({
@@ -691,7 +703,11 @@ describe('deleting a document', () => {
     await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
 
     await new Promise((resolve) => setTimeout(resolve, 250));
-    expect(h.server.store.getDocument(docId)).toBeUndefined();
+    // Still trashed, and still parked at its tombstone. A persist that landed
+    // after the delete would have written the row back at its old path.
+    const row = h.server.store.getDocument(docId);
+    expect(row?.deletedAt).toBeTruthy();
+    expect(row?.path.startsWith('.trash/')).toBe(true);
   });
 
   it('drops it from the open set rather than leaving a ghost actor', async () => {
@@ -712,17 +728,190 @@ describe('deleting a document', () => {
       token: h.tokens.reader,
     });
     expect(response.status).toBe(403);
-    expect(h.server.store.getDocument(docId)).toBeDefined();
+    expect(h.server.store.getDocument(docId)?.deletedAt).toBeFalsy();
   });
 
-  it('records who deleted it', async () => {
+  it('records who did it', async () => {
     const h = await open();
     const { docId } = await seedDocument(h);
     await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
 
     const { entries } = await h.json<{ entries: { action: string; detail: string }[] }>('/v1/audit');
-    const entry = entries.find((e) => e.action === 'document.delete');
-    expect(entry?.detail).toBe('specs/checkout-v2');
+    expect(entries.find((e) => e.action === 'document.trash')?.detail).toBe('specs/checkout-v2');
+  });
+});
+
+describe('the trash', () => {
+  it('lists what is in it, where it came from and when it goes', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    const { documents } = await h.json<{
+      documents: { docId: string; path: string; title: string; deletedAt: string; purgeAt: string }[];
+    }>('/v1/trash');
+    expect(documents).toHaveLength(1);
+    const [entry] = documents;
+    // The path it will come back to, not the tombstone it is parked at.
+    expect(entry!.path).toBe('specs/checkout-v2');
+    expect(entry!.docId).toBe(docId);
+    // Thirty days later, to the day.
+    const window = Date.parse(entry!.purgeAt) - Date.parse(entry!.deletedAt);
+    expect(Math.round(window / (24 * 60 * 60 * 1000))).toBe(30);
+  });
+
+  it('restores a document to where it was, with its comments still on it', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ blockId: blockIds[1], body: 'Optional or required?' }),
+    });
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    const restored = await h.json<{ path: string }>(`/v1/trash/${docId}/restore`, { method: 'POST' });
+    expect(restored.path).toBe('specs/checkout-v2');
+
+    const { documents } = await h.json<{ documents: { path: string }[] }>('/v1/docs');
+    expect(documents.map((d) => d.path)).toContain('specs/checkout-v2');
+    // Readable again, and the thread that was anchored to it survived the trip.
+    const back = await h.json<{ content: string }>(`/v1/docs/${docId}`);
+    expect(back.content).toContain('currency field');
+    const { comments } = await h.json<{ comments: unknown[] }>(`/v1/docs/${docId}/comments`);
+    expect(comments).toHaveLength(1);
+  });
+
+  it('brings back the last thing typed, not the last thing snapshotted', async () => {
+    // Persistence is debounced, so a document deleted moments after an edit has
+    // a stale snapshot on disk. Trashing without flushing first put *that* in
+    // the trash: the restore lost the edits, and the entry sat under the old
+    // title where nobody would look for it.
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ops: [
+          { kind: 'replace', target: blockIds[0], markdown: '# Renamed just now' },
+          { kind: 'replace', target: blockIds[1], markdown: 'Typed just now.' },
+        ],
+      }),
+    });
+    // Deleted immediately — inside the debounce window, which is the case that
+    // was broken.
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    const { documents } = await h.json<{ documents: { title: string }[] }>('/v1/trash');
+    expect(documents[0]?.title, 'the trash shows a stale title').toBe('Renamed just now');
+
+    await h.json(`/v1/trash/${docId}/restore`, { method: 'POST' });
+    const back = await h.json<{ content: string }>(`/v1/docs/${docId}`);
+    expect(back.content, 'the restore lost the last edits').toContain('Typed just now.');
+  });
+
+  it('restores beside the name when something has taken it since', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+    // Someone made a new document at the old name while this was in the trash.
+    await h.json('/v1/docs', {
+      method: 'POST',
+      body: JSON.stringify({ path: 'specs/checkout-v2', content: '# Different\n' }),
+    });
+
+    const restored = await h.json<{ path: string }>(`/v1/trash/${docId}/restore`, { method: 'POST' });
+    // Refusing would be the other option, and it is a dead end from the trash.
+    expect(restored.path).toBe('specs/checkout-v2 2');
+    const { documents } = await h.json<{ documents: { path: string }[] }>('/v1/docs');
+    expect(documents.map((d) => d.path)).toContain('specs/checkout-v2');
+    expect(documents.map((d) => d.path)).toContain('specs/checkout-v2 2');
+  });
+
+  it('empties one thing for good, taking the sidecar with it', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ blockId: blockIds[1], body: 'Optional or required?' }),
+    });
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+    await h.json(`/v1/trash/${docId}`, { method: 'DELETE' });
+
+    expect(h.server.store.getDocument(docId)).toBeUndefined();
+    expect(h.server.store.listComments(docId)).toHaveLength(0);
+    const { documents } = await h.json<{ documents: unknown[] }>('/v1/trash');
+    expect(documents).toHaveLength(0);
+  });
+
+  it('will not purge a document that is not in the trash', async () => {
+    // Otherwise this route is a way to destroy live work in one call, skipping
+    // the trash and everything it exists to protect.
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    const response = await h.request(`/v1/trash/${docId}`, { method: 'DELETE' });
+    expect(response.status).toBe(404);
+    expect(h.server.store.getDocument(docId)).toBeDefined();
+  });
+
+  it('sweeps away whatever has run out of window, and nothing else', async () => {
+    // The clock is injected rather than the row being backdated behind the
+    // feature's back: a test that writes `deleted_at` itself passes even when
+    // the code that writes `deleted_at` is broken.
+    let now = Date.parse('2026-01-01T00:00:00.000Z');
+    const h = await open({ trashDays: 30, now: () => now });
+
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    // Thirty-one days pass, and something else is thrown away today.
+    now += 31 * 24 * 60 * 60 * 1000;
+    const fresh = await seedDocument(h, 'specs/other');
+    await h.json(`/v1/docs/${fresh.docId}`, { method: 'DELETE' });
+
+    expect(await h.server.workspace.sweepTrash()).toBe(0);
+    // Zero, because the delete route swept on its way out — which is the
+    // design: the sweep runs on the operations that can produce an expired
+    // row, not on a timer that a restart would silently stop.
+    expect(h.server.store.getDocument(docId), 'the expired one survived').toBeUndefined();
+    expect(h.server.store.getDocument(fresh.docId), 'the fresh one was taken too').toBeDefined();
+  });
+
+  it('sweeps on its own when nothing else prompts it', async () => {
+    let now = Date.parse('2026-01-01T00:00:00.000Z');
+    const h = await open({ trashDays: 30, now: () => now });
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    now += 31 * 24 * 60 * 60 * 1000;
+    expect(await h.server.workspace.sweepTrash()).toBe(1);
+    expect(h.server.store.getDocument(docId)).toBeUndefined();
+  });
+
+  it('keeps a document for the whole window, right up to the last day', async () => {
+    let now = Date.parse('2026-01-01T00:00:00.000Z');
+    const h = await open({ trashDays: 30, now: () => now });
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    now += 29 * 24 * 60 * 60 * 1000;
+    expect(await h.server.workspace.sweepTrash()).toBe(0);
+    // And it is still restorable on day 29, which is the promise being made.
+    const restored = await h.json<{ path: string }>(`/v1/trash/${docId}/restore`, { method: 'POST' });
+    expect(restored.path).toBe('specs/checkout-v2');
+  });
+
+  it('refuses a reader everywhere', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+    for (const [path, method] of [
+      ['/v1/trash', 'GET'],
+      [`/v1/trash/${docId}/restore`, 'POST'],
+      [`/v1/trash/${docId}`, 'DELETE'],
+    ] as const) {
+      const response = await h.request(path, { method, token: h.tokens.reader });
+      expect(response.status, `${method} ${path}`).toBe(403);
+    }
   });
 });
 

@@ -2036,3 +2036,84 @@ container it meant, so it should not guess; a drag can, and does.
 **Consequence:** the contrast linter found this before any test did, which is
 the argument for D-earlier's "findings shown continuously rather than on save".
 It was reporting a real defect in the editor, not in the design.
+
+---
+
+## D67 — Delete asks first, and then keeps the document for thirty days
+
+**Context:** D58 shipped a delete that destroyed the document and everything
+anchored to it, and argued against a fake undo: "an Undo button that restores
+the prose but not the comments anchored to it is a lie told at exactly the
+moment someone is relying on it." That was right about the lie and wrong to stop
+there. The answer is to build the real thing.
+
+**Decision:** two independent safeguards, because they catch different mistakes.
+
+**A confirmation dialog**, for the press you did not mean. It names the document
+and says what actually happens — *"Refund policy will move to the trash, with
+its notes and its history. You can put it back for the next 30 days."* It does
+**not** say "this cannot be undone", because it can, and a warning that
+overstates the damage is one people learn to click through. `Keep it` takes the
+focus, not `Delete`: the dialog exists to make the destructive answer the
+deliberate one, and a focused `Delete` that Enter activates is the opposite of
+that. This replaces D59's in-row confirmation, which was right about not
+interrupting and wrong about how much a delete should cost.
+
+**A thirty-day trash**, for the press you did mean and later regretted. Nothing
+cascades: comments, suggestions, orphans, revisions, checkpoints and the search
+index all stay, so a restore returns *the document* rather than a copy of its
+prose. Thirty days because it is longer than a holiday, and longer than the gap
+between one person noticing something is missing and the person who deleted it
+being asked about it.
+
+**Four things this turned out to require.**
+
+- **The path moves to `.trash/<docId>`.** `UNIQUE (workspace_id, path)` is a
+  table constraint, so a trashed row that kept its path would go on reserving it
+  — and "delete Untitled, make a new Untitled" would fail with a conflict about
+  a document that is not on screen anywhere. A partial unique index says this
+  more directly and would mean rebuilding the table on every existing database.
+  `normalizePath` refuses the prefix, so the namespace cannot collide.
+- **`openDocument` refuses a trashed row.** Guarded at the one door every route
+  comes through rather than route by route, because reading, writing,
+  commenting and syncing would each have to remember, and one of them would not.
+- **A restore lands beside the name if something has taken it since.** Refusing
+  was the other option and it is a dead end: the person asking has already lost
+  this document once, and cannot act on "something else is called that" from
+  inside the trash.
+- **A migration, because there was no migration system.** `CREATE TABLE IF NOT
+  EXISTS` does nothing to a table that already exists, so a new column reaches
+  new databases and nobody's existing one. `PRAGMA table_info` drives it —
+  additive, and reading what is actually there rather than trusting a stored
+  version number that a restored backup would make a lie.
+
+**The sweep runs on the operations that can create an expired row** — a delete,
+and server startup — rather than on a timer. A timer in a process that may be
+restarted hourly is a job that never fires; this costs one indexed query when
+there is nothing to do.
+
+---
+
+## D68 — Trashing flushes first, or a restore loses the last thing you typed
+
+**Context:** D58's delete deliberately skipped the flush that `close` performs,
+because a persist landing *after* the row moved would undo the move. Carried
+into the trash, that reasoning produced a data-loss bug rather than a
+correctness one: persistence is debounced, so a document deleted moments after
+an edit has a **stale snapshot** on disk. Trashing without flushing put that
+stale snapshot in the trash. The restore silently lost the edits, and — how it
+was actually found, in a browser — the entry sat in the trash under the
+document's *previous title*, where nobody would think to look for it.
+
+**Decision:** flush, then detach, then move the path. In that order.
+
+The ordering is the whole answer, and it makes both requirements true at once.
+The flush writes what is in memory to the row while the row is still at its old
+path. Detaching then clears the debounce timer and drops the entry, so nothing
+is left holding a write. Only then does the path move. Nothing can be written
+after the move, because by then nothing is attached.
+
+`detach` and `close` are now explicitly different operations: `close` flushes on
+the way out, `detach` does not, and callers that need the snapshot current
+persist first and then detach. `purge` still uses the bare form — flushing a
+row that is about to be destroyed is work for nobody.

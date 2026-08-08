@@ -53,7 +53,10 @@ usage: galley <command> [options]
   push [dir] [--write]                        send local edits back
   status [dir]                                what changed, what is stale, what is pending
   read <ref>                                  clean Markdown on stdout (ref: path or path#block)
-  rm <path> --yes                             delete a document and its annotations
+  rm <path> --yes                             move a document to the trash
+  trash list                                  what is recoverable, and for how long
+  trash restore <docId>                       put one back
+  trash empty <docId> --yes                   destroy one for good
   search <query> [--limit n]                  matching blocks, as doc#block refs
   design <sub> <ref> [--under id]             outline | source | lint | classes | tokens
   design image <ref> [--out f.png]            a picture of it, for anything that can see
@@ -121,6 +124,8 @@ async function dispatch(args: ParsedArgs, io: Io): Promise<number> {
       return readCommand(args, io);
     case 'rm':
       return rmCommand(args, io);
+    case 'trash':
+      return trashCommand(args, io);
     case 'search':
       return searchCommand(args, io);
     case 'comment':
@@ -198,12 +203,12 @@ async function lsCommand(args: ParsedArgs, io: Io): Promise<number> {
 }
 
 /**
- * Delete a document.
+ * Move a document to the trash.
  *
- * Requires `--yes`. Every other command here is either read-only or produces a
- * *proposal* a human resolves — this is the only one that destroys something
- * with no review step, and an agent that reaches for it should have to say so
- * in the same breath. `push` already refuses to propagate deletions for the
+ * Still requires `--yes` even though it is now recoverable. Recoverable is not
+ * the same as harmless: the document leaves every listing, every search and
+ * every link that pointed at it, and an agent that reaches for this should have
+ * to say so in the same breath. `push` refuses to propagate deletions for the
  * same reason ("a delete is a deliberate act, not a diff").
  */
 async function rmCommand(args: ParsedArgs, io: Io): Promise<number> {
@@ -220,8 +225,56 @@ async function rmCommand(args: ParsedArgs, io: Io): Promise<number> {
     io.out(`${JSON.stringify(result, null, 2)}\n`);
     return 0;
   }
-  io.out(`deleted ${result.path}\n`);
+  io.out(`moved to trash: ${result.path}\n`);
+  io.err(`restore it with \`galley trash restore ${result.docId}\`\n`);
   return 0;
+}
+
+/**
+ * The trash: what is in it, putting something back, emptying it.
+ *
+ * `restore` needs no `--yes` — it creates rather than destroys. `empty` does,
+ * for the same reason `rm` does: it is the only command here that destroys
+ * something with no review step and no window to change your mind.
+ */
+async function trashCommand(args: ParsedArgs, io: Io): Promise<number> {
+  const api = client();
+  const sub = args.positional[0] ?? 'list';
+
+  if (sub === 'list') {
+    const documents = await api.trash();
+    if (flagBool(args, 'json')) {
+      io.out(`${JSON.stringify(documents, null, 2)}\n`);
+      return 0;
+    }
+    if (documents.length === 0) {
+      io.err('the trash is empty\n');
+      return 0;
+    }
+    for (const doc of documents) {
+      const days = Math.max(0, Math.ceil((Date.parse(doc.purgeAt) - Date.now()) / 86_400_000));
+      io.out(`${doc.docId}\t${doc.path}\t${doc.title}\tgone in ${days}d\n`);
+    }
+    return 0;
+  }
+
+  const docId = args.positional[1];
+  if (!docId) throw new Error(`usage: galley trash ${sub} <docId>`);
+
+  if (sub === 'restore') {
+    const result = await api.untrash(docId);
+    io.out(`restored ${result.path}\n`);
+    return 0;
+  }
+  if (sub === 'empty') {
+    if (!flagBool(args, 'yes')) {
+      throw new Error(`refusing to permanently delete ${docId} without --yes`);
+    }
+    const result = await api.purge(docId);
+    io.out(`deleted for good: ${result.path}\n`);
+    return 0;
+  }
+  throw new Error('usage: galley trash <list|restore|empty> [docId]');
 }
 
 async function readCommand(args: ParsedArgs, io: Io): Promise<number> {

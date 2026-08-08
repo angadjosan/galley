@@ -24,6 +24,10 @@ export interface StoredDocument {
   readonly snapshot: Uint8Array;
   readonly updatedAt: string;
   readonly ticket: number;
+  /** When it was trashed, or null while it is live. */
+  readonly deletedAt?: string | null;
+  /** Where it was before it was trashed. Null while it is live. */
+  readonly deletedPath?: string | null;
 }
 
 export interface AuditEntry {
@@ -80,8 +84,13 @@ CREATE TABLE IF NOT EXISTS documents (
   snapshot     BLOB NOT NULL,
   updated_at   TEXT NOT NULL,
   ticket       INTEGER NOT NULL DEFAULT 0,
+  /* When this document was put in the trash, and where it was before. Null on
+     a live document. See Store.trashDocument for why the path moves. */
+  deleted_at   TEXT,
+  deleted_path TEXT,
   UNIQUE (workspace_id, path)
 );
+CREATE INDEX IF NOT EXISTS documents_trash ON documents(workspace_id, deleted_at);
 
 CREATE TABLE IF NOT EXISTS comments (
   id        TEXT PRIMARY KEY,
@@ -163,6 +172,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS blocks_fts USING fts5(
 );
 `;
 
+/**
+ * Where a trashed document's path is parked.
+ *
+ * Reserved: `normalizePath` refuses to produce a path under it, so a real
+ * document can never sit where a tombstone does.
+ */
+export const TRASH_PREFIX = '.trash/';
+
 export interface StoreOptions {
   /** `:memory:` for tests, a path for a real deployment. */
   file?: string;
@@ -207,7 +224,33 @@ export class Store {
     this.db.exec('PRAGMA foreign_keys = ON');
     this.db.exec('PRAGMA synchronous = NORMAL');
     this.db.exec(SCHEMA);
+    this.migrate();
     this.readSlots = new Semaphore(options.readerConcurrency ?? 8, 'store-read');
+  }
+
+  /**
+   * Bring an older database up to the current schema.
+   *
+   * `CREATE TABLE IF NOT EXISTS` is the whole schema mechanism here, and it does
+   * nothing at all to a table that already exists — so a column added to
+   * `SCHEMA` reaches new databases and never reaches anyone's existing one. The
+   * failure is silent until the first query names the missing column.
+   *
+   * Additive only, and driven by what is actually there rather than by a
+   * version number: `PRAGMA table_info` is the truth, a stored version is a
+   * claim about the truth, and the two come apart the first time someone
+   * restores a backup.
+   */
+  private migrate(): void {
+    const columns = new Set(
+      (this.db.prepare('PRAGMA table_info(documents)').all() as { name: string }[]).map(
+        (column) => column.name,
+      ),
+    );
+    if (!columns.has('deleted_at')) this.db.exec('ALTER TABLE documents ADD COLUMN deleted_at TEXT');
+    if (!columns.has('deleted_path')) {
+      this.db.exec('ALTER TABLE documents ADD COLUMN deleted_path TEXT');
+    }
   }
 
   private prepare(sql: string): StatementSync {
@@ -402,17 +445,78 @@ export class Store {
   }
 
   getDocumentByPath(workspaceId: string, path: string): StoredDocument | undefined {
-    const row = this.prepare('SELECT * FROM documents WHERE workspace_id = ? AND path = ?').get(
-      workspaceId,
-      path,
-    ) as Record<string, unknown> | undefined;
+    const row = this.prepare(
+      'SELECT * FROM documents WHERE workspace_id = ? AND deleted_at IS NULL AND path = ?',
+    ).get(workspaceId, path) as Record<string, unknown> | undefined;
     return row ? rowToDocument(row) : undefined;
   }
 
   listDocuments(workspaceId: string, pathPrefix = ''): StoredDocument[] {
     const rows = this.prepare(
-      'SELECT * FROM documents WHERE workspace_id = ? AND path LIKE ? ORDER BY path',
+      'SELECT * FROM documents WHERE workspace_id = ? AND deleted_at IS NULL AND path LIKE ? ORDER BY path',
     ).all(workspaceId, `${pathPrefix}%`) as Record<string, unknown>[];
+    return rows.map(rowToDocument);
+  }
+
+  /** What is in the trash, most recently thrown away first. */
+  listTrash(workspaceId: string): StoredDocument[] {
+    const rows = this.prepare(
+      'SELECT * FROM documents WHERE workspace_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC',
+    ).all(workspaceId) as Record<string, unknown>[];
+    return rows.map(rowToDocument);
+  }
+
+  /**
+   * Put a document in the trash, and move its path out of the way.
+   *
+   * **The row keeps everything and changes where it lives.** Nothing is
+   * cascaded: the comments, suggestions, orphans, revisions, checkpoints and
+   * search rows all stay exactly where they are, because a restore that brought
+   * back the prose without the notes anchored to it would be worse than no
+   * restore at all.
+   *
+   * **The path moves to `.trash/<docId>`.** `UNIQUE (workspace_id, path)` is a
+   * table constraint, so a trashed row that kept its path would go on reserving
+   * it — and "delete Untitled, make a new Untitled" would fail with a conflict
+   * about a document that is not on screen anywhere. A partial unique index
+   * would express this more directly and would mean rebuilding the table on
+   * every existing database; moving the path costs one column and no migration
+   * risk. `.trash/` is refused as a real path prefix so the namespace cannot
+   * collide.
+   *
+   * Returns false when there is no such live document, so a caller can answer
+   * 404 rather than reporting success for nothing.
+   */
+  trashDocument(docId: string, at: string): boolean {
+    const changes = this.prepare(
+      `UPDATE documents
+          SET deleted_at = ?, deleted_path = path, path = ?
+        WHERE id = ? AND deleted_at IS NULL`,
+    ).run(at, `${TRASH_PREFIX}${docId}`, docId);
+    return changes.changes > 0;
+  }
+
+  /**
+   * Take a document back out of the trash.
+   *
+   * `path` is where it should land — the caller resolves that, because the
+   * original path may have been taken by something created since, and only the
+   * caller knows what to call it instead.
+   */
+  restoreDocument(docId: string, path: string): boolean {
+    const changes = this.prepare(
+      `UPDATE documents
+          SET deleted_at = NULL, deleted_path = NULL, path = ?
+        WHERE id = ? AND deleted_at IS NOT NULL`,
+    ).run(path, docId);
+    return changes.changes > 0;
+  }
+
+  /** Everything trashed before `cutoff`, for the sweep that empties the trash. */
+  expiredTrash(workspaceId: string, cutoff: string): StoredDocument[] {
+    const rows = this.prepare(
+      'SELECT * FROM documents WHERE workspace_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?',
+    ).all(workspaceId, cutoff) as Record<string, unknown>[];
     return rows.map(rowToDocument);
   }
 
@@ -652,6 +756,9 @@ function rowToDocument(row: Record<string, unknown>): StoredDocument {
     snapshot: row.snapshot as Uint8Array,
     updatedAt: String(row.updated_at),
     ticket: Number(row.ticket),
+    deletedAt: row.deleted_at === null || row.deleted_at === undefined ? null : String(row.deleted_at),
+    deletedPath:
+      row.deleted_path === null || row.deleted_path === undefined ? null : String(row.deleted_path),
   };
 }
 

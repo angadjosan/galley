@@ -1033,41 +1033,84 @@ test.describe('the library', () => {
     await expect(page.getByTestId('design-palette')).toBeVisible();
   });
 
-  test('deletes a document, and asks in the row it is about', async ({ page }) => {
+  test('deletes a document behind a confirmation, and can put it back', async ({ page }) => {
     await openWorkspace(page);
-    // Made here rather than reaching for a seeded document: this test destroys
+    // Made here rather than reaching for a seeded document: this test deletes
     // what it names, and a shared fixture the other tests depend on is not a
     // thing to practise deleting on.
     await page.getByTestId('new-button').click();
     await page.getByRole('button', { name: 'Document Words, in a page' }).click();
     await expect(page.getByTestId('doc-title')).toHaveText('Untitled');
+    await selectContentsOf(page, '.prose h1');
+    await page.keyboard.type('Doomed');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
 
     const rows = page.locator('.doc-row');
     const before = await rows.count();
-    const row = page.locator('.doc-row', { hasText: 'Untitled' }).first();
+    const row = page.locator('.doc-row', { hasText: 'Doomed' }).first();
 
     // The trash icon is invisible until the row is hovered, and reachable.
     await row.hover();
     await row.locator('.doc-delete').click();
 
-    // The question replaces the row rather than floating over it.
-    await expect(page.locator('.doc-row.is-confirming')).toContainText('Delete');
-    await expect(rows).toHaveCount(before);
+    // The dialog names the document and says what actually happens — it does
+    // not claim this cannot be undone, because it can.
+    await expect(page.getByTestId('confirm-delete-text')).toContainText('Doomed');
+    await expect(page.getByTestId('confirm-delete-text')).toContainText('30 days');
 
-    // Cancel keeps it. A destructive control whose first press is final is one
-    // people stop reaching for.
-    await page.getByRole('button', { name: 'Keep this document' }).click();
-    await expect(page.locator('.doc-row.is-confirming')).toHaveCount(0);
+    // Keeping it is the default answer, and it changes nothing.
+    await page.getByTestId('confirm-cancel').click();
     await expect(rows).toHaveCount(before);
 
     await row.hover();
     await row.locator('.doc-delete').click();
-    await page.locator('.doc-row.is-confirming').getByText('Delete', { exact: true }).click();
-
+    await page.getByTestId('confirm-delete').click();
     await expect(rows).toHaveCount(before - 1);
-    // And it is gone from the server, not just from this list.
+
+    // Gone from the server, not just from this list.
     await page.reload();
-    await expect(page.locator('.doc-row')).toHaveCount(before - 1);
+    await expect(page.locator('.doc-row', { hasText: 'Doomed' })).toHaveCount(0);
+
+    // And recoverable, with the window shown in the only unit anyone acts on.
+    await page.getByTestId('open-trash').click();
+    const entry = page.locator('.trash-row', { hasText: 'Doomed' });
+    await expect(entry).toBeVisible();
+    await expect(entry).toContainText('days left');
+
+    await entry.getByRole('button', { name: 'Put back' }).click();
+    await expect(page.locator('.trash-row', { hasText: 'Doomed' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.doc-row', { hasText: 'Doomed' })).toHaveCount(1);
+  });
+
+  test('emptying the trash costs a second press and is final', async ({ page }) => {
+    await openWorkspace(page);
+    await page.getByTestId('new-button').click();
+    await page.getByRole('button', { name: 'Document Words, in a page' }).click();
+    await selectContentsOf(page, '.prose h1');
+    await page.keyboard.type('Really doomed');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    const row = page.locator('.doc-row', { hasText: 'Really doomed' }).first();
+    await row.hover();
+    await row.locator('.doc-delete').click();
+    await page.getByTestId('confirm-delete').click();
+    await expect(page.locator('.doc-row', { hasText: 'Really doomed' })).toHaveCount(0);
+
+    await page.getByTestId('open-trash').click();
+    await expect(page.getByTestId('trash-list')).toBeVisible();
+    const entry = page.locator('.trash-row', { hasText: 'Really doomed' });
+    await expect(entry).toBeVisible();
+
+    // There is no third chance after this one, so it still costs two presses.
+    await entry.locator('.trash-purge').click();
+    await expect(entry).toContainText('For good?');
+    await entry.getByRole('button', { name: 'Delete', exact: true }).click();
+
+    await expect(page.locator('.trash-row', { hasText: 'Really doomed' })).toHaveCount(0);
+    await page.reload();
+    await page.getByTestId('open-trash').click();
+    await expect(page.locator('.trash-row', { hasText: 'Really doomed' })).toHaveCount(0);
   });
 
   test('adds a finished thing from the palette, and the agent reads its parts', async ({ page }) => {

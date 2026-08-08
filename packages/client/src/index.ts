@@ -33,6 +33,16 @@ export interface DocumentSummary {
   updatedAt: string;
 }
 
+export interface TrashedDocument {
+  docId: string;
+  /** Where it will come back to, not where it is parked. */
+  path: string;
+  title: string;
+  deletedAt: string;
+  /** When it stops being recoverable. */
+  purgeAt: string;
+}
+
 /**
  * Someone who can appear as an author.
  *
@@ -174,9 +184,37 @@ export class GalleyClient {
     return this.call('POST', '/v1/docs', { path, content, title });
   }
 
-  /** Delete a document and everything anchored to it. Not recoverable. */
+  /**
+   * Put a document in the trash. Recoverable for thirty days.
+   *
+   * Nothing is destroyed: the comments, suggestions and history stay with it,
+   * so `restore` brings back the document rather than a copy of its prose.
+   */
   async remove(ref: string): Promise<{ docId: string; path: string }> {
     return this.call('DELETE', `/v1/docs/${encodeURIComponent(ref)}`);
+  }
+
+  /** What is in the trash, and when each thing stops being recoverable. */
+  async trash(): Promise<TrashedDocument[]> {
+    const { documents } = await this.call<{ documents: TrashedDocument[] }>('GET', '/v1/trash');
+    return documents;
+  }
+
+  /**
+   * Take one back out of the trash. Answers with the path it landed at, which
+   * differs from where it was if something has taken that name since.
+   *
+   * Named apart from `restore`, which restores a document to an earlier
+   * *version*. Two different things called restore on one client is a mistake
+   * waiting for whoever reads the call site.
+   */
+  async untrash(docId: string): Promise<{ docId: string; path: string }> {
+    return this.call('POST', `/v1/trash/${encodeURIComponent(docId)}/restore`);
+  }
+
+  /** Empty one out of the trash, now. This one is not recoverable. */
+  async purge(docId: string): Promise<{ docId: string; path: string }> {
+    return this.call('DELETE', `/v1/trash/${encodeURIComponent(docId)}`);
   }
 
   async applyOps(

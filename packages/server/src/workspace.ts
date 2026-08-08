@@ -18,7 +18,28 @@ import {
   type Revision,
 } from '@galley/core';
 import { parseDocument, type ParsedDocument } from '@galley/markdown';
-import type { Store } from './store.js';
+import { TRASH_PREFIX, type Store } from './store.js';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long a deleted document can be brought back.
+ *
+ * Thirty days, the span every product that has one uses, and the reason is not
+ * arithmetic: it is longer than a holiday and longer than the gap between one
+ * person noticing something is missing and the person who deleted it being
+ * asked about it.
+ */
+export const DEFAULT_TRASH_DAYS = 30;
+
+/**
+ * Who the sweep acts as.
+ *
+ * The audit log records an actor for every entry, and the actor here is not a
+ * person — nobody pressed anything. A named system principal says so, rather
+ * than attributing an automatic purge to whoever happened to open the workspace.
+ */
+const SWEEPER: Principal = { kind: 'system', id: 'system', name: 'trash sweep' };
 
 export interface WorkspaceOptions {
   workspaceId?: string;
@@ -37,6 +58,17 @@ export interface WorkspaceOptions {
   /** Quiet period before a changed document is snapshotted. */
   persistDebounceMs?: number;
   commentBudget?: CommentBudget;
+  /** How long a trashed document can be restored. Days. */
+  trashDays?: number;
+  /**
+   * The clock, for the one feature that is about time passing.
+   *
+   * A thirty-day window is untestable against the real clock without either
+   * waiting thirty days or reaching into the database to backdate a row — and
+   * the second is a test that passes while the feature is broken, because it
+   * bypasses the very code path that writes the timestamp.
+   */
+  now?: () => number;
 }
 
 interface OpenDocument {
@@ -82,6 +114,8 @@ export class Workspace {
   private readonly debounceMs: number;
   private readonly disposeGraceMs: number;
   private readonly budget: CommentBudget;
+  private readonly trashDays: number;
+  private readonly now: () => number;
   private closed = false;
 
   constructor(
@@ -94,6 +128,8 @@ export class Workspace {
     this.disposeGraceMs = options.disposeGraceMs ?? 15_000;
     this.persistSlots = new Semaphore(options.persistConcurrency ?? 4, 'persist');
     this.budget = options.commentBudget ?? new CommentBudget();
+    this.trashDays = options.trashDays ?? DEFAULT_TRASH_DAYS;
+    this.now = options.now ?? Date.now;
   }
 
   get openCount(): number {
@@ -171,6 +207,12 @@ export class Workspace {
           }
           const stored = await this.store.read(() => this.store.getDocument(docId));
           if (!stored) throw new Error(`no document ${docId}`);
+          // A trashed document is gone as far as every ordinary route is
+          // concerned. Guarded here rather than in each route because this is
+          // the one door they all come through — reading it, writing to it,
+          // commenting on it and syncing to it would otherwise each need to
+          // remember, and one of them would not.
+          if (stored.deletedAt) throw new Error(`no document ${docId}`);
           const doc = GalleyDocument.open(stored.snapshot);
           const loaded = this.attach(doc, stored.path);
           this.rehydrate(loaded, docId);
@@ -439,40 +481,163 @@ export class Workspace {
   }
 
   /**
-   * Delete a document and everything anchored to it.
+   * Put a document in the trash.
    *
-   * Serialized on the document's own lock, like `close`, so a delete cannot
-   * interleave with an open of the same id.
+   * **Nothing is destroyed.** The row keeps its snapshot, and the comments,
+   * suggestions, orphans, revisions and checkpoints anchored to it are left
+   * exactly where they are — a restore that brought back the prose without the
+   * notes on it would be worse than no restore at all. What changes is a
+   * timestamp and the path, which moves under `.trash/` so it stops reserving
+   * the name (see `Store.trashDocument`).
    *
-   * **Deliberately does not flush.** `close` persists on the way out; doing
-   * that here would rewrite the row this method is about to delete, and a
-   * debounced persist scheduled *before* the delete would resurrect it a
-   * moment after. The pending timer is cleared and the entry detached before
-   * the row goes, so nothing is left holding a write against a dead id.
+   * **Flushed first, then detached, then moved — in that order.** The flush is
+   * not optional: without it the row keeps whatever snapshot the last debounced
+   * persist happened to write, so a document deleted shortly after being edited
+   * would come back from the trash missing those edits, and would sit in the
+   * trash under its previous *title* where nobody would think to look for it.
+   * The ordering is what makes the flush safe: the timer is cleared and the
+   * entry dropped before the path moves, so nothing is left holding a write
+   * against a row that is no longer where it was.
    *
-   * Returns the path that was deleted, or `undefined` if there was no such
-   * document — callers turn that into a 404 rather than a lie.
+   * Returns the path it had, or `undefined` if there was no such live document
+   * — callers turn that into a 404 rather than a lie.
    */
-  async remove(docId: string, principal: Principal): Promise<string | undefined> {
+  async trash(docId: string, principal: Principal): Promise<string | undefined> {
+    this.assertOpen();
+    return this.locks.runExclusive(docId, async () => {
+      const stored = await this.store.read(() => this.store.getDocument(docId));
+      if (!stored || stored.workspaceId !== this.workspaceId || stored.deletedAt) return undefined;
+
+      // Write what is in memory, at the path it still has.
+      await this.persist(docId, true);
+      await this.detach(docId);
+      const at = new Date(this.now()).toISOString();
+      const moved = await this.store.transaction(() => this.store.trashDocument(docId, at));
+      if (!moved) return undefined;
+
+      this.audit(principal, 'document.trash', docId, stored.path);
+      this.counters.inc('documents-trashed');
+      return stored.path;
+    });
+  }
+
+  /**
+   * Take a document back out of the trash.
+   *
+   * Restored to where it was, unless something has taken that path since — in
+   * which case it lands beside it under a numbered name. Refusing would be the
+   * other option and it is the wrong one: the person asking has already lost
+   * this document once, and "cannot restore, something else is called that" is
+   * a dead end they cannot act on from the trash.
+   */
+  async restore(docId: string, principal: Principal): Promise<string | undefined> {
+    this.assertOpen();
+    return this.locks.runExclusive(docId, async () => {
+      const stored = await this.store.read(() => this.store.getDocument(docId));
+      if (!stored || stored.workspaceId !== this.workspaceId || !stored.deletedAt) return undefined;
+
+      const wanted = stored.deletedPath ?? `restored/${docId}`;
+      const path = await this.freePath(wanted);
+      const done = await this.store.transaction(() => this.store.restoreDocument(docId, path));
+      if (!done) return undefined;
+
+      this.audit(principal, 'document.restore', docId, path);
+      this.counters.inc('documents-restored');
+      return path;
+    });
+  }
+
+  /** What is in the trash, and when each thing went in. */
+  trashed(): {
+    docId: string;
+    path: string;
+    title: string;
+    deletedAt: string;
+    purgeAt: string;
+  }[] {
+    return this.store.listTrash(this.workspaceId).map((doc) => ({
+      docId: doc.docId,
+      // The path it will come back to, not the tombstone it is parked at. The
+      // tombstone is an implementation detail of the unique constraint.
+      path: doc.deletedPath ?? doc.path,
+      title: doc.title,
+      deletedAt: doc.deletedAt ?? '',
+      purgeAt: new Date(Date.parse(doc.deletedAt ?? '') + this.trashDays * DAY_MS).toISOString(),
+    }));
+  }
+
+  /**
+   * Destroy a document and everything anchored to it. Not recoverable.
+   *
+   * The old `remove`, now reached two ways: emptying the trash by hand, and the
+   * sweep below once the recovery window has run out.
+   */
+  async purge(docId: string, principal: Principal): Promise<string | undefined> {
     this.assertOpen();
     return this.locks.runExclusive(docId, async () => {
       const stored = await this.store.read(() => this.store.getDocument(docId));
       if (!stored || stored.workspaceId !== this.workspaceId) return undefined;
 
-      const entry = this.open.get(docId);
-      if (entry) {
-        if (entry.persistTimer) clearTimeout(entry.persistTimer);
-        entry.unsubscribe();
-        await entry.actor.close();
-        this.open.delete(docId);
-        this.disposeAfterGrace(docId, entry.actor.document);
-      }
-
+      await this.detach(docId);
       await this.store.transaction(() => this.store.deleteDocument(docId));
-      this.audit(principal, 'document.delete', docId, stored.path);
-      this.counters.inc('documents-deleted');
-      return stored.path;
+      this.audit(principal, 'document.purge', docId, stored.deletedPath ?? stored.path);
+      this.counters.inc('documents-purged');
+      return stored.deletedPath ?? stored.path;
     });
+  }
+
+  /**
+   * Empty everything whose recovery window has run out.
+   *
+   * Run on open and after each trashing rather than on a timer. A timer in a
+   * process that may be restarted hourly is a job that never fires; doing it on
+   * the operations that can create expired rows means the sweep happens exactly
+   * as often as it can matter, and costs one indexed query when there is
+   * nothing to do.
+   */
+  async sweepTrash(): Promise<number> {
+    if (this.closed) return 0;
+    const cutoff = new Date(this.now() - this.trashDays * DAY_MS).toISOString();
+    const expired = await this.store.read(() => this.store.expiredTrash(this.workspaceId, cutoff));
+    let purged = 0;
+    for (const doc of expired) {
+      const gone = await this.purge(doc.docId, SWEEPER);
+      if (gone) purged += 1;
+    }
+    return purged;
+  }
+
+  /**
+   * Drop an open document without writing it back.
+   *
+   * The opposite of `close`, which flushes on the way out. Callers that need
+   * the snapshot current — `trash` does — persist first and then call this; the
+   * point of the split is that nothing may be written *after* the row moves or
+   * disappears, including by a timer that was already scheduled.
+   */
+  private async detach(docId: string): Promise<void> {
+    const entry = this.open.get(docId);
+    if (!entry) return;
+    if (entry.persistTimer) clearTimeout(entry.persistTimer);
+    entry.unsubscribe();
+    await entry.actor.close();
+    this.open.delete(docId);
+    this.disposeAfterGrace(docId, entry.actor.document);
+  }
+
+  /** `wanted`, or the first `wanted 2`, `wanted 3`, … that nothing else holds. */
+  private async freePath(wanted: string): Promise<string> {
+    const taken = async (path: string): Promise<boolean> =>
+      (await this.store.read(() => this.store.getDocumentByPath(this.workspaceId, path))) !==
+      undefined;
+    if (!(await taken(wanted))) return wanted;
+    for (let n = 2; n < 1000; n++) {
+      const candidate = `${wanted} ${n}`;
+      if (!(await taken(candidate))) return candidate;
+    }
+    // A thousand documents at one path is not a collision, it is a bug
+    // somewhere else. The id is unique by construction, so this terminates.
+    return `${wanted} ${Date.now()}`;
   }
 
   /**
@@ -675,7 +840,13 @@ export function normalizePath(path: string, allowEmpty = false): string {
     }
     if (segment.includes('\0')) throw new InvalidPathError('a path may not contain a null byte');
   }
-  return segments.join('/');
+  const joined = segments.join('/');
+  // A trashed document parks its path under `.trash/` so it stops reserving the
+  // one it had. That only holds if nothing real can be created there.
+  if (`${joined}/`.startsWith(TRASH_PREFIX)) {
+    throw new InvalidPathError(`${TRASH_PREFIX} is reserved for deleted documents`);
+  }
+  return joined;
 }
 
 /**

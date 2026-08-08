@@ -14,6 +14,7 @@ import type {
   OrphanedAnchor,
   SearchHit,
   DocumentSummary,
+  TrashedDocument,
   RevisionSummary,
   CheckpointSummary,
   AttributionSummary,
@@ -201,12 +202,16 @@ function Workspace({
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
-  // The document the trash button has been pressed on, waiting for the second
-  // press. Held here rather than in the row so that opening one confirmation
-  // closes any other — two rows both asking "delete?" is how the wrong one
-  // gets confirmed.
-  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+  /**
+   * The document the trash button was pressed on, waiting to be confirmed.
+   *
+   * The whole summary rather than an id: the dialog names the document, and a
+   * dialog that has to look its subject up in a list that is being edited
+   * underneath it is a dialog that can end up naming the wrong one.
+   */
+  const [confirming, setConfirming] = useState<DocumentSummary | null>(null);
   const [creatingOpen, setCreatingOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
 
   const refreshList = useCallback(async () => {
     try {
@@ -251,16 +256,15 @@ function Workspace({
   // transient things in the sidebar — a pending delete and the New menu — go
   // with it, because Escape means "I didn't mean that" everywhere else.
   useEffect(() => {
-    if (!libraryOpen && !confirmingDelete && !creatingOpen) return;
+    if (!libraryOpen && !creatingOpen) return;
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return;
       setLibraryOpen(false);
-      setConfirmingDelete(null);
       setCreatingOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [libraryOpen, confirmingDelete, creatingOpen]);
+  }, [libraryOpen, creatingOpen]);
 
   // A menu that stays open after you look away is a menu you have to dismiss.
   useEffect(() => {
@@ -317,12 +321,13 @@ function Workspace({
    * as `window.prompt`, and it puts the question somewhere other than the thing
    * being asked about. The row itself becomes the question instead.
    *
-   * There is no undo. The server takes the comments, suggestions, history and
-   * search index with the document, so an undo would have to be a soft delete
-   * all the way down — worth building, not worth pretending to have.
+   * It goes to the trash rather than being destroyed, and stays there for
+   * thirty days with its comments, suggestions and history intact — so this is
+   * reversible, and the dialog says so rather than warning about something that
+   * is not true.
    */
   const deleteDocument = async (doc: DocumentSummary): Promise<void> => {
-    setConfirmingDelete(null);
+    setConfirming(null);
     try {
       await client.remove(doc.docId);
       const remaining = documents.filter((d) => d.docId !== doc.docId);
@@ -383,49 +388,29 @@ function Workspace({
             {grouped.map(([folder, docs]) => (
               <div key={folder} className="folder">
                 <div className="folder-label">{folder ? prettyName(folder) : 'No folder'}</div>
-                {docs.map((doc) =>
-                  doc.docId === confirmingDelete ? (
-                    <div key={doc.docId} className="doc-row is-confirming">
-                      <span className="doc-confirm-text">Delete “{doc.title}”?</span>
-                      <button
-                        className="doc-confirm-yes"
-                        onClick={() => void deleteDocument(doc)}
-                        data-testid={`confirm-delete-${doc.path}`}
-                      >
-                        Delete
-                      </button>
-                      <button
-                        className="doc-confirm-no"
-                        onClick={() => setConfirmingDelete(null)}
-                        aria-label="Keep this document"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <div key={doc.docId} className="doc-row">
-                      <button
-                        className={`doc-item ${doc.docId === selected ? 'is-selected' : ''}`}
-                        onClick={() => {
-                          setSelected(doc.docId);
-                          setLibraryOpen(false);
-                        }}
-                        data-testid={`doc-${doc.path}`}
-                      >
-                        <span className="doc-title">{doc.title}</span>
-                      </button>
-                      <button
-                        className="doc-delete"
-                        onClick={() => setConfirmingDelete(doc.docId)}
-                        title={`Delete ${doc.title}`}
-                        aria-label={`Delete ${doc.title}`}
-                        data-testid={`delete-${doc.path}`}
-                      >
-                        <TrashIcon />
-                      </button>
-                    </div>
-                  ),
-                )}
+                {docs.map((doc) => (
+                  <div key={doc.docId} className="doc-row">
+                    <button
+                      className={`doc-item ${doc.docId === selected ? 'is-selected' : ''}`}
+                      onClick={() => {
+                        setSelected(doc.docId);
+                        setLibraryOpen(false);
+                      }}
+                      data-testid={`doc-${doc.path}`}
+                    >
+                      <span className="doc-title">{doc.title}</span>
+                    </button>
+                    <button
+                      className="doc-delete"
+                      onClick={() => setConfirming(doc)}
+                      title={`Delete ${doc.title}`}
+                      aria-label={`Delete ${doc.title}`}
+                      data-testid={`delete-${doc.path}`}
+                    >
+                      <TrashIcon />
+                    </button>
+                  </div>
+                ))}
               </div>
             ))}
           </nav>
@@ -464,11 +449,30 @@ function Workspace({
               <span aria-hidden="true">+</span> New
             </button>
           </div>
+          <button className="link-quiet" onClick={() => setTrashOpen(true)} data-testid="open-trash">
+            Trash
+          </button>
           <button className="link-quiet" onClick={onSignOut}>
             Sign out
           </button>
         </div>
       </aside>
+
+      {confirming && (
+        <ConfirmDelete
+          doc={confirming}
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => void deleteDocument(confirming)}
+        />
+      )}
+
+      {trashOpen && (
+        <Trash
+          client={client}
+          onClose={() => setTrashOpen(false)}
+          onChanged={() => void refreshList()}
+        />
+      )}
 
       <button
         className="scrim"
@@ -1696,6 +1700,166 @@ function HistoryOverlay({
       </div>
     </Overlay>
   );
+}
+
+/**
+ * "Are you sure?", asked properly.
+ *
+ * A dialog rather than something inline, because a delete is the one gesture in
+ * this app that removes work from everyone's view at once, and it should cost a
+ * deliberate second look. The Overlay it is built on already traps focus and
+ * returns it, so the keyboard path is the same as every other dialog here.
+ *
+ * **The copy states what actually happens.** It does not say "this cannot be
+ * undone", because it can: the document goes to the trash with its comments,
+ * its suggestions and its history, and stays there for thirty days. A warning
+ * that overstates the damage is a warning people learn to click through.
+ *
+ * Cancel is the default focus, not Delete. The dialog exists to make the
+ * destructive answer the deliberate one, and a focused Delete that Enter
+ * activates is the opposite of that.
+ */
+function ConfirmDelete({
+  doc,
+  onCancel,
+  onConfirm,
+}: {
+  doc: DocumentSummary;
+  onCancel(): void;
+  onConfirm(): void;
+}): JSX.Element {
+  return (
+    <Overlay title="Delete this document?" onClose={onCancel}>
+      <p className="overlay-lead" data-testid="confirm-delete-text">
+        <strong>{doc.title}</strong> will move to the trash, with its notes and its history. You
+        can put it back for the next 30 days.
+      </p>
+      <div className="overlay-actions">
+        <button className="quiet" onClick={onCancel} autoFocus data-testid="confirm-cancel">
+          Keep it
+        </button>
+        <button className="danger" onClick={onConfirm} data-testid="confirm-delete">
+          Delete
+        </button>
+      </div>
+    </Overlay>
+  );
+}
+
+/**
+ * The trash, and the way back out of it.
+ *
+ * Its own overlay rather than a section of the sidebar: the trash is a place
+ * you visit when something has gone wrong, not a thing to scroll past every
+ * time you pick a document. Google Docs, Notion and Figma all put it behind one
+ * click for the same reason.
+ *
+ * Each row says how long is left, in days, because that is the only number
+ * anyone acts on. A timestamp would be more precise and would make the reader
+ * do the arithmetic.
+ */
+function Trash({
+  client,
+  onClose,
+  onChanged,
+}: {
+  client: GalleyClient;
+  onClose(): void;
+  onChanged(): void;
+}): JSX.Element {
+  const [rows, setRows] = useState<TrashedDocument[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // Which row is asking "for good?", so a permanent delete inside the trash
+  // still costs two presses. There is no third chance after this one.
+  const [purging, setPurging] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setRows(await client.trash());
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [client]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const act = async (run: () => Promise<unknown>): Promise<void> => {
+    try {
+      await run();
+      await load();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  return (
+    <Overlay title="Trash" onClose={onClose}>
+      <p className="overlay-lead">
+        Deleted documents stay here for 30 days, with everything that was on them.
+      </p>
+      {error && <p className="overlay-error">{error}</p>}
+      {rows === null && <p className="overlay-lead">Looking…</p>}
+      {rows?.length === 0 && (
+        <p className="overlay-lead" data-testid="trash-empty">
+          Nothing in here.
+        </p>
+      )}
+      <div className="trash-list" data-testid="trash-list">
+        {rows?.map((row) => (
+          <div key={row.docId} className="trash-row">
+            <span className="trash-name">
+              <strong>{row.title}</strong>
+              <em>{row.path} · {daysLeft(row.purgeAt)}</em>
+            </span>
+            {purging === row.docId ? (
+              <>
+                <span className="trash-warn">For good?</span>
+                <button
+                  className="danger"
+                  onClick={() => void act(() => client.purge(row.docId))}
+                  data-testid={`purge-confirm-${row.docId}`}
+                >
+                  Delete
+                </button>
+                <button className="quiet" onClick={() => setPurging(null)}>
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className="quiet"
+                  onClick={() => void act(() => client.untrash(row.docId))}
+                  data-testid={`restore-${row.docId}`}
+                >
+                  Put back
+                </button>
+                <button
+                  className="trash-purge"
+                  onClick={() => setPurging(row.docId)}
+                  aria-label={`Delete ${row.title} for good`}
+                  data-testid={`purge-${row.docId}`}
+                >
+                  <TrashIcon />
+                </button>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+    </Overlay>
+  );
+}
+
+/** "29 days left", which is the only part of a purge date anyone acts on. */
+function daysLeft(purgeAt: string): string {
+  const days = Math.max(0, Math.ceil((Date.parse(purgeAt) - Date.now()) / 86_400_000));
+  if (days === 0) return 'gone today';
+  return `${days} day${days === 1 ? '' : 's'} left`;
 }
 
 function Overlay({

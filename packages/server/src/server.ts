@@ -292,9 +292,52 @@ export function build(options: ServerOptions = {}): GalleyServer {
       connection.closeWith({ t: 'ended', reason: 'document deleted' }, 'document deleted');
     }
 
-    const path = await workspace.remove(actor.docId, principalOf(session));
+    const path = await workspace.trash(actor.docId, principalOf(session));
     if (!path) return reply.code(404).send({ error: `no document ${ref}` });
+    // Sweeping here rather than on a timer: this is the operation that can put
+    // a row past its window, so it is the moment the sweep can matter.
+    void workspace.sweepTrash();
     return { docId: actor.docId, path };
+  });
+
+  /**
+   * What is in the trash.
+   *
+   * Not filtered by capability the way `/v1/docs` is. A trashed document has no
+   * live path to match a grant against — its path is a tombstone — and the
+   * honest reading is that the trash belongs to the workspace rather than to a
+   * subtree of it. So it takes `admin` on the root instead.
+   */
+  app.get('/v1/trash', async (request) => {
+    const session = sessionOf(request);
+    auth.authorize(session, '/', 'admin');
+    return { documents: workspace.trashed() };
+  });
+
+  app.post('/v1/trash/:docId/restore', async (request, reply) => {
+    const session = sessionOf(request);
+    const { docId } = request.params as { docId: string };
+    auth.authorize(session, '/', 'admin');
+    const path = await workspace.restore(docId, principalOf(session));
+    if (!path) return reply.code(404).send({ error: `nothing in the trash with id ${docId}` });
+    return { docId, path };
+  });
+
+  /** Empty one thing out of the trash, now, for good. */
+  app.delete('/v1/trash/:docId', async (request, reply) => {
+    const session = sessionOf(request);
+    const { docId } = request.params as { docId: string };
+    auth.authorize(session, '/', 'admin');
+    const stored = workspace.store.getDocument(docId);
+    if (!stored?.deletedAt) {
+      // Only a *trashed* document can be purged. Without this the route is a
+      // way to destroy a live document in one call, bypassing the trash and
+      // everything it exists to protect.
+      return reply.code(404).send({ error: `nothing in the trash with id ${docId}` });
+    }
+    const path = await workspace.purge(docId, principalOf(session));
+    if (!path) return reply.code(404).send({ error: `nothing in the trash with id ${docId}` });
+    return { docId, path };
   });
 
   app.post('/v1/docs/:ref/ingest', async (request) => {
@@ -808,7 +851,13 @@ export function build(options: ServerOptions = {}): GalleyServer {
     workspace,
     hub,
     async listen(port = 0): Promise<string> {
-      return app.listen({ port, host: '127.0.0.1' });
+      const url = await app.listen({ port, host: '127.0.0.1' });
+      // Anything whose recovery window ran out while the server was down goes
+      // now. Not awaited: the sweep is bounded by what is already expired, and
+      // nothing about accepting the first request depends on it having
+      // finished.
+      void workspace.sweepTrash();
+      return url;
     },
     async close(): Promise<void> {
       // Order matters: stop accepting connections, then flush documents, then

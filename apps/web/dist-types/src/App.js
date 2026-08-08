@@ -89,12 +89,16 @@ function Workspace({ credentials, onSignOut, }) {
     const [query, setQuery] = useState('');
     const [hits, setHits] = useState(null);
     const [libraryOpen, setLibraryOpen] = useState(false);
-    // The document the trash button has been pressed on, waiting for the second
-    // press. Held here rather than in the row so that opening one confirmation
-    // closes any other — two rows both asking "delete?" is how the wrong one
-    // gets confirmed.
-    const [confirmingDelete, setConfirmingDelete] = useState(null);
+    /**
+     * The document the trash button was pressed on, waiting to be confirmed.
+     *
+     * The whole summary rather than an id: the dialog names the document, and a
+     * dialog that has to look its subject up in a list that is being edited
+     * underneath it is a dialog that can end up naming the wrong one.
+     */
+    const [confirming, setConfirming] = useState(null);
     const [creatingOpen, setCreatingOpen] = useState(false);
+    const [trashOpen, setTrashOpen] = useState(false);
     const refreshList = useCallback(async () => {
         try {
             const list = await client.list();
@@ -135,18 +139,17 @@ function Workspace({ credentials, onSignOut, }) {
     // transient things in the sidebar — a pending delete and the New menu — go
     // with it, because Escape means "I didn't mean that" everywhere else.
     useEffect(() => {
-        if (!libraryOpen && !confirmingDelete && !creatingOpen)
+        if (!libraryOpen && !creatingOpen)
             return;
         const onKey = (event) => {
             if (event.key !== 'Escape')
                 return;
             setLibraryOpen(false);
-            setConfirmingDelete(null);
             setCreatingOpen(false);
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [libraryOpen, confirmingDelete, creatingOpen]);
+    }, [libraryOpen, creatingOpen]);
     // A menu that stays open after you look away is a menu you have to dismiss.
     useEffect(() => {
         if (!creatingOpen)
@@ -201,12 +204,13 @@ function Workspace({ credentials, onSignOut, }) {
      * as `window.prompt`, and it puts the question somewhere other than the thing
      * being asked about. The row itself becomes the question instead.
      *
-     * There is no undo. The server takes the comments, suggestions, history and
-     * search index with the document, so an undo would have to be a soft delete
-     * all the way down — worth building, not worth pretending to have.
+     * It goes to the trash rather than being destroyed, and stays there for
+     * thirty days with its comments, suggestions and history intact — so this is
+     * reversible, and the dialog says so rather than warning about something that
+     * is not true.
      */
     const deleteDocument = async (doc) => {
-        setConfirmingDelete(null);
+        setConfirming(null);
         try {
             await client.remove(doc.docId);
             const remaining = documents.filter((d) => d.docId !== doc.docId);
@@ -228,10 +232,10 @@ function Workspace({ credentials, onSignOut, }) {
                                         setSelected(doc.docId);
                                     setQuery('');
                                     setLibraryOpen(false);
-                                }, children: [_jsx("span", { className: "doc-title", children: hit.heading || prettyName(hit.path) }), _jsx("span", { className: "hit-snippet", children: hit.snippet })] }, hit.ref)))] })) : (_jsx("nav", { className: "doc-list", "data-testid": "doc-list", children: grouped.map(([folder, docs]) => (_jsxs("div", { className: "folder", children: [_jsx("div", { className: "folder-label", children: folder ? prettyName(folder) : 'No folder' }), docs.map((doc) => doc.docId === confirmingDelete ? (_jsxs("div", { className: "doc-row is-confirming", children: [_jsxs("span", { className: "doc-confirm-text", children: ["Delete \u201C", doc.title, "\u201D?"] }), _jsx("button", { className: "doc-confirm-yes", onClick: () => void deleteDocument(doc), "data-testid": `confirm-delete-${doc.path}`, children: "Delete" }), _jsx("button", { className: "doc-confirm-no", onClick: () => setConfirmingDelete(null), "aria-label": "Keep this document", children: "Cancel" })] }, doc.docId)) : (_jsxs("div", { className: "doc-row", children: [_jsx("button", { className: `doc-item ${doc.docId === selected ? 'is-selected' : ''}`, onClick: () => {
+                                }, children: [_jsx("span", { className: "doc-title", children: hit.heading || prettyName(hit.path) }), _jsx("span", { className: "hit-snippet", children: hit.snippet })] }, hit.ref)))] })) : (_jsx("nav", { className: "doc-list", "data-testid": "doc-list", children: grouped.map(([folder, docs]) => (_jsxs("div", { className: "folder", children: [_jsx("div", { className: "folder-label", children: folder ? prettyName(folder) : 'No folder' }), docs.map((doc) => (_jsxs("div", { className: "doc-row", children: [_jsx("button", { className: `doc-item ${doc.docId === selected ? 'is-selected' : ''}`, onClick: () => {
                                                 setSelected(doc.docId);
                                                 setLibraryOpen(false);
-                                            }, "data-testid": `doc-${doc.path}`, children: _jsx("span", { className: "doc-title", children: doc.title }) }), _jsx("button", { className: "doc-delete", onClick: () => setConfirmingDelete(doc.docId), title: `Delete ${doc.title}`, "aria-label": `Delete ${doc.title}`, "data-testid": `delete-${doc.path}`, children: _jsx(TrashIcon, {}) })] }, doc.docId)))] }, folder))) })), _jsxs("div", { className: "library-foot", children: [_jsxs("div", { className: "new-doc-wrap", children: [creatingOpen && (_jsxs("div", { className: "new-doc-menu", "data-testid": "new-menu", children: [_jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('doc'), children: [_jsx(DocumentIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Document" }), _jsx("em", { children: "Words, in a page" })] })] }), _jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('design'), "data-testid": "new-design", children: [_jsx(DesignIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Design" }), _jsx("em", { children: "A screen, on a canvas" })] })] })] })), _jsxs("button", { className: "new-doc", onClick: () => setCreatingOpen((open) => !open), "aria-expanded": creatingOpen, "data-testid": "new-button", children: [_jsx("span", { "aria-hidden": "true", children: "+" }), " New"] })] }), _jsx("button", { className: "link-quiet", onClick: onSignOut, children: "Sign out" })] })] }), _jsx("button", { className: "scrim", "aria-label": "Close the document list", tabIndex: libraryOpen ? 0 : -1, onClick: () => setLibraryOpen(false) }), _jsxs("div", { className: "main-column", children: [error && _jsx("div", { className: "banner error", children: error }), selected && current ? (_jsx(DocumentView, { client: client, credentials: credentials, docId: selected, path: current.path, people: people, onToggleLibrary: () => setLibraryOpen((open) => !open), onNewDocument: () => void createDocument('doc'), onSignOut: onSignOut, onRenamed: (title) => setDocuments((list) => list.map((doc) => (doc.docId === selected ? { ...doc, title } : doc))), onOpenPath: (path) => {
+                                            }, "data-testid": `doc-${doc.path}`, children: _jsx("span", { className: "doc-title", children: doc.title }) }), _jsx("button", { className: "doc-delete", onClick: () => setConfirming(doc), title: `Delete ${doc.title}`, "aria-label": `Delete ${doc.title}`, "data-testid": `delete-${doc.path}`, children: _jsx(TrashIcon, {}) })] }, doc.docId)))] }, folder))) })), _jsxs("div", { className: "library-foot", children: [_jsxs("div", { className: "new-doc-wrap", children: [creatingOpen && (_jsxs("div", { className: "new-doc-menu", "data-testid": "new-menu", children: [_jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('doc'), children: [_jsx(DocumentIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Document" }), _jsx("em", { children: "Words, in a page" })] })] }), _jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('design'), "data-testid": "new-design", children: [_jsx(DesignIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Design" }), _jsx("em", { children: "A screen, on a canvas" })] })] })] })), _jsxs("button", { className: "new-doc", onClick: () => setCreatingOpen((open) => !open), "aria-expanded": creatingOpen, "data-testid": "new-button", children: [_jsx("span", { "aria-hidden": "true", children: "+" }), " New"] })] }), _jsx("button", { className: "link-quiet", onClick: () => setTrashOpen(true), "data-testid": "open-trash", children: "Trash" }), _jsx("button", { className: "link-quiet", onClick: onSignOut, children: "Sign out" })] })] }), confirming && (_jsx(ConfirmDelete, { doc: confirming, onCancel: () => setConfirming(null), onConfirm: () => void deleteDocument(confirming) })), trashOpen && (_jsx(Trash, { client: client, onClose: () => setTrashOpen(false), onChanged: () => void refreshList() })), _jsx("button", { className: "scrim", "aria-label": "Close the document list", tabIndex: libraryOpen ? 0 : -1, onClick: () => setLibraryOpen(false) }), _jsxs("div", { className: "main-column", children: [error && _jsx("div", { className: "banner error", children: error }), selected && current ? (_jsx(DocumentView, { client: client, credentials: credentials, docId: selected, path: current.path, people: people, onToggleLibrary: () => setLibraryOpen((open) => !open), onNewDocument: () => void createDocument('doc'), onSignOut: onSignOut, onRenamed: (title) => setDocuments((list) => list.map((doc) => (doc.docId === selected ? { ...doc, title } : doc))), onOpenPath: (path) => {
                             const target = documents.find((doc) => doc.path === path);
                             if (target) {
                                 setSelected(target.docId);
@@ -871,6 +875,75 @@ function HistoryOverlay({ revisions, checkpoints, attribution, activeBlock, name
                         const checkpoint = byTicket.get(revision.ticket);
                         return (_jsxs("li", { className: "revision", "data-testid": "revision", children: [_jsx("span", { className: `dot ${revision.byAgent ? 'agent' : ''}` }), _jsxs("div", { className: "revision-body", children: [checkpoint && _jsx("span", { className: "checkpoint-name", children: checkpoint.name }), _jsx("span", { className: "revision-summary", children: revision.summary }), _jsxs("span", { className: "revision-meta", children: [revision.authorName || nameOf(revision.authorId), revision.byAgent && _jsx("span", { className: "agent-chip", children: "Agent" }), " \u00B7 ", when(revision.at)] })] }), _jsx("button", { className: "ghost tiny", onClick: () => void onRestore(revision.ticket), "data-testid": `restore-${revision.ticket}`, title: "Bring this version back", children: "Restore" })] }, revision.ticket));
                     }) })] }) }));
+}
+/**
+ * "Are you sure?", asked properly.
+ *
+ * A dialog rather than something inline, because a delete is the one gesture in
+ * this app that removes work from everyone's view at once, and it should cost a
+ * deliberate second look. The Overlay it is built on already traps focus and
+ * returns it, so the keyboard path is the same as every other dialog here.
+ *
+ * **The copy states what actually happens.** It does not say "this cannot be
+ * undone", because it can: the document goes to the trash with its comments,
+ * its suggestions and its history, and stays there for thirty days. A warning
+ * that overstates the damage is a warning people learn to click through.
+ *
+ * Cancel is the default focus, not Delete. The dialog exists to make the
+ * destructive answer the deliberate one, and a focused Delete that Enter
+ * activates is the opposite of that.
+ */
+function ConfirmDelete({ doc, onCancel, onConfirm, }) {
+    return (_jsxs(Overlay, { title: "Delete this document?", onClose: onCancel, children: [_jsxs("p", { className: "overlay-lead", "data-testid": "confirm-delete-text", children: [_jsx("strong", { children: doc.title }), " will move to the trash, with its notes and its history. You can put it back for the next 30 days."] }), _jsxs("div", { className: "overlay-actions", children: [_jsx("button", { className: "quiet", onClick: onCancel, autoFocus: true, "data-testid": "confirm-cancel", children: "Keep it" }), _jsx("button", { className: "danger", onClick: onConfirm, "data-testid": "confirm-delete", children: "Delete" })] })] }));
+}
+/**
+ * The trash, and the way back out of it.
+ *
+ * Its own overlay rather than a section of the sidebar: the trash is a place
+ * you visit when something has gone wrong, not a thing to scroll past every
+ * time you pick a document. Google Docs, Notion and Figma all put it behind one
+ * click for the same reason.
+ *
+ * Each row says how long is left, in days, because that is the only number
+ * anyone acts on. A timestamp would be more precise and would make the reader
+ * do the arithmetic.
+ */
+function Trash({ client, onClose, onChanged, }) {
+    const [rows, setRows] = useState(null);
+    const [error, setError] = useState(null);
+    // Which row is asking "for good?", so a permanent delete inside the trash
+    // still costs two presses. There is no third chance after this one.
+    const [purging, setPurging] = useState(null);
+    const load = useCallback(async () => {
+        try {
+            setRows(await client.trash());
+            setError(null);
+        }
+        catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
+        }
+    }, [client]);
+    useEffect(() => {
+        void load();
+    }, [load]);
+    const act = async (run) => {
+        try {
+            await run();
+            await load();
+            onChanged();
+        }
+        catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
+        }
+    };
+    return (_jsxs(Overlay, { title: "Trash", onClose: onClose, children: [_jsx("p", { className: "overlay-lead", children: "Deleted documents stay here for 30 days, with everything that was on them." }), error && _jsx("p", { className: "overlay-error", children: error }), rows === null && _jsx("p", { className: "overlay-lead", children: "Looking\u2026" }), rows?.length === 0 && (_jsx("p", { className: "overlay-lead", "data-testid": "trash-empty", children: "Nothing in here." })), _jsx("div", { className: "trash-list", "data-testid": "trash-list", children: rows?.map((row) => (_jsxs("div", { className: "trash-row", children: [_jsxs("span", { className: "trash-name", children: [_jsx("strong", { children: row.title }), _jsxs("em", { children: [row.path, " \u00B7 ", daysLeft(row.purgeAt)] })] }), purging === row.docId ? (_jsxs(_Fragment, { children: [_jsx("span", { className: "trash-warn", children: "For good?" }), _jsx("button", { className: "danger", onClick: () => void act(() => client.purge(row.docId)), "data-testid": `purge-confirm-${row.docId}`, children: "Delete" }), _jsx("button", { className: "quiet", onClick: () => setPurging(null), children: "Cancel" })] })) : (_jsxs(_Fragment, { children: [_jsx("button", { className: "quiet", onClick: () => void act(() => client.untrash(row.docId)), "data-testid": `restore-${row.docId}`, children: "Put back" }), _jsx("button", { className: "trash-purge", onClick: () => setPurging(row.docId), "aria-label": `Delete ${row.title} for good`, "data-testid": `purge-${row.docId}`, children: _jsx(TrashIcon, {}) })] }))] }, row.docId))) })] }));
+}
+/** "29 days left", which is the only part of a purge date anyone acts on. */
+function daysLeft(purgeAt) {
+    const days = Math.max(0, Math.ceil((Date.parse(purgeAt) - Date.now()) / 86_400_000));
+    if (days === 0)
+        return 'gone today';
+    return `${days} day${days === 1 ? '' : 's'} left`;
 }
 function Overlay({ title, onClose, children, }) {
     const panel = useRef(null);
