@@ -1791,3 +1791,95 @@ the feature didn't exist. `New → Design` creates a standalone design at
 **Consequence:** the insert-into-a-document path still exists and still means
 something different — it creates a design *and links to it from here*. Two
 entry points, two intents, same underlying create.
+
+---
+
+## D60 — The palette holds finished objects, not primitives
+
+**Context:** the left pane of the design editor was a layer tree with two
+buttons above it: `+ Box` and `+ Text`. That is the correct decomposition of
+the *format* — a design really is boxes and text — and the wrong decomposition
+of the *task*. Nobody sets out to add a box. They set out to add a **button**,
+and a button is a box with a height, horizontal padding, a radius, a fill, a
+centred label in a semibold weight on an on-accent colour, plus `hover:` and
+`press:` fills. Six or seven decisions, every one a chance to make something
+that looks nearly right. Offering the primitive hands the most design decisions
+to the person least equipped to make them.
+
+**Decision:** `BLOCKS` in `@galley/design` — fourteen ready-made pieces on four
+shelves (Text, Buttons, Fields, Layout), each a `NewLayer` tree that inserts as
+one op. This is the thing Canva actually does better than the professional
+tools, and it is not the drag-and-drop everyone credits it for: it is that the
+palette is full of finished objects, so you are never assembling a heading out
+of a rectangle.
+
+**It lives in the package, not the app.** The canvas drags these onto a frame; an
+agent can ask for one by name. Two catalogs would be two vocabularies that
+drift, and "add a primary button" would mean different things depending on who
+typed it.
+
+**Every block is valid and visible on arrival, and there are tests that say so.**
+Each one is inserted into a bare frame, serialized, re-parsed, checked for byte
+stability, run through `resolveClasses` for unknown names and through
+`lintDesign` for contrast — and a box with neither `flex` nor a size fails, on
+the grounds that an "add" which appears to do nothing is worse than no button.
+
+**Two ways to place one, because they answer different questions.** Clicking
+means "put it where I am" and needs no aim. Dragging means "put it *there*" and
+is the only way to reach a slot that is nowhere near the selection. A palette
+with only drag makes the common case a precision task; one with only click
+cannot express position at all.
+
+**The pane became a two-way switch, and `Add` is the default.** The layer tree
+answers "what is already in this design", which you can also answer by looking
+at the canvas. The question you *cannot* answer by looking is "what can I put in
+it". Figma opens on the first; Canva opens on the second; the beginner needs the
+second.
+
+---
+
+## D61 — A palette entry draws itself by rendering the real block
+
+**Context:** the palette needs a picture per entry. The cheap answer is a
+hand-drawn icon per block.
+
+**Decision:** render the actual block, through the same code the canvas uses,
+scaled down.
+
+An icon is a *second description* of the same object and is free to drift from
+it. The first time a button's fill changes, a drawn icon is quietly lying, and
+nothing fails — the palette just becomes wrong in a way no test can see.
+Composing each block into a one-frame design at 220px and scaling it to the card
+makes that impossible by construction.
+
+Three details that were each wrong once:
+
+- **The preview frame has no padding and no fill.** With `p-3 bg-canvas` every
+  block sat on a slab of empty canvas. The card is a picture of the block, not
+  of a screen containing it.
+- **The card's height is measured, not fixed.** The catalog runs from a divider
+  to a two-field row. A fixed height crops the tall ones and pads the short
+  ones. The scaled subtree is absolutely positioned and contributes no height,
+  so the number has to be measured after layout and put back.
+- **The preview has no background of its own.** It showed as a coloured strip
+  under every block short enough to be padded up to the minimum.
+
+**Consequence:** the scale lives in the component next to the measurement rather
+than in the stylesheet, because the two have to agree and CSS could be changed
+without the measurement noticing.
+
+---
+
+## D62 — Fitting shrinks by default and only magnifies on request
+
+**Context:** the canvas fits the design into the viewport on open. A new design
+is one heading and one line of text — which "fits" a wide viewport at over
+**325%**. The first thing anybody saw on creating a design was their own words
+blown up past their hinting, soft-edged and enormous.
+
+**Decision:** the initial fit is capped at 1:1. Pressing the zoom control's Fit
+button is still uncapped.
+
+Fitting is two operations wearing one name. Shrinking something that overflows
+is always what was meant. *Enlarging* something small is a choice — right when
+someone asked for it, wrong as the thing that happens on open.

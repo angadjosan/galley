@@ -74,11 +74,29 @@ export function zoomAbout(camera: Camera, viewportPoint: { x: number; y: number 
   return { zoom, x: camera.x + before.x - after.x, y: camera.y + before.y - after.y };
 }
 
-/** The camera that fits `content` into `viewport`, with room around it. */
-export function fit(content: Rect, viewport: { width: number; height: number }, padding = 48): Camera {
+/**
+ * The camera that fits `content` into `viewport`, with room around it.
+ *
+ * `max` caps how far it will magnify. Fitting is a two-sided operation and only
+ * one side is always wanted: shrinking a design that overflows is the point,
+ * while *enlarging* a small one is a choice. A new design is one heading and
+ * one line of text, which fits a wide viewport at over 300% — every glyph
+ * blown up past its hinting, on the first screen anybody sees. Pressing Fit
+ * deliberately still magnifies, because there the enlargement is the request.
+ */
+export function fit(
+  content: Rect,
+  viewport: { width: number; height: number },
+  padding = 48,
+  max = MAX_ZOOM,
+): Camera {
   if (content.width <= 0 || content.height <= 0) return IDENTITY;
   const zoom = clampZoom(
-    Math.min((viewport.width - padding * 2) / content.width, (viewport.height - padding * 2) / content.height),
+    Math.min(
+      (viewport.width - padding * 2) / content.width,
+      (viewport.height - padding * 2) / content.height,
+      max,
+    ),
   );
   return {
     zoom,

@@ -2692,7 +2692,7 @@ kbd {
    is. The order is the order the questions arrive in. */
 .design-editor-body {
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr) 288px;
+  grid-template-columns: 264px minmax(0, 1fr) 288px;
   flex: 1;
   min-height: 0;
 }
@@ -2706,7 +2706,50 @@ kbd {
   }
 }
 
-.design-tree,
+/**
+ * The left pane: a switch, then whichever of its two jobs is showing.
+ *
+ * The pane scrolls, the switch does not — a palette you have scrolled halfway
+ * down should not hide the way back to the layer tree.
+ */
+.design-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+}
+
+.design-side-switch {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.design-side-switch button {
+  flex: 1;
+  padding: 5px 8px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.design-side-switch button:hover {
+  color: var(--text);
+}
+
+.design-side-switch button.is-on {
+  background: var(--page);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
 .design-inspector {
   overflow-y: auto;
   background: var(--surface);
@@ -2714,7 +2757,8 @@ kbd {
 }
 
 .design-tree {
-  border-right: 1px solid var(--line);
+  overflow-y: auto;
+  min-height: 0;
   padding: 8px 0;
 }
 
@@ -3542,4 +3586,105 @@ kbd {
   text-align: center;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------- the palette */
+
+/**
+ * What you can add, drawn as itself.
+ *
+ * Two columns of cards. One column would make the pane a long scroll for
+ * fourteen items; three would shrink each preview past the point where a button
+ * and a quiet button look different, which is the only reason to draw them at
+ * all.
+ */
+.design-palette {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 10px 8px 16px;
+}
+
+.design-palette-shelf + .design-palette-shelf {
+  margin-top: 14px;
+}
+
+.design-palette-heading {
+  margin: 0 0 6px 2px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.design-palette-items {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.design-palette-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--page);
+  cursor: grab;
+  text-align: left;
+}
+
+.design-palette-item:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+/* The hand closes on the way down, which is the whole feedback a drag gets
+   before the canvas has anything to say about it. */
+.design-palette-item:active:not(:disabled) {
+  cursor: grabbing;
+}
+
+.design-palette-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.design-palette-name {
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/**
+ * The preview: a real design, composed at 300px and shrunk to fit the card.
+ *
+ * `transform: scale` rather than smaller values in the design itself, because
+ * the point is that this is *the same block* the canvas will insert — scaling
+ * the picture keeps it honest, while re-authoring it at thumbnail sizes would
+ * make the palette a second design that can disagree with the first.
+ *
+ * The outer span is what takes up space in the grid; the inner one is 300px
+ * wide and transformed, which takes it out of layout entirely, so the card's
+ * height comes from the fixed height here rather than from the block.
+ */
+.design-palette-preview {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--r-xs);
+  /* No fill. The card behind it already has one, and a fill here shows as a
+     coloured strip wherever a short block is padded up to the minimum. */
+  pointer-events: none;
+}
+
+.design-palette-preview-scale {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
 }

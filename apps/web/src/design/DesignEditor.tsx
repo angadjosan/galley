@@ -16,12 +16,14 @@ import {
   type Frame,
   type Layer,
   type LintFinding,
+  blockById,
   type Component,
   type NewLayer,
   type State,
   type UseLayer,
 } from '@galley/design';
 import { Stage } from './Stage.js';
+import { Palette } from './Palette.js';
 import { NOTHING, addToSelection, focusFor, reconcile, type Selection } from './selection.js';
 import { parentOf as holderOf, slotOf } from './tree.js';
 
@@ -101,6 +103,8 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
    * whole design flips.
    */
   const [mode, setMode] = useState('light');
+  /** Which of the left pane's two jobs is showing. Adding, by default. */
+  const [pane, setPane] = useState<'add' | 'layers'>('add');
   /**
    * Which state the canvas is showing, and which one the inspector writes to.
    *
@@ -324,13 +328,8 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
    * do nothing is worse than one with no button.
    */
   const add = useCallback(
-    (kind: 'box' | 'text') => {
+    (made: NewLayer) => {
       if (!design) return;
-      const made: NewLayer =
-        kind === 'text'
-          ? { kind: 'text', name: 'Text', classes: ['text-body', 'text-fg'], content: 'New text' }
-          : { kind: 'box', name: 'Box', classes: ['flex', 'flex-col', 'gap-2', 'p-4', 'bg-surface', 'rounded-md'] };
-
       const where = placeFor(design, selected);
       const grown = run([{ op: 'insert', parent: where.parent, index: where.index, layer: made }]);
       if (grown) {
@@ -371,6 +370,27 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
       }
     },
     [design, run],
+  );
+
+  /**
+   * A block dragged out of the palette and dropped on the canvas.
+   *
+   * The same `insert` op the click path produces, at a slot the canvas resolved
+   * instead of one inferred from the selection. Two gestures, one op — which is
+   * the property that makes both of them reviewable, undoable and attributable
+   * without either knowing that it is.
+   */
+  const dropBlock = useCallback(
+    (blockId: string, parent: string, index: number): void => {
+      const block = blockById(blockId);
+      if (!block) return;
+      const grown = run([{ op: 'insert', parent, index, layer: block.layer }]);
+      if (grown) {
+        const id = idAfter(grown, parent, index);
+        if (id) setSelection({ focus: focusFor(grown, id), ids: [id] });
+      }
+    },
+    [run],
   );
 
   const remove = useCallback(() => {
@@ -468,28 +488,41 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
       )}
 
       <div className="design-editor-body">
-        <aside className="design-tree" aria-label="Layers">
-          <div className="design-tree-tools">
-            <button type="button" onClick={() => add('box')} disabled={props.readOnly} title="Add a box">
-              + Box
-            </button>
-            <button type="button" onClick={() => add('text')} disabled={props.readOnly} title="Add some text">
-              + Text
+        <aside className="design-side" aria-label="Add and layers">
+          {/*
+            Two panes behind one switch, and `Add` is the one you land on.
+            The layer tree is what a design tool has always put here, and it is
+            the wrong first thing: it answers "what is already in this design",
+            which is a question you can also answer by looking at the canvas.
+            The question you cannot answer by looking is "what can I put in it".
+          */}
+          <div className="design-side-switch" role="group" aria-label="Panel">
+            <button
+              type="button"
+              className={pane === 'add' ? 'is-on' : ''}
+              aria-pressed={pane === 'add'}
+              onClick={() => setPane('add')}
+              data-testid="pane-add"
+            >
+              Add
             </button>
             <button
               type="button"
-              onClick={remove}
-              // A frame cannot be deleted — a design needs one — so the button
-              // is disabled rather than enabled and inert. An affordance that
-              // appears and does nothing is the failure this codebase keeps
-              // finding in its own work.
-              disabled={props.readOnly || !selected || design?.frames.some((frame) => frame.id === selected) === true}
-              title="Delete the selected layer"
-              className="design-tree-delete"
+              className={pane === 'layers' ? 'is-on' : ''}
+              aria-pressed={pane === 'layers'}
+              onClick={() => setPane('layers')}
+              data-testid="pane-layers"
             >
-              Delete
+              Layers
             </button>
           </div>
+
+          {pane === 'add' && (
+            <Palette mode={mode} disabled={props.readOnly === true} onAdd={(block) => add(block.layer)} />
+          )}
+
+          {pane === 'layers' && (
+            <div className="design-tree">
           {(design?.components ?? []).length > 0 && (
             <p className="design-tree-heading">Components</p>
           )}
@@ -537,6 +570,8 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
               )}
             </button>
           ))}
+            </div>
+          )}
         </aside>
 
         <div className="design-canvas">
@@ -573,6 +608,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
               onEscape={props.onClose}
               onMeasure={setRects}
               onMove={moveLayer}
+              onDropExternal={dropBlock}
               onText={(id, content) => run([{ op: 'set-text', id, content }])}
               onEdit={edit}
               onDuplicate={duplicate}

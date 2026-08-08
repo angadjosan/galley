@@ -67,11 +67,20 @@ export declare function zoomAbout(camera: Camera, viewportPoint: {
     x: number;
     y: number;
 }, nextZoom: number): Camera;
-/** The camera that fits `content` into `viewport`, with room around it. */
+/**
+ * The camera that fits `content` into `viewport`, with room around it.
+ *
+ * `max` caps how far it will magnify. Fitting is a two-sided operation and only
+ * one side is always wanted: shrinking a design that overflows is the point,
+ * while *enlarging* a small one is a choice. A new design is one heading and
+ * one line of text, which fits a wide viewport at over 300% — every glyph
+ * blown up past its hinting, on the first screen anybody sees. Pressing Fit
+ * deliberately still magnifies, because there the enlargement is the request.
+ */
 export declare function fit(content: Rect, viewport: {
     width: number;
     height: number;
-}, padding?: number): Camera;
+}, padding?: number, max?: number): Camera;
 export declare function unionOf(rects: readonly Rect[]): Rect | null;
 export declare function intersects(a: Rect, b: Rect): boolean;
 export declare function containsRect(outer: Rect, inner: Rect): boolean;
