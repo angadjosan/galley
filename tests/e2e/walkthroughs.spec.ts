@@ -1097,6 +1097,40 @@ test.describe('the library', () => {
     expect(source).toContain('Continue');
   });
 
+  test('a second block from the palette lands beside the first, not inside it', async ({ page }) => {
+    // Every finished block is a box -- a button *is* a box with a label -- and
+    // "add" used to mean "inside the selection when the selection is a box".
+    // So a block selected itself on arrival and the next one landed inside it:
+    // Button then Caption put grey text on a blue fill, which the linter
+    // correctly called out at 1.33:1. Two text fields became one field
+    // containing another.
+    await openWorkspace(page);
+    await page.getByTestId('new-button').click();
+    await page.getByTestId('new-design').click();
+    await expect(page.getByTestId('design-palette')).toBeVisible();
+
+    await page.getByTestId('block-field').click();
+    await page.getByTestId('block-field').click();
+    await page.getByTestId('block-button').click();
+    await page.getByTestId('block-caption').click();
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    // Nothing to fix is the assertion that matters: nesting these wrongly is
+    // exactly what produces a contrast failure.
+    await expect(page.getByTestId('design-findings')).toHaveText('Nothing to fix.');
+
+    // Two fields, both of them at the top level of the frame.
+    await page.getByTestId('pane-layers').click();
+    await expect(page.locator('.design-tree-row', { hasText: 'Field' })).toHaveCount(2);
+    const depths = await page.locator('.design-tree-row').evaluateAll((rows) =>
+      rows
+        .filter((row) => ['Field', 'Button', 'Caption'].includes(row.querySelector('.design-tree-name')?.textContent ?? ''))
+        .map((row) => (row as HTMLElement).style.paddingLeft),
+    );
+    expect(depths, 'the blocks are not siblings').toHaveLength(4);
+    expect(new Set(depths).size, 'the blocks are at different depths').toBe(1);
+  });
+
   test('a design is renamed by typing over its name, and the list follows', async ({ page }) => {
     // The one thing about a design you could not change from the canvas. A
     // workspace filled up with documents all called "Untitled design".

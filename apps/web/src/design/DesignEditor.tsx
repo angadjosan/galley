@@ -332,7 +332,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
   const add = useCallback(
     (made: NewLayer) => {
       if (!design) return;
-      const where = placeFor(design, selected);
+      const where = placeFor(design, selected, selection.focus);
       const grown = run([{ op: 'insert', parent: where.parent, index: where.index, layer: made }]);
       if (grown) {
         // Select what was just made, so the next thing typed lands on it. Read
@@ -342,7 +342,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
         if (id) setSelection({ focus: focusFor(grown, id), ids: [id] });
       }
     },
-    [design, run, selected],
+    [design, run, selected, selection.focus],
   );
 
   /**
@@ -1304,42 +1304,39 @@ function Toggle({
 }
 
 /**
- * Where "add" means, given what is selected.
+ * Where "add" means, given what is selected and what we are inside.
  *
- * Inside a container when one is selected, and *after* the selection when a
- * leaf is — which is what "add" means to someone who has just clicked a label
- * and wants another one next to it.
+ * **Beside the selection, in the container we are already in.** Never inside
+ * the selection itself, and that is the correction: it used to place inside
+ * whenever the selected layer was a box, which read fine in the abstract and
+ * was a trap in practice. Every finished block from the palette is a box —
+ * a button *is* a box with a label — so it selected itself on arrival and the
+ * next click on the palette landed inside it. Clicking Button then Caption put
+ * the caption inside the button, where the linter correctly reported it as
+ * 1.33:1 grey-on-blue. Clicking Text field twice produced one field with
+ * another field inside it. Neither is a thing anyone has ever meant.
+ *
+ * The container comes from `selection.focus`, which is the editor's existing
+ * answer to "which level am I working at" — set by going into a box on the
+ * canvas and shown in the breadcrumb. So going inside a card and adding still
+ * adds to the card, and the frame is the answer when nothing has been entered.
+ *
+ * Landing *inside* a specific box is what dragging is for. It can say where.
  */
-function placeFor(design: DesignDocument, selected: string | null): { parent: string; index: number } {
+function placeFor(
+  design: DesignDocument,
+  selected: string | null,
+  focus: string | null,
+): { parent: string; index: number } {
   const first = design.frames[0]!;
-  if (!selected) return { parent: first.id, index: first.children.length };
+  const holder = (focus && find(design, focus)) || first;
+  const container = 'children' in holder ? holder : first;
 
-  const layer = find(design, selected);
-  if (!layer) return { parent: first.id, index: first.children.length };
-  if (!('kind' in layer) || layer.kind === 'box') {
-    return { parent: layer.id, index: 'children' in layer ? layer.children.length : 0 };
+  // After the selection, when the selection is one of this container's own
+  // children. A selection somewhere else entirely — or none — appends.
+  if (selected) {
+    const at = container.children.findIndex((child) => child.id === selected);
+    if (at !== -1) return { parent: container.id, index: at + 1 };
   }
-
-  // A leaf: after it, inside whatever holds it.
-  const parentOf = (id: string): { parent: string; index: number } | null => {
-    const search = (
-      holder: { id: string; children: readonly { id: string }[] },
-    ): { parent: string; index: number } | null => {
-      const at = holder.children.findIndex((child) => child.id === id);
-      if (at !== -1) return { parent: holder.id, index: at + 1 };
-      for (const child of holder.children) {
-        if ('children' in child) {
-          const found = search(child as { id: string; children: readonly { id: string }[] });
-          if (found) return found;
-        }
-      }
-      return null;
-    };
-    for (const frame of design.frames) {
-      const found = search(frame);
-      if (found) return found;
-    }
-    return null;
-  };
-  return parentOf(selected) ?? { parent: first.id, index: first.children.length };
+  return { parent: container.id, index: container.children.length };
 }

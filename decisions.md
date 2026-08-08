@@ -2000,3 +2000,39 @@ rename done outside the ops would have been the one edit that is none of those.
 first backspace that emptied the field would be rejected and the old name would
 spring back mid-word. An empty field on blur is a half-finished rename, not a
 request to have no name, so the design keeps what it had.
+
+---
+
+## D66 — "Add" means beside the selection, never inside it
+
+**Context:** found by building a sign-in screen with the new palette, four
+clicks, the way a first-timer would. The result was wrong in two ways at once:
+two Text fields came out as one field *containing* another, and the Caption
+landed **inside** the Button, where the linter correctly reported it at 1.33:1 —
+grey text on a blue fill.
+
+The rule was: inside a container when a container is selected, after the
+selection when a leaf is. That reads fine and is a trap, because **every
+finished block is a box**. A button *is* a box with a label. So each block
+selected itself on arrival, and the next click on the palette landed inside the
+thing the last click made. The rule was written when the only two things you
+could add were a bare box and a bare text, where it was almost right; the
+palette made it almost always wrong.
+
+**Decision:** a palette insert goes into `selection.focus` — the container you
+are *in* — positioned after the selected layer.
+
+`focus` is the editor's existing answer to "which level am I working at": set by
+going into a box on the canvas, shown in the breadcrumb, already reconciled
+against a changing tree. So the frame is the answer until you have deliberately
+entered something, and going inside a card and adding still adds to the card.
+Both behaviours fall out of one lookup, with no special case for either.
+
+**Landing inside a specific box is what dragging is for.** The two gestures had
+already been given different jobs — click means "put it where I am", drag means
+"put it *there*" — and this is the same split. A click cannot say which
+container it meant, so it should not guess; a drag can, and does.
+
+**Consequence:** the contrast linter found this before any test did, which is
+the argument for D-earlier's "findings shown continuously rather than on save".
+It was reporting a real defect in the editor, not in the design.
