@@ -274,6 +274,29 @@ export function build(options: ServerOptions = {}): GalleyServer {
     };
   });
 
+  app.delete('/v1/docs/:ref', async (request, reply) => {
+    const session = sessionOf(request);
+    const { ref } = request.params as { ref: string };
+    const actor = await resolve(ref);
+    // `write` and not a capability of its own. Delete is destructive, but the
+    // damage a writer can already do — replace every block with nothing — is
+    // the same shape, and a separate `delete` verb would be a permission
+    // nobody grants separately and everybody has to remember to grant.
+    await authorizeDoc(session, actor, 'write');
+
+    // Tell the editors first. Once the row is gone their next sync frame would
+    // resolve to nothing, and a client discovering its document is missing by
+    // way of a 404 on a background write is how you get a lost-work dialog for
+    // work that was deliberately thrown away.
+    for (const connection of hub.connectionsFor(actor.docId)) {
+      connection.closeWith({ t: 'ended', reason: 'document deleted' }, 'document deleted');
+    }
+
+    const path = await workspace.remove(actor.docId, principalOf(session));
+    if (!path) return reply.code(404).send({ error: `no document ${ref}` });
+    return { docId: actor.docId, path };
+  });
+
   app.post('/v1/docs/:ref/ingest', async (request) => {
     const session = sessionOf(request);
     const { ref } = request.params as { ref: string };

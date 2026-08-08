@@ -439,6 +439,43 @@ export class Workspace {
   }
 
   /**
+   * Delete a document and everything anchored to it.
+   *
+   * Serialized on the document's own lock, like `close`, so a delete cannot
+   * interleave with an open of the same id.
+   *
+   * **Deliberately does not flush.** `close` persists on the way out; doing
+   * that here would rewrite the row this method is about to delete, and a
+   * debounced persist scheduled *before* the delete would resurrect it a
+   * moment after. The pending timer is cleared and the entry detached before
+   * the row goes, so nothing is left holding a write against a dead id.
+   *
+   * Returns the path that was deleted, or `undefined` if there was no such
+   * document — callers turn that into a 404 rather than a lie.
+   */
+  async remove(docId: string, principal: Principal): Promise<string | undefined> {
+    this.assertOpen();
+    return this.locks.runExclusive(docId, async () => {
+      const stored = await this.store.read(() => this.store.getDocument(docId));
+      if (!stored || stored.workspaceId !== this.workspaceId) return undefined;
+
+      const entry = this.open.get(docId);
+      if (entry) {
+        if (entry.persistTimer) clearTimeout(entry.persistTimer);
+        entry.unsubscribe();
+        await entry.actor.close();
+        this.open.delete(docId);
+        this.disposeAfterGrace(docId, entry.actor.document);
+      }
+
+      await this.store.transaction(() => this.store.deleteDocument(docId));
+      this.audit(principal, 'document.delete', docId, stored.path);
+      this.counters.inc('documents-deleted');
+      return stored.path;
+    });
+  }
+
+  /**
    * Evict the least recently used idle documents until under the cap.
    *
    * **Must be called with no document lock held.** It acquires other

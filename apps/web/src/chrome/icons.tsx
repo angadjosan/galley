@@ -205,3 +205,20 @@ export const CheckIcon = (): JSX.Element => (
     <path d="M4 10.5 8 14.5 16 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
+
+export const TrashIcon = (): JSX.Element => (
+  <Svg>
+    <path d="M4.5 6h11" />
+    <path d="M8 6V4.5h4V6" />
+    <path d="M6 6l.7 9a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9L14 6" />
+    <path d="M8.8 8.8v4.4M11.2 8.8v4.4" />
+  </Svg>
+);
+
+export const DocumentIcon = (): JSX.Element => (
+  <Svg>
+    <path d="M5.5 3.5h6L15 7v9.5H5.5z" />
+    <path d="M11.5 3.5V7H15" />
+    <path d="M7.8 10.5h4.4M7.8 13h3" />
+  </Svg>
+);

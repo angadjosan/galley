@@ -26,6 +26,7 @@ import { Editor, type EditorHandle } from './editor/Editor.js';
 import { INSERT_TABLE, insertDesignLink, insertDiagram, insertImage } from './editor/commands.js';
 import { DIAGRAM_TEMPLATES } from './editor/diagram.js';
 import { Boundary } from './chrome/Boundary.js';
+import { DesignIcon, DocumentIcon, TrashIcon } from './chrome/icons.js';
 import { DesignEditor } from './design/DesignEditor.js';
 import { MenuBar } from './chrome/MenuBar.js';
 import { Toolbar } from './chrome/Toolbar.js';
@@ -200,6 +201,12 @@ function Workspace({
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  // The document the trash button has been pressed on, waiting for the second
+  // press. Held here rather than in the row so that opening one confirmation
+  // closes any other — two rows both asking "delete?" is how the wrong one
+  // gets confirmed.
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+  const [creatingOpen, setCreatingOpen] = useState(false);
 
   const refreshList = useCallback(async () => {
     try {
@@ -240,15 +247,31 @@ function Workspace({
   }, [client, query]);
 
   // Every other overlay in the app closes on Escape; the document drawer has
-  // to as well, and it covers its own toggle button at narrow widths.
+  // to as well, and it covers its own toggle button at narrow widths. The two
+  // transient things in the sidebar — a pending delete and the New menu — go
+  // with it, because Escape means "I didn't mean that" everywhere else.
   useEffect(() => {
-    if (!libraryOpen) return;
+    if (!libraryOpen && !confirmingDelete && !creatingOpen) return;
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setLibraryOpen(false);
+      if (event.key !== 'Escape') return;
+      setLibraryOpen(false);
+      setConfirmingDelete(null);
+      setCreatingOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [libraryOpen]);
+  }, [libraryOpen, confirmingDelete, creatingOpen]);
+
+  // A menu that stays open after you look away is a menu you have to dismiss.
+  useEffect(() => {
+    if (!creatingOpen) return;
+    const onDown = (event: MouseEvent): void => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest('.new-doc-wrap')) setCreatingOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [creatingOpen]);
 
   const grouped = useMemo(() => groupByFolder(documents), [documents]);
   const current = documents.find((doc) => doc.docId === selected) ?? null;
@@ -256,14 +279,59 @@ function Workspace({
   // No dialog. A native `window.prompt` is the least finished-looking thing an
   // interface can show, and naming a document is not a decision worth blocking
   // on — the title is right there to type over.
-  const createDocument = async (): Promise<void> => {
+  //
+  // A design is created the same way and lands in the same list, because a
+  // design *is* a document. Creating one used to require being inside another
+  // document first — the only entry point was "insert a design into this one" —
+  // which made the app's second content type reachable only as a footnote to
+  // the first.
+  const createDocument = async (kind: 'doc' | 'design'): Promise<void> => {
     const stamp = new Date().toISOString().slice(0, 10);
-    const path = `untitled-${stamp}-${Math.random().toString(36).slice(2, 6)}`;
+    const suffix = Math.random().toString(36).slice(2, 6);
+    const blank = STARTERS.find((starter) => starter.id === 'blank');
+    const seed =
+      kind === 'design' && blank
+        ? {
+            path: `design/untitled-${stamp}-${suffix}`,
+            content: `# Untitled design\n\n\`\`\`design\n${blank.source}\n\`\`\`\n`,
+          }
+        : {
+            path: `untitled-${stamp}-${suffix}`,
+            content: '# Untitled\n\nStart writing…\n',
+          };
     try {
-      const created = await client.create(path, '# Untitled\n\nStart writing…\n');
+      const created = await client.create(seed.path, seed.content);
       await refreshList();
       setSelected(created.docId);
       setLibraryOpen(false);
+      setCreatingOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  /**
+   * Delete a document, second press.
+   *
+   * Deliberately not `window.confirm`: it is the same finished-looking problem
+   * as `window.prompt`, and it puts the question somewhere other than the thing
+   * being asked about. The row itself becomes the question instead.
+   *
+   * There is no undo. The server takes the comments, suggestions, history and
+   * search index with the document, so an undo would have to be a soft delete
+   * all the way down — worth building, not worth pretending to have.
+   */
+  const deleteDocument = async (doc: DocumentSummary): Promise<void> => {
+    setConfirmingDelete(null);
+    try {
+      await client.remove(doc.docId);
+      const remaining = documents.filter((d) => d.docId !== doc.docId);
+      setDocuments(remaining);
+      // Selecting a deleted document renders an editor over a 404. Move to a
+      // neighbour, and only then refresh — the list we just computed is right,
+      // and waiting for a round trip would leave the dead document on screen.
+      if (selected === doc.docId) setSelected(remaining[0]?.docId ?? null);
+      await refreshList();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -315,28 +383,87 @@ function Workspace({
             {grouped.map(([folder, docs]) => (
               <div key={folder} className="folder">
                 <div className="folder-label">{folder ? prettyName(folder) : 'No folder'}</div>
-                {docs.map((doc) => (
-                  <button
-                    key={doc.docId}
-                    className={`doc-item ${doc.docId === selected ? 'is-selected' : ''}`}
-                    onClick={() => {
-                      setSelected(doc.docId);
-                      setLibraryOpen(false);
-                    }}
-                    data-testid={`doc-${doc.path}`}
-                  >
-                    <span className="doc-title">{doc.title}</span>
-                  </button>
-                ))}
+                {docs.map((doc) =>
+                  doc.docId === confirmingDelete ? (
+                    <div key={doc.docId} className="doc-row is-confirming">
+                      <span className="doc-confirm-text">Delete “{doc.title}”?</span>
+                      <button
+                        className="doc-confirm-yes"
+                        onClick={() => void deleteDocument(doc)}
+                        data-testid={`confirm-delete-${doc.path}`}
+                      >
+                        Delete
+                      </button>
+                      <button
+                        className="doc-confirm-no"
+                        onClick={() => setConfirmingDelete(null)}
+                        aria-label="Keep this document"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div key={doc.docId} className="doc-row">
+                      <button
+                        className={`doc-item ${doc.docId === selected ? 'is-selected' : ''}`}
+                        onClick={() => {
+                          setSelected(doc.docId);
+                          setLibraryOpen(false);
+                        }}
+                        data-testid={`doc-${doc.path}`}
+                      >
+                        <span className="doc-title">{doc.title}</span>
+                      </button>
+                      <button
+                        className="doc-delete"
+                        onClick={() => setConfirmingDelete(doc.docId)}
+                        title={`Delete ${doc.title}`}
+                        aria-label={`Delete ${doc.title}`}
+                        data-testid={`delete-${doc.path}`}
+                      >
+                        <TrashIcon />
+                      </button>
+                    </div>
+                  ),
+                )}
               </div>
             ))}
           </nav>
         )}
 
         <div className="library-foot">
-          <button className="new-doc" onClick={() => void createDocument()}>
-            <span aria-hidden="true">+</span> New document
-          </button>
+          <div className="new-doc-wrap">
+            {creatingOpen && (
+              <div className="new-doc-menu" data-testid="new-menu">
+                <button className="new-doc-choice" onClick={() => void createDocument('doc')}>
+                  <DocumentIcon />
+                  <span>
+                    <strong>Document</strong>
+                    <em>Words, in a page</em>
+                  </span>
+                </button>
+                <button
+                  className="new-doc-choice"
+                  onClick={() => void createDocument('design')}
+                  data-testid="new-design"
+                >
+                  <DesignIcon />
+                  <span>
+                    <strong>Design</strong>
+                    <em>A screen, on a canvas</em>
+                  </span>
+                </button>
+              </div>
+            )}
+            <button
+              className="new-doc"
+              onClick={() => setCreatingOpen((open) => !open)}
+              aria-expanded={creatingOpen}
+              data-testid="new-button"
+            >
+              <span aria-hidden="true">+</span> New
+            </button>
+          </div>
           <button className="link-quiet" onClick={onSignOut}>
             Sign out
           </button>
@@ -361,7 +488,7 @@ function Workspace({
             path={current.path}
             people={people}
             onToggleLibrary={() => setLibraryOpen((open) => !open)}
-            onNewDocument={() => void createDocument()}
+            onNewDocument={() => void createDocument('doc')}
             onSignOut={onSignOut}
             onOpenPath={(path) => {
               const target = documents.find((doc) => doc.path === path);
@@ -382,7 +509,7 @@ function Workspace({
             }}
           />
         ) : (
-          <FirstRun onCreate={() => void createDocument()} />
+          <FirstRun onCreate={() => void createDocument('doc')} />
         )}
       </div>
     </div>

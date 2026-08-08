@@ -174,6 +174,11 @@ export class GalleyClient {
     return this.call('POST', '/v1/docs', { path, content, title });
   }
 
+  /** Delete a document and everything anchored to it. Not recoverable. */
+  async remove(ref: string): Promise<{ docId: string; path: string }> {
+    return this.call('DELETE', `/v1/docs/${encodeURIComponent(ref)}`);
+  }
+
   async applyOps(
     ref: string,
     ops: readonly BlockOp[],

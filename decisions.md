@@ -1714,3 +1714,80 @@ and a palette is a list that wants a column with room for names.
 The line, stated once so it settles future questions: *if a control changes how
 something looks, it goes on the right; if it changes what something is or where
 it sits, it goes on the canvas.*
+
+---
+
+## D58 — Delete is a real operation, and it rides on `write`
+
+**Context:** the workspace could create documents and never remove them. Not an
+oversight in the storage layer — `Store.deleteDocument` was written early and
+cascades correctly across comments, suggestions, orphans, the FTS index,
+revisions and checkpoints — but it had **zero callers**. Everything above it was
+missing: no workspace method, no route, no client method, no CLI command, no
+affordance in the app. A writing tool where the only way to get rid of a draft
+is to leave it in the list forever is not finished.
+
+**Decision:** wire the primitive all the way up, as `DELETE /v1/docs/:ref`.
+
+**It is authorized as `write`, not a capability of its own.** A separate
+`delete` verb sounds safer and isn't: the damage a writer can already do —
+replace every block with nothing — has the same shape and the same
+irreversibility, so the new verb would guard nothing while becoming a permission
+nobody remembers to grant. `Capability` stays a four-element union.
+
+**`Workspace.remove` deliberately does not flush.** `close` persists on the way
+out, which is right for eviction and exactly wrong here: it would rewrite the
+row the method is about to delete. Worse, a *debounced* persist scheduled by a
+recent edit would fire after the delete and resurrect the document a few hundred
+milliseconds later. The pending timer is cleared and the entry detached before
+the row goes. There is a test that edits, deletes, waits out the debounce and
+asserts the document is still gone.
+
+**Editors are told before the row disappears.** The route closes every sync
+connection for the document with `{ t: 'ended', reason: 'document deleted' }`
+first. Otherwise a client discovers its document is missing by way of a 404 on a
+background write, which is how you get a lost-work warning for work that was
+deliberately thrown away.
+
+**Consequence:** no undo, and none is pretended. Undo would have to be a soft
+delete all the way down — a `deleted_at` on the row, every list and search and
+resolve filtering on it, and a policy for when it becomes real. That is a
+feature, not a flag, and half of it is worse than none: an Undo button that
+restores the prose but not the comments anchored to it is a lie told at exactly
+the moment someone is relying on it.
+
+---
+
+## D59 — The question goes where the thing is
+
+**Context:** two destructive-or-branching moments needed an interface — deleting
+a document, and choosing what "New" means now that a design is also a document.
+The house style already rejects `window.prompt` for naming (D-earlier: "the
+least finished-looking thing an interface can show"), and the same argument
+disqualifies `window.confirm`.
+
+**Decision:** neither gets a modal.
+
+**Delete replaces the row it is asking about.** Press the trash icon and the
+document's row becomes `Delete "Title"? [Delete] [Cancel]` in place. A dialog
+would ask the question somewhere other than the thing being asked about, would
+need its own dismissal, and — the actual failure mode — would let the list
+scroll under it so the confirmation and the row it refers to are no longer the
+same object on screen. Only one row can be confirming at a time, held as state
+on the list rather than per row, because two rows both asking "delete?" is how
+the wrong one gets confirmed.
+
+**The trash icon is invisible until hover or focus-within, but never
+`display: none`.** Hidden rows keep it out of the tab order, which makes delete
+unreachable by keyboard. It is laid out and transparent instead.
+
+**"New document" became "New", with two choices.** A design *is* a document, but
+the only way to create one was "insert a design into the document you are
+already in" — so the app's second content type was reachable only as a footnote
+to its first, and a fresh workspace (which seeds no design at all) looked like
+the feature didn't exist. `New → Design` creates a standalone design at
+`design/untitled-…` from the `blank` starter and opens the canvas on it.
+
+**Consequence:** the insert-into-a-document path still exists and still means
+something different — it creates a design *and links to it from here*. Two
+entry points, two intents, same underlying create.

@@ -637,3 +637,91 @@ describe('images', () => {
     expect((await h.request('/v1/assets/deadbeef')).status).toBe(404);
   });
 });
+
+describe('deleting a document', () => {
+  it('removes it from the listing and answers 404 afterwards', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+
+    const deleted = await h.json<{ path: string }>(`/v1/docs/${docId}`, { method: 'DELETE' });
+    expect(deleted.path).toBe('specs/checkout-v2');
+
+    const { documents } = await h.json<{ documents: { path: string }[] }>('/v1/docs');
+    expect(documents.map((d) => d.path)).not.toContain('specs/checkout-v2');
+    expect((await h.request(`/v1/docs/${docId}`)).status).toBe(404);
+  });
+
+  it('takes the sidecar with it, so a reused id cannot inherit stale comments', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ blockId: blockIds[1], body: 'Optional or required?' }),
+    });
+    expect(h.server.store.listComments(docId)).toHaveLength(1);
+
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+    expect(h.server.store.listComments(docId)).toHaveLength(0);
+    expect(h.server.store.getDocument(docId)).toBeUndefined();
+  });
+
+  it('frees the path, so the same one can be created again', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    const again = await h.json<{ docId: string }>('/v1/docs', {
+      method: 'POST',
+      body: JSON.stringify({ path: 'specs/checkout-v2', content: SPEC }),
+    });
+    expect(again.docId).not.toBe(docId);
+  });
+
+  it('does not resurrect a document whose debounced persist was still pending', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    // A write schedules a debounced snapshot. Deleting before it fires must not
+    // leave a timer that writes the row back after the delete removed it.
+    await h.json(`/v1/docs/${docId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ops: [{ kind: 'replace', target: blockIds[1], markdown: 'Rewritten.' }],
+      }),
+    });
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(h.server.store.getDocument(docId)).toBeUndefined();
+  });
+
+  it('drops it from the open set rather than leaving a ghost actor', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await h.server.workspace.openDocument(docId);
+    expect(h.server.workspace.openDocumentIds()).toContain(docId);
+
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+    expect(h.server.workspace.openDocumentIds()).not.toContain(docId);
+  });
+
+  it('refuses a reader', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    const response = await h.request(`/v1/docs/${docId}`, {
+      method: 'DELETE',
+      token: h.tokens.reader,
+    });
+    expect(response.status).toBe(403);
+    expect(h.server.store.getDocument(docId)).toBeDefined();
+  });
+
+  it('records who deleted it', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    const { entries } = await h.json<{ entries: { action: string; detail: string }[] }>('/v1/audit');
+    const entry = entries.find((e) => e.action === 'document.delete');
+    expect(entry?.detail).toBe('specs/checkout-v2');
+  });
+});

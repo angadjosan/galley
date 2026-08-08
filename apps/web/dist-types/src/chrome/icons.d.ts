@@ -36,4 +36,6 @@ export declare const ClearFormatIcon: () => JSX.Element;
 export declare const QuoteIcon: () => JSX.Element;
 export declare const ChevronIcon: () => JSX.Element;
 export declare const CheckIcon: () => JSX.Element;
+export declare const TrashIcon: () => JSX.Element;
+export declare const DocumentIcon: () => JSX.Element;
 //# sourceMappingURL=icons.d.ts.map

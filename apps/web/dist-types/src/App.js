@@ -7,6 +7,7 @@ import { Editor } from './editor/Editor.js';
 import { INSERT_TABLE, insertDesignLink, insertDiagram, insertImage } from './editor/commands.js';
 import { DIAGRAM_TEMPLATES } from './editor/diagram.js';
 import { Boundary } from './chrome/Boundary.js';
+import { DesignIcon, DocumentIcon, TrashIcon } from './chrome/icons.js';
 import { DesignEditor } from './design/DesignEditor.js';
 import { MenuBar } from './chrome/MenuBar.js';
 import { Toolbar } from './chrome/Toolbar.js';
@@ -88,6 +89,12 @@ function Workspace({ credentials, onSignOut, }) {
     const [query, setQuery] = useState('');
     const [hits, setHits] = useState(null);
     const [libraryOpen, setLibraryOpen] = useState(false);
+    // The document the trash button has been pressed on, waiting for the second
+    // press. Held here rather than in the row so that opening one confirmation
+    // closes any other — two rows both asking "delete?" is how the wrong one
+    // gets confirmed.
+    const [confirmingDelete, setConfirmingDelete] = useState(null);
+    const [creatingOpen, setCreatingOpen] = useState(false);
     const refreshList = useCallback(async () => {
         try {
             const list = await client.list();
@@ -124,30 +131,92 @@ function Workspace({ credentials, onSignOut, }) {
         return () => window.clearTimeout(handle);
     }, [client, query]);
     // Every other overlay in the app closes on Escape; the document drawer has
-    // to as well, and it covers its own toggle button at narrow widths.
+    // to as well, and it covers its own toggle button at narrow widths. The two
+    // transient things in the sidebar — a pending delete and the New menu — go
+    // with it, because Escape means "I didn't mean that" everywhere else.
     useEffect(() => {
-        if (!libraryOpen)
+        if (!libraryOpen && !confirmingDelete && !creatingOpen)
             return;
         const onKey = (event) => {
-            if (event.key === 'Escape')
-                setLibraryOpen(false);
+            if (event.key !== 'Escape')
+                return;
+            setLibraryOpen(false);
+            setConfirmingDelete(null);
+            setCreatingOpen(false);
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [libraryOpen]);
+    }, [libraryOpen, confirmingDelete, creatingOpen]);
+    // A menu that stays open after you look away is a menu you have to dismiss.
+    useEffect(() => {
+        if (!creatingOpen)
+            return;
+        const onDown = (event) => {
+            const target = event.target;
+            if (!target?.closest('.new-doc-wrap'))
+                setCreatingOpen(false);
+        };
+        window.addEventListener('mousedown', onDown);
+        return () => window.removeEventListener('mousedown', onDown);
+    }, [creatingOpen]);
     const grouped = useMemo(() => groupByFolder(documents), [documents]);
     const current = documents.find((doc) => doc.docId === selected) ?? null;
     // No dialog. A native `window.prompt` is the least finished-looking thing an
     // interface can show, and naming a document is not a decision worth blocking
     // on — the title is right there to type over.
-    const createDocument = async () => {
+    //
+    // A design is created the same way and lands in the same list, because a
+    // design *is* a document. Creating one used to require being inside another
+    // document first — the only entry point was "insert a design into this one" —
+    // which made the app's second content type reachable only as a footnote to
+    // the first.
+    const createDocument = async (kind) => {
         const stamp = new Date().toISOString().slice(0, 10);
-        const path = `untitled-${stamp}-${Math.random().toString(36).slice(2, 6)}`;
+        const suffix = Math.random().toString(36).slice(2, 6);
+        const blank = STARTERS.find((starter) => starter.id === 'blank');
+        const seed = kind === 'design' && blank
+            ? {
+                path: `design/untitled-${stamp}-${suffix}`,
+                content: `# Untitled design\n\n\`\`\`design\n${blank.source}\n\`\`\`\n`,
+            }
+            : {
+                path: `untitled-${stamp}-${suffix}`,
+                content: '# Untitled\n\nStart writing…\n',
+            };
         try {
-            const created = await client.create(path, '# Untitled\n\nStart writing…\n');
+            const created = await client.create(seed.path, seed.content);
             await refreshList();
             setSelected(created.docId);
             setLibraryOpen(false);
+            setCreatingOpen(false);
+        }
+        catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
+        }
+    };
+    /**
+     * Delete a document, second press.
+     *
+     * Deliberately not `window.confirm`: it is the same finished-looking problem
+     * as `window.prompt`, and it puts the question somewhere other than the thing
+     * being asked about. The row itself becomes the question instead.
+     *
+     * There is no undo. The server takes the comments, suggestions, history and
+     * search index with the document, so an undo would have to be a soft delete
+     * all the way down — worth building, not worth pretending to have.
+     */
+    const deleteDocument = async (doc) => {
+        setConfirmingDelete(null);
+        try {
+            await client.remove(doc.docId);
+            const remaining = documents.filter((d) => d.docId !== doc.docId);
+            setDocuments(remaining);
+            // Selecting a deleted document renders an editor over a 404. Move to a
+            // neighbour, and only then refresh — the list we just computed is right,
+            // and waiting for a round trip would leave the dead document on screen.
+            if (selected === doc.docId)
+                setSelected(remaining[0]?.docId ?? null);
+            await refreshList();
         }
         catch (err) {
             setError(err instanceof Error ? err.message : String(err));
@@ -159,10 +228,10 @@ function Workspace({ credentials, onSignOut, }) {
                                         setSelected(doc.docId);
                                     setQuery('');
                                     setLibraryOpen(false);
-                                }, children: [_jsx("span", { className: "doc-title", children: hit.heading || prettyName(hit.path) }), _jsx("span", { className: "hit-snippet", children: hit.snippet })] }, hit.ref)))] })) : (_jsx("nav", { className: "doc-list", "data-testid": "doc-list", children: grouped.map(([folder, docs]) => (_jsxs("div", { className: "folder", children: [_jsx("div", { className: "folder-label", children: folder ? prettyName(folder) : 'No folder' }), docs.map((doc) => (_jsx("button", { className: `doc-item ${doc.docId === selected ? 'is-selected' : ''}`, onClick: () => {
-                                        setSelected(doc.docId);
-                                        setLibraryOpen(false);
-                                    }, "data-testid": `doc-${doc.path}`, children: _jsx("span", { className: "doc-title", children: doc.title }) }, doc.docId)))] }, folder))) })), _jsxs("div", { className: "library-foot", children: [_jsxs("button", { className: "new-doc", onClick: () => void createDocument(), children: [_jsx("span", { "aria-hidden": "true", children: "+" }), " New document"] }), _jsx("button", { className: "link-quiet", onClick: onSignOut, children: "Sign out" })] })] }), _jsx("button", { className: "scrim", "aria-label": "Close the document list", tabIndex: libraryOpen ? 0 : -1, onClick: () => setLibraryOpen(false) }), _jsxs("div", { className: "main-column", children: [error && _jsx("div", { className: "banner error", children: error }), selected && current ? (_jsx(DocumentView, { client: client, credentials: credentials, docId: selected, path: current.path, people: people, onToggleLibrary: () => setLibraryOpen((open) => !open), onNewDocument: () => void createDocument(), onSignOut: onSignOut, onOpenPath: (path) => {
+                                }, children: [_jsx("span", { className: "doc-title", children: hit.heading || prettyName(hit.path) }), _jsx("span", { className: "hit-snippet", children: hit.snippet })] }, hit.ref)))] })) : (_jsx("nav", { className: "doc-list", "data-testid": "doc-list", children: grouped.map(([folder, docs]) => (_jsxs("div", { className: "folder", children: [_jsx("div", { className: "folder-label", children: folder ? prettyName(folder) : 'No folder' }), docs.map((doc) => doc.docId === confirmingDelete ? (_jsxs("div", { className: "doc-row is-confirming", children: [_jsxs("span", { className: "doc-confirm-text", children: ["Delete \u201C", doc.title, "\u201D?"] }), _jsx("button", { className: "doc-confirm-yes", onClick: () => void deleteDocument(doc), "data-testid": `confirm-delete-${doc.path}`, children: "Delete" }), _jsx("button", { className: "doc-confirm-no", onClick: () => setConfirmingDelete(null), "aria-label": "Keep this document", children: "Cancel" })] }, doc.docId)) : (_jsxs("div", { className: "doc-row", children: [_jsx("button", { className: `doc-item ${doc.docId === selected ? 'is-selected' : ''}`, onClick: () => {
+                                                setSelected(doc.docId);
+                                                setLibraryOpen(false);
+                                            }, "data-testid": `doc-${doc.path}`, children: _jsx("span", { className: "doc-title", children: doc.title }) }), _jsx("button", { className: "doc-delete", onClick: () => setConfirmingDelete(doc.docId), title: `Delete ${doc.title}`, "aria-label": `Delete ${doc.title}`, "data-testid": `delete-${doc.path}`, children: _jsx(TrashIcon, {}) })] }, doc.docId)))] }, folder))) })), _jsxs("div", { className: "library-foot", children: [_jsxs("div", { className: "new-doc-wrap", children: [creatingOpen && (_jsxs("div", { className: "new-doc-menu", "data-testid": "new-menu", children: [_jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('doc'), children: [_jsx(DocumentIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Document" }), _jsx("em", { children: "Words, in a page" })] })] }), _jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('design'), "data-testid": "new-design", children: [_jsx(DesignIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Design" }), _jsx("em", { children: "A screen, on a canvas" })] })] })] })), _jsxs("button", { className: "new-doc", onClick: () => setCreatingOpen((open) => !open), "aria-expanded": creatingOpen, "data-testid": "new-button", children: [_jsx("span", { "aria-hidden": "true", children: "+" }), " New"] })] }), _jsx("button", { className: "link-quiet", onClick: onSignOut, children: "Sign out" })] })] }), _jsx("button", { className: "scrim", "aria-label": "Close the document list", tabIndex: libraryOpen ? 0 : -1, onClick: () => setLibraryOpen(false) }), _jsxs("div", { className: "main-column", children: [error && _jsx("div", { className: "banner error", children: error }), selected && current ? (_jsx(DocumentView, { client: client, credentials: credentials, docId: selected, path: current.path, people: people, onToggleLibrary: () => setLibraryOpen((open) => !open), onNewDocument: () => void createDocument('doc'), onSignOut: onSignOut, onOpenPath: (path) => {
                             const target = documents.find((doc) => doc.path === path);
                             if (target) {
                                 setSelected(target.docId);
@@ -176,7 +245,7 @@ function Workspace({ credentials, onSignOut, }) {
                                 .then((list) => list.find((doc) => doc.path === path))
                                 .then((found) => found && setSelected(found.docId))
                                 .catch(() => undefined));
-                        } }, selected)) : (_jsx(FirstRun, { onCreate: () => void createDocument() }))] })] }));
+                        } }, selected)) : (_jsx(FirstRun, { onCreate: () => void createDocument('doc') }))] })] }));
 }
 function FirstRun({ onCreate }) {
     return (_jsx("div", { className: "desk", children: _jsx("div", { className: "spread", children: _jsxs("main", { className: "page page-empty", children: [_jsx("h1", { children: "Start a document" }), _jsx("p", { children: "Write the way you always do. Galley keeps it in a format your agents can read, cite, and suggest edits to." }), _jsx("button", { className: "primary", onClick: onCreate, children: "Blank document" })] }) }) }));

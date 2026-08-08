@@ -326,11 +326,105 @@ kbd {
   color: var(--text-3);
 }
 
+/**
+ * A row is the document plus the one destructive thing you can do to it.
+ *
+ * The trash button is hidden until the row is hovered or something inside it
+ * has focus, so a list of documents reads as a list of documents rather than a
+ * list of delete buttons. `:focus-within` is what keeps it reachable by
+ * keyboard — `display: none` would take it out of the tab order entirely, so
+ * it stays laid out and merely invisible.
+ */
+.doc-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.doc-delete {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.doc-row:hover .doc-delete,
+.doc-row:focus-within .doc-delete {
+  opacity: 1;
+}
+
+.doc-delete:hover {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+
+/**
+ * The confirmation replaces the row rather than floating over it.
+ *
+ * A dialog would ask "delete this?" somewhere other than the thing being
+ * deleted, and would need its own dismissal. Replacing the row keeps the
+ * question exactly where the answer is, and the list cannot scroll out from
+ * under it.
+ */
+.doc-row.is-confirming {
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--r-sm);
+  background: var(--danger-tint);
+}
+
+.doc-confirm-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-small);
+  color: var(--danger);
+}
+
+.doc-confirm-yes,
+.doc-confirm-no {
+  flex: none;
+  border: none;
+  border-radius: var(--r-sm);
+  padding: 3px 8px;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Ink is `--page`, not white: in dark mode `--danger` is a pale pink, and white
+   text on it is unreadable. `--page` inverts with the theme, so the label stays
+   the opposite of its background in both. */
+.doc-confirm-yes {
+  background: var(--danger);
+  color: var(--page);
+}
+
+.doc-confirm-no {
+  background: none;
+  color: var(--text-2);
+}
+
+.doc-confirm-no:hover {
+  background: var(--surface-2);
+}
+
 .doc-item {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  width: 100%;
+  min-width: 0;
+  flex: 1;
   padding: 6px 9px;
   border: none;
   border-radius: var(--r-sm);
@@ -372,6 +466,66 @@ kbd {
   padding: 10px 14px;
   border-top: 1px solid var(--line);
   flex: none;
+}
+
+/**
+ * "New" opens a choice of two, rather than silently meaning "prose document".
+ *
+ * The menu opens *upward* because the button lives in the sidebar's footer;
+ * a downward menu would open off the bottom of the window.
+ */
+.new-doc-wrap {
+  position: relative;
+}
+
+.new-doc-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: 220px;
+  padding: 4px;
+  border-radius: var(--r-md, 8px);
+  border: 1px solid var(--line);
+  background: var(--page);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 12%);
+}
+
+.new-doc-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 9px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+.new-doc-choice:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.new-doc-choice span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.new-doc-choice strong {
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.new-doc-choice em {
+  font-style: normal;
+  font-size: var(--fs-small);
+  color: var(--text-3);
 }
 
 .new-doc {

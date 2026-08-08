@@ -52,6 +52,7 @@ usage: galley <command> [options]
   push [dir] [--write]                        send local edits back
   status [dir]                                what changed, what is stale, what is pending
   read <ref>                                  clean Markdown on stdout (ref: path or path#block)
+  rm <path> --yes                             delete a document and its annotations
   search <query> [--limit n]                  matching blocks, as doc#block refs
   design <sub> <ref> [--under id]             outline | source | lint | classes | tokens
   design apply <ref> --ops <file|->           propose a change as design ops
@@ -115,6 +116,8 @@ async function dispatch(args: ParsedArgs, io: Io): Promise<number> {
       return statusCommand(args, io);
     case 'read':
       return readCommand(args, io);
+    case 'rm':
+      return rmCommand(args, io);
     case 'search':
       return searchCommand(args, io);
     case 'comment':
@@ -188,6 +191,33 @@ async function lsCommand(args: ParsedArgs, io: Io): Promise<number> {
     return 0;
   }
   for (const doc of documents) io.out(`${doc.path}\t${doc.title}\n`);
+  return 0;
+}
+
+/**
+ * Delete a document.
+ *
+ * Requires `--yes`. Every other command here is either read-only or produces a
+ * *proposal* a human resolves — this is the only one that destroys something
+ * with no review step, and an agent that reaches for it should have to say so
+ * in the same breath. `push` already refuses to propagate deletions for the
+ * same reason ("a delete is a deliberate act, not a diff").
+ */
+async function rmCommand(args: ParsedArgs, io: Io): Promise<number> {
+  const ref = args.positional[0];
+  if (!ref) throw new Error('usage: galley rm <path> --yes');
+  if (!flagBool(args, 'yes')) {
+    throw new Error(`refusing to delete ${ref} without --yes`);
+  }
+  const { path, blockId } = parseRef(ref);
+  if (blockId) throw new Error('galley rm deletes documents, not blocks');
+
+  const result = await client().remove(path);
+  if (flagBool(args, 'json')) {
+    io.out(`${JSON.stringify(result, null, 2)}\n`);
+    return 0;
+  }
+  io.out(`deleted ${result.path}\n`);
   return 0;
 }
 
