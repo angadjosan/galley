@@ -28,6 +28,13 @@ export class IdentityError extends Error {
 
 export interface IdentityProvider {
   readonly kind: string;
+  /**
+   * The key the browser needs to talk to this provider, if it needs one.
+   *
+   * Public by construction — it names the instance and authorizes nothing —
+   * which is why it can be served to anyone who loads the page.
+   */
+  readonly publishableKey?: string;
   verify(idToken: string): Promise<ExternalIdentity>;
 }
 
@@ -43,8 +50,8 @@ export class ClerkProvider implements IdentityProvider {
   private keys: { fetchedAt: number; jwks: unknown } | null = null;
 
   constructor(
-    private readonly secretKey: string,
     private readonly issuer: string,
+    readonly publishableKey?: string,
   ) {}
 
   async verify(idToken: string): Promise<ExternalIdentity> {
@@ -97,27 +104,51 @@ export class DevProvider implements IdentityProvider {
 }
 
 /**
+ * Derive the token issuer from the publishable key.
+ *
+ * The key is `pk_<env>_<base64 of the frontend host>`, so the instance names
+ * itself and there is no second setting to get wrong. A deployment pointed at
+ * one Clerk instance in the browser and another on the server would fail in
+ * the least helpful way available — every sign-in rejected as an issuer
+ * mismatch, with both settings individually correct.
+ */
+export function issuerFromPublishableKey(publishableKey: string): string {
+  const encoded = publishableKey.replace(/^pk_(test|live)_/, '');
+  if (encoded === publishableKey) {
+    throw new Error('CLERK_PUBLISHABLE_KEY should start with pk_test_ or pk_live_');
+  }
+  const host = Buffer.from(encoded, 'base64').toString('utf8').replace(/\$+$/, '');
+  if (!host.includes('.')) throw new Error('CLERK_PUBLISHABLE_KEY does not decode to a host');
+  return `https://${host}`;
+}
+
+/**
  * Pick a provider from the environment, refusing the dangerous combination.
  *
- * If a real secret is configured, the dev bypass is not merely ignored — it is
- * an error, because a deployment that has both is one env var away from
+ * If a real provider is configured, the dev bypass is not merely ignored — it
+ * is an error, because a deployment that has both is one env var away from
  * accepting `dev:anyone@example.com` as an administrator.
+ *
+ * `CLERK_SECRET_KEY` is deliberately *not* required. Sign-ins are verified
+ * against the instance's public JWKS, so the secret would sit in the
+ * deployment unread — and a credential kept for no reason is a credential
+ * that can only ever leak. It becomes necessary the day this listens to
+ * Clerk's webhooks, and not before.
  */
 export function chooseProvider(env: NodeJS.ProcessEnv = process.env): IdentityProvider {
-  const secret = env.CLERK_SECRET_KEY;
+  const publishableKey = env.CLERK_PUBLISHABLE_KEY;
   const devAuth = env.GALLEY_DEV_AUTH === '1';
 
-  if (secret && devAuth) {
-    throw new Error('refusing to start: GALLEY_DEV_AUTH=1 with CLERK_SECRET_KEY set');
+  if (publishableKey && devAuth) {
+    throw new Error('refusing to start: GALLEY_DEV_AUTH=1 with CLERK_PUBLISHABLE_KEY set');
   }
-  if (secret) {
-    const issuer = env.CLERK_ISSUER;
-    if (!issuer) throw new Error('CLERK_SECRET_KEY is set but CLERK_ISSUER is not');
-    return new ClerkProvider(secret, issuer.replace(/\/$/, ''));
+  if (publishableKey) {
+    const issuer = env.CLERK_ISSUER ?? issuerFromPublishableKey(publishableKey);
+    return new ClerkProvider(issuer.replace(/\/$/, ''), publishableKey);
   }
   if (devAuth) return new DevProvider();
 
   throw new Error(
-    'no identity provider configured: set CLERK_SECRET_KEY and CLERK_ISSUER, or GALLEY_DEV_AUTH=1',
+    'no identity provider configured: set CLERK_PUBLISHABLE_KEY, or GALLEY_DEV_AUTH=1',
   );
 }

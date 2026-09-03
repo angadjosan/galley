@@ -183,13 +183,21 @@ export function build(options: ServerOptions = {}): GalleyServer {
     const appShell = async (): Promise<string> => {
       if (shell === null) {
         const html = await readFile(join(root, 'index.html'), 'utf8');
-        shell =
-          options.identity?.kind === 'dev'
-            ? html.replace(
-                '</head>',
-                '<script>window.__GALLEY_DEV_AUTH__ = true;</script></head>',
-              )
-            : html;
+        // Which sign-in to draw, and the key to draw it with. Both belong to
+        // the deployment rather than the build: the same image serves a dev
+        // instance and a real one, and moving between them should not mean
+        // rebuilding the client. The publishable key is public by
+        // construction — it identifies the Clerk instance to the browser and
+        // authorizes nothing — so this is the whole of the client's config.
+        const boot: string[] = [];
+        if (options.identity?.kind === 'dev') boot.push('window.__GALLEY_DEV_AUTH__ = true;');
+        const publishableKey = options.identity?.publishableKey;
+        if (publishableKey) {
+          boot.push(`window.__GALLEY_CLERK_PK__ = ${JSON.stringify(publishableKey)};`);
+        }
+        shell = boot.length
+          ? html.replace('</head>', `<script>${boot.join('')}</script></head>`)
+          : html;
       }
       return shell;
     };

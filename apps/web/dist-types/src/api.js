@@ -226,6 +226,11 @@ async function devIdToken(email) {
     return `dev:${trimmed}`;
 }
 async function clerkIdToken(signal) {
+    // The page is allowed to render before Clerk has finished arriving, so that a
+    // share link is not held up by a sign-in nobody is going to use. The cost is
+    // that this can be the first thing to run — so wait, rather than report that
+    // sign-in is unavailable to somebody who has just clicked it.
+    await window.__GALLEY_CLERK_READY__?.catch(() => undefined);
     const sso = clerk();
     if (!sso) {
         throw new Error("Google sign-in isn't set up on this server yet. Whoever runs it needs to add Clerk — until then, a share link is the way in.");

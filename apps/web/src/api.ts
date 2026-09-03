@@ -295,6 +295,13 @@ async function devIdToken(email?: string): Promise<string> {
 }
 
 async function clerkIdToken(signal?: AbortSignal): Promise<string> {
+  // The page is allowed to render before Clerk has finished arriving, so that a
+  // share link is not held up by a sign-in nobody is going to use. The cost is
+  // that this can be the first thing to run — so wait, rather than report that
+  // sign-in is unavailable to somebody who has just clicked it.
+  await (window as { __GALLEY_CLERK_READY__?: Promise<void> }).__GALLEY_CLERK_READY__?.catch(
+    () => undefined,
+  );
   const sso = clerk();
   if (!sso) {
     throw new Error(
