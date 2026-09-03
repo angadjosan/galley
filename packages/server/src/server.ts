@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import websocket from '@fastify/websocket';
+import fastifyStatic from '@fastify/static';
 import { randomUUID } from 'node:crypto';
 import { Deadline, Semaphore, TimeoutError, CapacityError } from '@galley/concurrency';
 import {
@@ -35,6 +36,24 @@ export interface ServerOptions extends StoreOptions, WorkspaceOptions {
   /** Frames buffered for one sync client before it is considered behind. */
   syncChannelCapacity?: number;
   logger?: boolean;
+  /**
+   * Interface to bind.
+   *
+   * Loopback by default, so a server started by a test or by `galley serve` on
+   * a laptop is not reachable from the network by accident. A container has to
+   * say `0.0.0.0` out loud, which is the one place where being explicit is
+   * cheap and the default being wrong is expensive.
+   */
+  host?: string;
+  /**
+   * Directory of built web assets to serve, if this process is also the origin
+   * the browser talks to.
+   *
+   * Serving the client from the API is what keeps the deployment single-origin,
+   * which is what lets the sync URL be derived from `window.location` instead of
+   * configured. Left unset, the server is an API and nothing else.
+   */
+  staticDir?: string;
 }
 
 export interface GalleyServer {
@@ -110,6 +129,28 @@ export function build(options: ServerOptions = {}): GalleyServer {
   };
 
   void app.register(websocket, { options: { maxPayload: 8 * 1024 * 1024 } });
+
+  /**
+   * The built web client, when this process is also serving it.
+   *
+   * Registered before the API routes so asset requests never pay for admission
+   * control decisions meant for document work, and paired with a not-found
+   * handler that returns `index.html` for anything outside `/v1` — without it a
+   * deep link like `/specs/checkout-v2` 404s on reload, because the route only
+   * exists inside the client's router.
+   */
+  if (options.staticDir) {
+    const root = options.staticDir;
+    void app.register(fastifyStatic, { root, prefix: '/' });
+    app.setNotFoundHandler(async (request, reply) => {
+      // An unknown API path is a client error and must say so in the shape the
+      // client parses. Only navigation falls through to the app shell.
+      if (request.raw.url?.startsWith('/v1') || request.method !== 'GET') {
+        return reply.code(404).send({ error: 'not found' });
+      }
+      return reply.sendFile('index.html');
+    });
+  }
 
   app.addHook('onRequest', async (request, reply) => {
     if (request.raw.url?.startsWith('/v1/sync')) return; // WebSocket upgrade
@@ -889,7 +930,7 @@ export function build(options: ServerOptions = {}): GalleyServer {
     workspace,
     hub,
     async listen(port = 0): Promise<string> {
-      const url = await app.listen({ port, host: '127.0.0.1' });
+      const url = await app.listen({ port, host: options.host ?? '127.0.0.1' });
       // Anything whose recovery window ran out while the server was down goes
       // now. Not awaited: the sweep is bounded by what is already expired, and
       // nothing about accepting the first request depends on it having

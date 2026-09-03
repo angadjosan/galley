@@ -9,12 +9,13 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@galley/core": "*",
-    "@galley/markdown": "*",
+    "@fastify/static": "^8.0.3",
+    "@fastify/websocket": "^11.0.1",
     "@galley/anchor": "*",
     "@galley/concurrency": "*",
+    "@galley/core": "*",
+    "@galley/markdown": "*",
     "fastify": "^5.2.0",
-    "@fastify/websocket": "^11.0.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {

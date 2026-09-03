@@ -1,0 +1,39 @@
+# Galley runs as exactly one machine. This is a correctness constraint, not a
+# cost decision: SyncHub keeps each document's live connections and CRDT actor
+# in memory (packages/server/src/sync.ts, workspace.ts), so two machines would
+# hold divergent state for the same document and the per-document mutex would
+# serialize nothing between them. Do not raise the machine count without moving
+# that coordination into an external store first.
+app = "galley"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  GALLEY_DB = "/data/galley.db"
+  GALLEY_STATIC = "/app/apps/web/dist"
+
+[mounts]
+  source = "galley_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Both must stay at one. auto_stop would also drop every open sync socket.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    # Sync connections are long-lived, so the limit has to leave room for many
+    # idle sockets rather than being sized for request throughput.
+    hard_limit = 400
+    soft_limit = 300
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
