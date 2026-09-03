@@ -74,6 +74,8 @@ export interface RevisionSummary {
   authorName: string;
   sponsorId: string | null;
   byAgent: boolean;
+  /** Absent on revisions recorded before guests existed, where false is right. */
+  byGuest?: boolean;
   blockIds: string[];
   summary: string;
 }
@@ -92,6 +94,7 @@ export interface AttributionSummary {
   authorName: string;
   at: string;
   byAgent: boolean;
+  byGuest?: boolean;
   sponsorId: string | null;
   ticket: number;
 }

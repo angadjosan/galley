@@ -12,6 +12,7 @@ import {
 import { anchorsFor, blockId, reanchor, type Anchor, type Resolution } from '@galley/anchor';
 import { applyBlockOps, parseDocument, type BlockOp } from '@galley/markdown';
 import { GalleyDocument, type ApplyResult } from './document.js';
+import { diffToBlockOps } from './diff.js';
 import {
   CommentBudget,
   assertTransition,
@@ -62,6 +63,11 @@ export interface ActorOptions {
   replacementThreshold?: number;
   /** Bound on the outbound event feed before a subscriber is dropped. */
   feedCapacity?: number;
+  /**
+   * Quiet period, in milliseconds, before a burst of live edits becomes one
+   * revision. See `ingestUpdate`.
+   */
+  liveEditWindowMs?: number;
   now?: () => string;
 }
 
@@ -104,7 +110,10 @@ export class DocumentActor {
   private readonly budget: CommentBudget;
   private readonly replacementThreshold: number;
   private readonly feedCapacity: number;
+  private readonly liveEditWindowMs: number;
   private readonly now: () => string;
+  /** The live-edit burst currently being coalesced. See `ingestUpdate`. */
+  private liveEdit: LiveEditWindow | null = null;
   private readonly persistBreaker = new CircuitBreaker({ name: 'persist' });
   readonly history = new History();
   private sessionEnded: SessionEndReason | null = null;
@@ -123,6 +132,7 @@ export class DocumentActor {
     this.budget = options.budget ?? new CommentBudget();
     this.replacementThreshold = options.replacementThreshold ?? 0.5;
     this.feedCapacity = options.feedCapacity ?? 256;
+    this.liveEditWindowMs = options.liveEditWindowMs ?? 3_000;
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
@@ -270,6 +280,137 @@ export class DocumentActor {
       );
       ticket = submission.ticket;
       return submission.result;
+    });
+  }
+
+  /**
+   * Take in a CRDT update from a live editing session.
+   *
+   * This is the socket path, and it exists because the socket used to call
+   * `document.importUpdates` directly: the bytes landed, the document changed,
+   * and **nothing was recorded**. Live collaborative typing — the way most
+   * editing actually happens — produced no revision, no per-block attribution
+   * and no audit trail. A document that cannot say who wrote a sentence is the
+   * one thing `idea.md` says it must never be.
+   *
+   * Three things the direct call could not do, and the reasons they are here
+   * rather than in the socket handler:
+   *
+   * - **A real ticket.** The update goes through the lane like every other
+   *   mutation. Reading the cursor from outside would hand every update in a
+   *   burst the same number, and `History.record` drops a duplicate ticket
+   *   silently — so all but the first revision would vanish. The lane also
+   *   serializes this against `applyOps`, which was a live race: `importUpdates`
+   *   mutated the CRDT while a queued operation held the write lock.
+   * - **Real operations.** `recordRevision` derives its summary and its touched
+   *   blocks from an op list, and an empty one yields "no change" and attributes
+   *   nothing. `diffToBlockOps` recovers the operations from the document's own
+   *   before and after, which is the same route `galley push` takes.
+   * - **Coalescing.** Every keystroke is an update. One revision each would
+   *   blow `History`'s bounds — 500 revisions and 4 MB, each holding the whole
+   *   document — in seconds of typing, evicting the real history to make room
+   *   for individual letters, and would leave a timeline nobody can read. The
+   *   burst is applied and returned immediately, so broadcast latency is
+   *   untouched; the revision is written after the document goes quiet.
+   *
+   * `validateUpdate` stays with the caller: bytes from another document merge
+   * cleanly and must be refused *before* they reach the CRDT, which is earlier
+   * than this.
+   *
+   * Known limit: `diffToBlockOps` addresses a block with no materialized id as
+   * `@index`, and `History.record` skips those — so a freshly typed paragraph
+   * has no per-block attribution until something anchors it. That matches every
+   * other path in the system rather than being special to this one.
+   */
+  ingestUpdate(bytes: Uint8Array, principal: Principal): Promise<{ changed: boolean; ticket: number }> {
+    let ticket = -1;
+    const submission = this.sequencer.submit<{ changed: boolean; ticket: number }>(
+      this.docId,
+      async () => {
+        this.assertLive();
+        const stop = this.applyLatency.start();
+        try {
+          const before = await this.lock.withRead(() => this.doc.toMarkdown());
+          const changed = await this.lock.withWrite(() => this.doc.importUpdates(bytes));
+          if (!changed) return { changed: false, ticket };
+
+          const after = await this.lock.withRead(() => this.doc.toMarkdown());
+          this.counters.inc('live-updates');
+          this.refreshSuggestionStaleness();
+          this.openLiveEdit(principal, before, after, ticket);
+          // Emitted per update, not per revision: "the document changed" is
+          // true now, and the feed is a bounded drop-oldest notification built
+          // for exactly this traffic. The `revision` event still fires once,
+          // when the window closes.
+          this.emit({
+            kind: 'changed',
+            docId: this.docId,
+            ticket,
+            by: describePrincipal(principal),
+          });
+          return { changed: true, ticket };
+        } finally {
+          stop();
+        }
+      },
+    );
+    ticket = submission.ticket;
+    return submission.result;
+  }
+
+  /**
+   * Extend the open burst, or start one.
+   *
+   * The window keeps the document's bytes from *before* the first update in the
+   * burst and the ticket of the *latest*, so the revision that eventually lands
+   * describes the whole burst and sits at a ticket that is real and unique.
+   *
+   * A different principal closes the window immediately rather than joining it.
+   * Two people typing in the same three seconds is the normal case in a
+   * collaborative document, and merging their work into one revision would
+   * attribute one person's sentence to the other — the precise failure this
+   * whole path exists to fix.
+   */
+  private openLiveEdit(principal: Principal, before: string, after: string, ticket: number): void {
+    if (this.liveEdit && this.liveEdit.principal.id !== principal.id) {
+      this.flushLiveEdit();
+    }
+    if (this.liveEdit) {
+      clearTimeout(this.liveEdit.timer);
+      this.liveEdit = { ...this.liveEdit, after, ticket, timer: this.armLiveEditTimer() };
+      return;
+    }
+    this.liveEdit = { principal, before, after, ticket, timer: this.armLiveEditTimer() };
+  }
+
+  private armLiveEditTimer(): ReturnType<typeof setTimeout> {
+    const timer = setTimeout(() => this.flushLiveEdit(), this.liveEditWindowMs);
+    // A pending history write is not a reason to keep a process alive; the
+    // flush on `close` is what guarantees the burst is not lost.
+    timer.unref?.();
+    return timer;
+  }
+
+  /**
+   * Write the open burst to history now.
+   *
+   * Called by the quiet timer, by `close`, and by the server when a connection
+   * drops — someone who closes the tab mid-sentence must still appear in the
+   * timeline, and waiting three seconds for a socket that is already gone is
+   * three seconds of a document with no record of who changed it.
+   */
+  flushLiveEdit(): void {
+    const window = this.liveEdit;
+    if (!window) return;
+    this.liveEdit = null;
+    clearTimeout(window.timer);
+    if (window.before === window.after) return; // a CRDT change with no textual effect
+    this.recordRevision({
+      ops: diffToBlockOps(window.before, window.after),
+      principal: window.principal,
+      ticket: window.ticket,
+      kind: 'edit',
+      content: window.after,
     });
   }
 
@@ -804,6 +945,10 @@ export class DocumentActor {
   // -------------------------------------------------------------------------
 
   async close(reason: SessionEndReason = 'closed'): Promise<void> {
+    // Before anything else: a burst still inside its quiet window is real work
+    // that has already changed the document, and dropping it on close would
+    // make "who wrote this" unanswerable for whatever was typed last.
+    this.flushLiveEdit();
     this.sessionEnded = reason;
     this.sequencer.seal(this.docId);
     await this.sequencer.drainLane(this.docId);
@@ -818,6 +963,11 @@ export class DocumentActor {
    * ended, so a consumer accumulating state rolls back instead of committing.
    */
   fault(cause: unknown): void {
+    // Not flushed: a fault means the stream broke, and a consumer accumulating
+    // state is expected to roll back rather than commit. Recording a partial
+    // burst here would commit exactly what everyone else is discarding.
+    if (this.liveEdit) clearTimeout(this.liveEdit.timer);
+    this.liveEdit = null;
     this.sessionEnded = 'faulted';
     for (const channel of this.subscribers) channel.fault(cause);
     this.subscribers.clear();
@@ -853,6 +1003,18 @@ export class DocumentActor {
   get breaker(): CircuitBreaker {
     return this.persistBreaker;
   }
+}
+
+/** One burst of live edits being coalesced into a single revision. */
+interface LiveEditWindow {
+  readonly principal: Principal;
+  /** The document's bytes before the first update in the burst. */
+  readonly before: string;
+  /** Its bytes after the latest one. */
+  readonly after: string;
+  /** The ticket of the latest update in the burst. */
+  readonly ticket: number;
+  readonly timer: ReturnType<typeof setTimeout>;
 }
 
 interface DiffMagnitude {

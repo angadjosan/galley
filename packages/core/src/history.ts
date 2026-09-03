@@ -36,6 +36,16 @@ export interface Revision {
   /** For an agent's revision, the human accountable for it. */
   readonly sponsorId: string | null;
   readonly byAgent: boolean;
+  /**
+   * Written by someone who arrived through a share link and never signed in.
+   *
+   * Deliberately a second flag rather than a third value of `byAgent`: the
+   * client keys its violet agent colour off `byAgent`, and widening it would
+   * paint every guest as a machine. Optional because revisions recorded before
+   * guests existed are durable JSON without it, and absent is the right answer
+   * for all of them.
+   */
+  readonly byGuest?: boolean;
   /** Blocks this revision touched. */
   readonly blockIds: readonly string[];
   /** A one-line description a person can read in a timeline. */
@@ -66,6 +76,8 @@ export interface BlockAttribution {
   readonly authorName: string;
   readonly at: string;
   readonly byAgent: boolean;
+  /** See `Revision.byGuest`: a guest is a person, but an unverified one. */
+  readonly byGuest?: boolean;
   readonly sponsorId: string | null;
   readonly ticket: number;
 }
@@ -230,6 +242,7 @@ export class History {
         authorName: revision.authorName,
         at: revision.at,
         byAgent: revision.byAgent,
+        byGuest: revision.byGuest ?? false,
         sponsorId: revision.sponsorId,
         ticket: revision.ticket,
       });
@@ -305,11 +318,18 @@ export function revisionAuthor(principal: Principal): {
   authorName: string;
   sponsorId: string | null;
   byAgent: boolean;
+  byGuest: boolean;
 } {
   return {
     authorId: principal.id,
     authorName: principal.name,
     sponsorId: principal.sponsorId ?? null,
+    // Two questions, not one. "Was this written by a machine" and "was this
+    // written by someone who never signed in" have different answers and
+    // different consequences, and collapsing them would make a guest's
+    // paragraph read as an agent's — the one thing the violet avatar promises
+    // it is not.
     byAgent: principal.kind === 'agent',
+    byGuest: principal.kind === 'guest',
   };
 }
