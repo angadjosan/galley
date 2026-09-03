@@ -11,6 +11,9 @@
  *     only when the link says so, on the *creator's* authority and never their
  *     own, and nothing but a signed-in person can register an agent.
  *  5. Work done as a guest follows the person who signs in.
+ *  6. So does the access, and it stays tied to the link that gave it: signing
+ *     in keeps the document open in front of them, and revoking the link still
+ *     closes it.
  */
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -504,6 +507,152 @@ describe('what a guest may not do', () => {
     });
 
     expect(h.server.workspace.attributedPrincipals()).toContain(guest.principal.id);
+  });
+});
+
+/**
+ * Signing in must not be a trapdoor.
+ *
+ * The work following the person is only half of it: if the access stays behind,
+ * "sign in to keep your work" answers with an empty document list and the thing
+ * they were editing a moment ago resolving to nothing.
+ *
+ * The other half is that the carried access stays *the link's*. A grant minted
+ * loose from a link would outlive the link's revocation, and revoking is how a
+ * document's owner throws out everyone who only ever had the URL.
+ */
+describe('what a guest keeps when they sign in', () => {
+  it('can still open and edit the document it was editing', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    const linkId = await makeLink(h, docId, 'write');
+    const first = await h.request(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0]!;
+    const guest = (await first.json()) as Opened;
+
+    await h.json(`/v1/docs/${docId}`, {
+      method: 'PATCH',
+      token: guest.token,
+      body: JSON.stringify({
+        ops: [{ kind: 'replace', target: blockIds[1], markdown: 'written as a stranger' }],
+      }),
+    });
+
+    const session = await h.json<{ token: string; principal: { id: string } }>(
+      '/v1/auth/session',
+      {
+        method: 'POST',
+        token: '',
+        headers: { cookie },
+        body: JSON.stringify({ idToken: 'dev:erin@example.com' }),
+      },
+    );
+
+    // The token this endpoint just handed back, with no second round trip: the
+    // document is in the list and reads at the capability the link had.
+    const listed = await h.json<{ documents: { docId: string }[] }>('/v1/docs', {
+      token: session.token,
+    });
+    expect(listed.documents.map((doc) => doc.docId)).toContain(docId);
+
+    const read = await h.json<{ capability: string }>(`/v1/docs/${docId}`, {
+      token: session.token,
+    });
+    expect(read.capability).toBe('write');
+
+    const edit = await h.request(`/v1/docs/${docId}`, {
+      method: 'PATCH',
+      token: session.token,
+      body: JSON.stringify({
+        ops: [{ kind: 'replace', target: blockIds[1], markdown: 'and again as myself' }],
+      }),
+    });
+    expect(edit.status).toBe(200);
+  });
+
+  it('gains no more than the link gave it', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    const linkId = await makeLink(h, docId, 'comment');
+    const first = await h.request(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0]!;
+
+    const session = await h.json<{ token: string }>('/v1/auth/session', {
+      method: 'POST',
+      token: '',
+      headers: { cookie },
+      body: JSON.stringify({ idToken: 'dev:frank@example.com' }),
+    });
+
+    expect((await h.request(`/v1/docs/${docId}`, { token: session.token })).status).toBe(200);
+    const write = await h.request(`/v1/docs/${docId}`, {
+      method: 'PATCH',
+      token: session.token,
+      body: JSON.stringify({ ops: [{ kind: 'replace', target: blockIds[0], markdown: 'no' }] }),
+    });
+    expect(write.status).toBe(403);
+  });
+
+  it('loses it again when the link is revoked', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    const linkId = await makeLink(h, docId, 'write');
+    const first = await h.request(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0]!;
+
+    const session = await h.json<{ token: string; principal: { id: string } }>(
+      '/v1/auth/session',
+      {
+        method: 'POST',
+        token: '',
+        headers: { cookie },
+        body: JSON.stringify({ idToken: 'dev:gil@example.com' }),
+      },
+    );
+    expect((await h.request(`/v1/docs/${docId}`, { token: session.token })).status).toBe(200);
+
+    await h.request(`/v1/links/${linkId}`, { method: 'DELETE' });
+
+    // Signing in is not a way to launder a temporary URL into permanent access.
+    // Their comments and edits stay theirs; the room does not.
+    expect((await h.request(`/v1/docs/${docId}`, { token: session.token })).status).toBe(403);
+    const listed = await h.json<{ documents: { docId: string }[] }>('/v1/docs', {
+      token: session.token,
+    });
+    expect(listed.documents.map((doc) => doc.docId)).not.toContain(docId);
+
+    // And the owner who turned the link off is not shown a reader who is no
+    // longer one.
+    const shares = await h.json<{ grants: { principalId: string }[] }>(
+      `/v1/docs/${docId}/shares`,
+    );
+    expect(shares.grants.map((grant) => grant.principalId)).not.toContain(
+      session.principal.id,
+    );
+  });
+
+  it('does not overwrite a share a person already made them', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await share(h, docId, 'dana@example.com', 'read');
+    const linkId = await makeLink(h, docId, 'write');
+    const first = await h.request(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0]!;
+
+    const session = await h.json<{ token: string }>('/v1/auth/session', {
+      method: 'POST',
+      token: '',
+      headers: { cookie },
+      body: JSON.stringify({ idToken: 'dev:dana@example.com' }),
+    });
+
+    // The share a person made is the durable thing, and revoking the link must
+    // not be able to take it away.
+    await h.request(`/v1/links/${linkId}`, { method: 'DELETE' });
+    const read = await h.json<{ capability: string }>(`/v1/docs/${docId}`, {
+      token: session.token,
+    });
+    expect(read.capability).toBe('read');
   });
 });
 

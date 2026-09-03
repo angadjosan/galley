@@ -18,6 +18,7 @@ import {
   strongest,
   type Capability,
   type DocumentActor,
+  type Grant,
   type Principal,
   type Revision,
 } from '@galley/core';
@@ -25,7 +26,7 @@ import type { BlockOp } from '@galley/markdown';
 import { Auth, AuthError, ForbiddenError, hashToken, type Session } from './auth.js';
 import { IdentityError, type IdentityProvider } from './identity.js';
 import { guestName, guestPrincipalId } from './guests.js';
-import { Store, type StoreOptions } from './store.js';
+import { Store, type DocGrant, type ShareLink, type StoreOptions } from './store.js';
 import { InvalidPathError, Workspace, normalizePath, type WorkspaceOptions } from './workspace.js';
 import { SyncConnection, SyncHub, type ClientFrame } from './sync.js';
 
@@ -291,9 +292,56 @@ export function build(options: ServerOptions = {}): GalleyServer {
   function docCapability(session: Session, docId: string, path: string): Capability | null {
     let held = capabilityFor(session.grants, `/${path}`);
     const shared = store.getDocGrant(docId, session.principal.id);
-    if (shared) held = strongest(held, shared.capability as Capability);
+    if (shared) held = strongest(held, docGrantCapability(shared));
     if (session.link?.docId === docId) held = strongest(held, session.link.capability);
     return held;
+  }
+
+  /**
+   * A doc grant written in someone's name *by a link* rather than by a person.
+   *
+   * `granted_by` is free text and already answers "on whose authority", so a
+   * link's id goes in it under this prefix rather than into a new table — the
+   * sharing schema is fixed and this file does not own it.
+   */
+  const LINK_GRANT = 'link:';
+
+  /**
+   * What a doc grant is worth right now.
+   *
+   * A grant made by a person is worth what it says. A grant a guest carried
+   * onto their account when they signed in is worth whatever its *link* is
+   * worth at this instant, and nothing at all once that link is revoked or
+   * expires.
+   *
+   * That asymmetry is the whole point. The obvious fix for "a guest who signs
+   * in loses their document" is to mint an ordinary grant at the link's
+   * capability, and it is wrong in a way nobody notices until it matters:
+   * revoking a link is how you throw out everyone who only ever had the link,
+   * and a grant minted from one would sail straight through the revocation.
+   * Sign-in would quietly be a way to launder a temporary URL into permanent
+   * access, and the person revoking would have no idea — the link disappears
+   * from the share sheet and the reader stays.
+   *
+   * So the association is kept to the link, not copied off it. The row's own
+   * `capability` column is a record of what the link gave at claim time and is
+   * deliberately not what gets enforced: the live link is, so a link downgraded
+   * from write to read downgrades this person too, exactly as it would if they
+   * had never signed in and were still clicking the URL. The converse — an
+   * upgraded link upgrading them — is the same rule and is not a silent gain:
+   * they hold that URL, and re-opening it would hand them the same thing.
+   *
+   * The cost is a read of `share_links` per document per authorization. It is a
+   * primary-key lookup on a table with one row per link, only for rows that
+   * carry the prefix, and it buys the guarantee that there is exactly one place
+   * where a link's life ends.
+   */
+  function docGrantCapability(grant: DocGrant, now = new Date()): Capability | null {
+    if (!grant.grantedBy.startsWith(LINK_GRANT)) return grant.capability as Capability;
+    const link = store.getShareLink(grant.grantedBy.slice(LINK_GRANT.length));
+    if (!link || link.revokedAt) return null;
+    if (link.expiresAt && new Date(link.expiresAt) <= now) return null;
+    return link.capability as Capability;
   }
 
   function canDoc(session: Session, docId: string, path: string, required: Capability): boolean {
@@ -904,6 +952,48 @@ export function build(options: ServerOptions = {}): GalleyServer {
   }
 
   /**
+   * Carry the link a guest came in through onto the account they just signed
+   * into, as a grant that is still tied to that link.
+   *
+   * Without this, signing in is a trapdoor: the guest's *work* follows them and
+   * their *access* does not, so the reply to "Sign in to keep your work" is an
+   * empty document list and the thing they were editing thirty seconds ago
+   * resolving to nothing. That is the worst possible moment to lose a document,
+   * and it is worse than never having offered.
+   *
+   * What it deliberately does not do is hand out more than the link did, or
+   * anything the link's owner cannot take back — see `docGrantCapability` for
+   * why the grant records the link rather than copying its capability loose.
+   *
+   * Three cases where nothing is written, all of them "this would be noise":
+   *
+   *  - a dead link. Nothing to carry. Someone whose link was revoked while they
+   *    were signing in gets their work and not the room, which is what the
+   *    revocation meant.
+   *  - a path grant that already covers the document. They had access before
+   *    they ever clicked, and a row here would only clutter the share sheet.
+   *  - a grant a *person* already made them on this document. There is one row
+   *    per (document, principal), and overwriting a durable share with a
+   *    link-tied one would quietly make a colleague's decision revocable by a
+   *    link revocation. The rare case where that person's grant is *weaker*
+   *    than the link costs them the difference on this document — and re-opening
+   *    the link they still hold gives it straight back, composed on top.
+   */
+  function carryLinkAccess(linkId: string, principalId: string): ShareLink | null {
+    const link = store.getShareLink(linkId);
+    if (!link || link.revokedAt) return null;
+    if (link.expiresAt && new Date(link.expiresAt) <= new Date()) return null;
+
+    const path = workspace.pathOf(link.docId) ?? link.docId;
+    const own = capabilityFor(store.getGrants(principalId) as Grant[], `/${path}`);
+    if (own && implies(own, link.capability as Capability)) return null;
+    if (store.getDocGrant(link.docId, principalId)) return null;
+
+    store.setDocGrant(link.docId, principalId, link.capability, `${LINK_GRANT}${link.id}`);
+    return link;
+  }
+
+  /**
    * Exchange an SSO id token for a Galley one.
    *
    * Becoming the account is one transaction: it is found or created and the
@@ -922,6 +1012,12 @@ export function build(options: ServerOptions = {}): GalleyServer {
    * benign: the account first, then the work moves onto it, and only then is
    * the guest principal deleted. Stopping anywhere leaves every id resolving to
    * somebody, and the next sign-in on the same cookie finishes the job.
+   *
+   * The access comes across too — `carryLinkAccess`, read out of the guest's
+   * session row before the delete takes it. The token issued at the end needs
+   * no special handling to see it: it carries an empty scope, and a doc grant
+   * is resolved from the tables on every request, so the first `GET /v1/docs`
+   * the client makes with it already has the document in it.
    */
   app.post('/v1/auth/session', async (request, reply) => {
     const identity = options.identity;
@@ -959,11 +1055,28 @@ export function build(options: ServerOptions = {}): GalleyServer {
     });
 
     if (guest && guest.id !== principalId) {
+      // Read before the delete. `deleteGuestPrincipal` takes the
+      // `guest_sessions` row with it, and that row is the only record of which
+      // link this person walked in through.
+      const arrivedBy = store.getGuestSession(guest.id);
       await workspace.reassignAuthor(guest.id, principalId);
       // Last, and only once the work is somewhere else. Deleting the principal
       // first is what turns a half-finished claim into a comment signed by an
       // id that resolves to nobody.
       await store.transaction(() => store.deleteGuestPrincipal(guest.id));
+      if (arrivedBy) {
+        const carried = await store.transaction(() =>
+          carryLinkAccess(arrivedBy.linkId, principalId),
+        );
+        if (carried) {
+          workspace.audit(
+            { id: principalId, kind: 'human', name: external.name || external.email },
+            'share.claim',
+            carried.docId,
+            `${carried.capability} via ${carried.id}`,
+          );
+        }
+      }
     }
 
     if (guest) {
@@ -1045,18 +1158,32 @@ export function build(options: ServerOptions = {}): GalleyServer {
     const actor = await resolve((request.params as { ref: string }).ref);
     await authorizeDoc(session, actor, 'admin');
     return {
-      grants: store.listDocGrants(actor.docId).map((grant) => {
-        // A grant can outlive the principal it names — a guest collected, an
-        // account removed — and the row still has to render as something.
-        const person = principalView(grant.principalId);
-        return {
-          principalId: grant.principalId,
-          capability: grant.capability,
-          name: person?.name ?? grant.principalId,
-          email: person?.email ?? null,
-          kind: person?.kind ?? 'human',
-        };
-      }),
+      grants: store
+        .listDocGrants(actor.docId)
+        .flatMap((grant) => {
+          // Shown at what it is worth now, not at what the row says, and left
+          // out entirely once it is worth nothing — a link-tied grant whose
+          // link was revoked is an inert row, and listing the person would tell
+          // whoever revoked the link that it had not worked.
+          const capability = docGrantCapability(grant);
+          if (!capability) return [];
+          // A grant can outlive the principal it names — a guest collected, an
+          // account removed — and the row still has to render as something.
+          const person = principalView(grant.principalId);
+          return [
+            {
+              principalId: grant.principalId,
+              capability,
+              name: person?.name ?? grant.principalId,
+              email: person?.email ?? null,
+              kind: person?.kind ?? 'human',
+              // Where this came from, because "remove" means something
+              // different for the two: a link-tied row comes back the next time
+              // they open the link, and turning the link off is what ends it.
+              via: grant.grantedBy.startsWith(LINK_GRANT) ? 'link' : 'direct',
+            },
+          ];
+        }),
       invites: store
         .listInvites(actor.docId)
         .map((invite) => ({ email: invite.email, capability: invite.capability })),
