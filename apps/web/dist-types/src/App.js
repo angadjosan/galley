@@ -6,13 +6,14 @@ import { embedDesign, extractDesign, parseDesign } from '@galley/design';
 import { Editor } from './editor/Editor.js';
 import { INSERT_TABLE, insertDesignLink, insertImage } from './editor/commands.js';
 import { Boundary } from './chrome/Boundary.js';
-import { DesignIcon, DocumentIcon, TrashIcon } from './chrome/icons.js';
+import { DesignIcon, DocumentIcon, Mark, TrashIcon } from './chrome/icons.js';
 import { DesignEditor } from './design/DesignEditor.js';
 import { MenuBar } from './chrome/MenuBar.js';
 import { Toolbar } from './chrome/Toolbar.js';
 import { emptyHighlights } from './editor/plugins.js';
 import { LiveConnection, bootstrap, currentToken, makeClient, onSessionLost, serverBaseUrl, signOut as endSession, userCodeFromLocation, } from './api.js';
 import { SignIn, SignInForm } from './share/SignIn.js';
+import { Landing } from './marketing/Landing.js';
 import { ShareDialog } from './share/ShareDialog.js';
 import { AgentsPanel } from './share/AgentsPanel.js';
 import { ApproveAgent } from './share/ApproveAgent.js';
@@ -71,7 +72,17 @@ export function App() {
         return (_jsx("div", { className: "signin", children: _jsxs("div", { className: "signin-card signin-opening", "aria-busy": "true", children: [_jsxs("div", { className: "brand brand-lg", children: [_jsx(Mark, {}), _jsx("span", { children: "Galley" })] }), _jsx("p", { className: "signin-lede", children: "Opening\u2026" })] }) }));
     }
     if (boot.kind === 'signedOut') {
-        return (_jsx(SignIn, { brand: _jsxs(_Fragment, { children: [_jsx(Mark, {}), _jsx("span", { children: "Galley" })] }), notice: boot.message, onSignedIn: (viewer) => setBoot({ kind: 'user', viewer }) }));
+        /**
+         * The front door gets the landing page; every other door gets the card.
+         *
+         * Somebody at `/` has not decided anything yet and is owed the argument.
+         * Somebody at `/cli/KTRW-9F2D` was sent here by a terminal that is
+         * currently waiting on them, and a marketing page in front of that is an
+         * obstacle, not an introduction — so the narrow path keeps the one control
+         * it needs and nothing else.
+         */
+        const front = window.location.pathname === '/' || window.location.pathname === '';
+        return front ? (_jsx(Landing, { notice: boot.message, onSignedIn: (viewer) => setBoot({ kind: 'user', viewer }) })) : (_jsx(SignIn, { brand: _jsxs(_Fragment, { children: [_jsx(Mark, {}), _jsx("span", { children: "Galley" })] }), notice: boot.message, onSignedIn: (viewer) => setBoot({ kind: 'user', viewer }) }));
     }
     /**
      * `/cli` is a different product for a moment, so it gets to be one.
@@ -1150,9 +1161,6 @@ function Presence({ peers }) {
     if (peers.length === 0)
         return null;
     return (_jsx("div", { className: "presence", "data-testid": "presence", children: peers.slice(0, 5).map((peer) => (_jsx("span", { className: "avatar", title: peer.name, style: { background: colorFor(peer.name) }, children: peer.name.slice(0, 1).toUpperCase() }, peer.peerId))) }));
-}
-function Mark() {
-    return (_jsxs("svg", { viewBox: "0 0 24 24", className: "mark", "aria-hidden": "true", children: [_jsx("path", { d: "M4 4h16v3H4z" }), _jsx("path", { d: "M4 10h11v3H4z" }), _jsx("path", { d: "M4 16h7v3H4z" }), _jsx("circle", { cx: "19", cy: "17.5", r: "3.2", className: "mark-dot" })] }));
 }
 /** A short, human relative time. Absolute dates read as noise in a timeline. */
 function when(iso) {

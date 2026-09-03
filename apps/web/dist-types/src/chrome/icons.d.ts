@@ -38,4 +38,10 @@ export declare const ChevronIcon: () => JSX.Element;
 export declare const CheckIcon: () => JSX.Element;
 export declare const TrashIcon: () => JSX.Element;
 export declare const DocumentIcon: () => JSX.Element;
+/**
+ * The wordmark's glyph: three ruled lines, shortening, with a violet-free dot
+ * on the last one. Lives here rather than beside its first caller because the
+ * landing page and the app have to draw the same brand.
+ */
+export declare const Mark: () => JSX.Element;
 //# sourceMappingURL=icons.d.ts.map

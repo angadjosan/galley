@@ -222,3 +222,17 @@ export const DocumentIcon = (): JSX.Element => (
     <path d="M7.8 10.5h4.4M7.8 13h3" />
   </Svg>
 );
+
+/**
+ * The wordmark's glyph: three ruled lines, shortening, with a violet-free dot
+ * on the last one. Lives here rather than beside its first caller because the
+ * landing page and the app have to draw the same brand.
+ */
+export const Mark = (): JSX.Element => (
+  <svg viewBox="0 0 24 24" className="mark" aria-hidden="true">
+    <path d="M4 4h16v3H4z" />
+    <path d="M4 10h11v3H4z" />
+    <path d="M4 16h7v3H4z" />
+    <circle cx="19" cy="17.5" r="3.2" className="mark-dot" />
+  </svg>
+);

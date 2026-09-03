@@ -26,7 +26,7 @@ import { embedDesign, extractDesign, parseDesign } from '@galley/design';
 import { Editor, type EditorHandle } from './editor/Editor.js';
 import { INSERT_TABLE, insertDesignLink, insertImage } from './editor/commands.js';
 import { Boundary } from './chrome/Boundary.js';
-import { DesignIcon, DocumentIcon, TrashIcon } from './chrome/icons.js';
+import { DesignIcon, DocumentIcon, Mark, TrashIcon } from './chrome/icons.js';
 import { DesignEditor } from './design/DesignEditor.js';
 import { MenuBar } from './chrome/MenuBar.js';
 import { Toolbar } from './chrome/Toolbar.js';
@@ -48,6 +48,7 @@ import {
   type Viewer,
 } from './api.js';
 import { SignIn, SignInForm } from './share/SignIn.js';
+import { Landing } from './marketing/Landing.js';
 import { ShareDialog } from './share/ShareDialog.js';
 import { AgentsPanel } from './share/AgentsPanel.js';
 import { ApproveAgent } from './share/ApproveAgent.js';
@@ -143,7 +144,22 @@ export function App(): JSX.Element {
   }
 
   if (boot.kind === 'signedOut') {
-    return (
+    /**
+     * The front door gets the landing page; every other door gets the card.
+     *
+     * Somebody at `/` has not decided anything yet and is owed the argument.
+     * Somebody at `/cli/KTRW-9F2D` was sent here by a terminal that is
+     * currently waiting on them, and a marketing page in front of that is an
+     * obstacle, not an introduction — so the narrow path keeps the one control
+     * it needs and nothing else.
+     */
+    const front = window.location.pathname === '/' || window.location.pathname === '';
+    return front ? (
+      <Landing
+        notice={boot.message}
+        onSignedIn={(viewer) => setBoot({ kind: 'user', viewer })}
+      />
+    ) : (
       <SignIn
         brand={
           <>
@@ -2248,17 +2264,6 @@ function Presence({ peers }: { peers: PeerPresence[] }): JSX.Element | null {
         </span>
       ))}
     </div>
-  );
-}
-
-function Mark(): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" className="mark" aria-hidden="true">
-      <path d="M4 4h16v3H4z" />
-      <path d="M4 10h11v3H4z" />
-      <path d="M4 16h7v3H4z" />
-      <circle cx="19" cy="17.5" r="3.2" className="mark-dot" />
-    </svg>
   );
 }
 
