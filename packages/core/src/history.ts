@@ -285,6 +285,37 @@ export class History {
     return this.checkpoints.get(id);
   }
 
+  /**
+   * Move every revision and block attribution from one principal to another.
+   *
+   * The in-memory timeline is a *window* onto the `revisions` table, so a claim
+   * that rewrote only SQL would leave this window answering `/history` and
+   * `/attribution` with the old id until the document happened to be evicted.
+   *
+   * Exactly `authorId`, and nothing else — `authorName`, `byGuest` and
+   * `sponsorId` are left alone. Not because they are right, but because
+   * `Store.reassignAuthor` rewrites exactly `$.authorId` and a cold document is
+   * rewritten by that SQL alone. Anything wider here would make an open
+   * document disagree with the same document after an eviction, and that
+   * disagreement is a worse bug than a stale display name: it appears and
+   * disappears with memory pressure. See `DocumentActor.reassignAuthor`.
+   */
+  reassignAuthor(from: string, to: string): number {
+    let changed = 0;
+    for (let i = 0; i < this.revisions.length; i++) {
+      const revision = this.revisions[i]!;
+      if (revision.authorId !== from) continue;
+      this.revisions[i] = { ...revision, authorId: to };
+      changed++;
+    }
+    for (const [blockId, attribution] of this.attribution) {
+      if (attribution.authorId !== from) continue;
+      this.attribution.set(blockId, { ...attribution, authorId: to });
+      changed++;
+    }
+    return changed;
+  }
+
   /** Restore state loaded from storage, without re-emitting events. */
   adopt(revisions: readonly Revision[], checkpoints: readonly Checkpoint[]): void {
     for (const revision of revisions) this.record(revision);

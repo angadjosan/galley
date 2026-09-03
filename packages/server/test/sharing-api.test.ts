@@ -363,6 +363,148 @@ describe('what a guest may not do', () => {
     expect(comments.map((c) => c.authorId)).toEqual(['u-dana']);
     expect(h.server.store.getPrincipal(guest.principal.id)).toBeUndefined();
   });
+
+  /**
+   * The claim has to reach the *document*, not only the tables.
+   *
+   * The document was open the whole time — the guest commented on it seconds
+   * ago — so `GET /comments` answers out of the actor's sidecar and never looks
+   * at SQLite. A claim that rewrote only the tables left this read returning
+   * the guest id, which by then had been deleted, so the UI rendered a raw
+   * unresolvable string next to a note the signed-in person had just written.
+   */
+  it('re-attributes a comment on a document that is open at the time', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    const linkId = await makeLink(h, docId, 'comment');
+    const first = await h.request(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0]!;
+    const guest = (await first.json()) as Opened;
+
+    await h.json(`/v1/docs/${docId}/comments`, {
+      method: 'POST',
+      token: guest.token,
+      body: JSON.stringify({ blockId: blockIds[0], body: 'left as a stranger' }),
+    });
+    expect(h.server.workspace.openDocumentIds()).toContain(docId);
+
+    await h.json('/v1/auth/session', {
+      method: 'POST',
+      token: '',
+      headers: { cookie },
+      body: JSON.stringify({ idToken: 'dev:dana@example.com' }),
+    });
+
+    const read = async (): Promise<string[]> =>
+      (
+        await h.json<{ comments: { authorId: string }[] }>(`/v1/docs/${docId}/comments`)
+      ).comments.map((c) => c.authorId);
+
+    expect(await read()).toEqual(['u-dana']);
+    // And nothing about it depended on the document staying in memory: evicting
+    // it and loading it back from its snapshot must produce the same answer,
+    // because the reload rehydrates the sidecar out of the tables.
+    await h.server.workspace.close(docId);
+    expect(h.server.workspace.openDocumentIds()).not.toContain(docId);
+    expect(await read()).toEqual(['u-dana']);
+  });
+
+  /**
+   * And nothing writes the old id back afterwards.
+   *
+   * The mirror to storage is driven by the actor's events, so the hazard is an
+   * ordinary later request — here a resolve — re-writing the record the actor
+   * still holds over the row the claim just fixed.
+   */
+  it('survives a later write to the same comment', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    const linkId = await makeLink(h, docId, 'comment');
+    const first = await h.request(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0]!;
+    const guest = (await first.json()) as Opened;
+
+    const left = await h.json<{ comment: { id: string } }>(`/v1/docs/${docId}/comments`, {
+      method: 'POST',
+      token: guest.token,
+      body: JSON.stringify({ blockId: blockIds[0], body: 'left as a stranger' }),
+    });
+
+    await h.json('/v1/auth/session', {
+      method: 'POST',
+      token: '',
+      headers: { cookie },
+      body: JSON.stringify({ idToken: 'dev:dana@example.com' }),
+    });
+
+    await h.json(`/v1/docs/${docId}/comments/${left.comment.id}/resolve`, { method: 'POST' });
+    await h.server.workspace.close(docId);
+    expect(h.server.store.listComments(docId).map((c) => c.authorId)).toEqual(['u-dana']);
+  });
+
+  /**
+   * A guest who edited, not only commented.
+   *
+   * `/history` reads revisions from storage but block attribution from the live
+   * actor, so this covers the in-memory timeline as well as the table.
+   */
+  it('re-attributes an edit and its block attribution', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    const linkId = await makeLink(h, docId, 'write');
+    const first = await h.request(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0]!;
+    const guest = (await first.json()) as Opened;
+
+    await h.json(`/v1/docs/${docId}`, {
+      method: 'PATCH',
+      token: guest.token,
+      body: JSON.stringify({
+        ops: [{ kind: 'replace', target: blockIds[1], markdown: 'edited by a stranger' }],
+      }),
+    });
+
+    await h.json('/v1/auth/session', {
+      method: 'POST',
+      token: '',
+      headers: { cookie },
+      body: JSON.stringify({ idToken: 'dev:dana@example.com' }),
+    });
+
+    const history = await h.json<{
+      revisions: { authorId: string }[];
+      attribution: { blockId: string; authorId: string }[];
+    }>(`/v1/docs/${docId}/history`);
+    expect(history.revisions.map((r) => r.authorId)).not.toContain(guest.principal.id);
+    expect(
+      history.attribution.find((a) => a.blockId === blockIds[1])?.authorId,
+    ).toBe('u-dana');
+  });
+
+  /**
+   * The same failure with a different trigger.
+   *
+   * The periodic guest sweep deletes principals nothing attributes work to, and
+   * it used to decide that from the `comments` and `suggestions` tables alone —
+   * so a guest who only ever *edited* looked idle, and collecting them left the
+   * timeline signed by an id resolving to nobody.
+   */
+  it('does not consider a guest who edited to have left nothing behind', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    const linkId = await makeLink(h, docId, 'write');
+    const guest = await h.json<Opened>(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
+
+    await h.json(`/v1/docs/${docId}`, {
+      method: 'PATCH',
+      token: guest.token,
+      body: JSON.stringify({
+        ops: [{ kind: 'replace', target: blockIds[1], markdown: 'edited by a stranger' }],
+      }),
+    });
+
+    expect(h.server.workspace.attributedPrincipals()).toContain(guest.principal.id);
+  });
 });
 
 describe('agents', () => {

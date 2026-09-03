@@ -906,11 +906,22 @@ export function build(options: ServerOptions = {}): GalleyServer {
   /**
    * Exchange an SSO id token for a Galley one.
    *
-   * Everything that makes a sign-in *mean* something happens in one
-   * transaction: the account is found or created, the invitations waiting on
-   * that address become real grants, and any work done as a guest in this
-   * browser moves onto the account. Splitting them would let a crash land a
-   * person who is signed in but not who they were a moment ago.
+   * Becoming the account is one transaction: it is found or created and the
+   * invitations waiting on that address become real grants, because a crash
+   * between those would land a person who is signed in but holds none of what
+   * was shared with them.
+   *
+   * Claiming the guest's work is a second step, and cannot be folded in. For
+   * any document that is open the record of that work lives in the
+   * `DocumentActor`'s sidecar, not in SQLite — the tables are a mirror of it —
+   * and rewriting it there means taking each document's sequencer lane, which
+   * is asynchronous and so cannot happen inside a synchronous SQL transaction.
+   * See `Workspace.reassignAuthor`.
+   *
+   * The order of the three steps is what makes a crash between any two of them
+   * benign: the account first, then the work moves onto it, and only then is
+   * the guest principal deleted. Stopping anywhere leaves every id resolving to
+   * somebody, and the next sign-in on the same cookie finishes the job.
    */
   app.post('/v1/auth/session', async (request, reply) => {
     const identity = options.identity;
@@ -944,12 +955,16 @@ export function build(options: ServerOptions = {}): GalleyServer {
         store.setDocGrant(invite.docId, id, invite.capability, invite.invitedBy);
       }
 
-      if (guest && guest.id !== id) {
-        store.reassignAuthor(guest.id, id);
-        store.deleteGuestPrincipal(guest.id);
-      }
       return id;
     });
+
+    if (guest && guest.id !== principalId) {
+      await workspace.reassignAuthor(guest.id, principalId);
+      // Last, and only once the work is somewhere else. Deleting the principal
+      // first is what turns a half-finished claim into a comment signed by an
+      // id that resolves to nobody.
+      await store.transaction(() => store.deleteGuestPrincipal(guest.id));
+    }
 
     if (guest) {
       auth.revokeToken(guest.token);

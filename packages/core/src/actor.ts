@@ -773,6 +773,73 @@ export class DocumentActor {
     });
   }
 
+  /**
+   * Move everything this document attributes to one principal onto another.
+   *
+   * The case this exists for is a guest signing in: the work they did before
+   * they had a name has to follow them onto the account, and the guest
+   * principal is deleted immediately afterwards, so anything left pointing at
+   * it becomes an id that resolves to nobody.
+   *
+   * **Why it cannot be done in SQL alone.** For as long as a document is open
+   * the sidecar here is the source of truth — `listComments`, `listSuggestions`
+   * and `listRevisions` all answer from these maps, and the store is a *mirror*
+   * fed by the events this actor emits. A claim that rewrote only the tables
+   * would therefore be invisible to every read, and worse, would be silently
+   * undone the next time anything touched a comment: `resolveComment` mirrors
+   * the record this actor still holds, which is the one with the old id in it.
+   *
+   * Runs on the document's sequencer lane like every other mutation, so it
+   * cannot interleave with a comment being left or a proposal being resolved
+   * halfway through the rewrite.
+   *
+   * **Scope is exactly `authorId`**, matching `Store.reassignAuthor`. A
+   * document that is closed at claim time is rewritten by that SQL alone, so
+   * rewriting a wider set of fields here (`resolvedBy`, `assigneeId`,
+   * `authorName`) would make an open document and a cold one disagree — a
+   * discrepancy that would appear and vanish with memory pressure. Those fields
+   * can also strand a deleted guest id; that is the same bug in a different
+   * column and wants the same fix on both sides at once.
+   *
+   * @returns how many records moved. Zero is the overwhelmingly common answer.
+   */
+  reassignAuthor(from: string, to: string): Promise<number> {
+    // A faulted or ended document has no lane left to run on, and the store
+    // rewrite still covers it. Refusing the claim over it would be worse.
+    if (this.sessionEnded) return Promise.resolve(0);
+    return this.sequencer.run(this.docId, async () => {
+      // A burst still inside its quiet window is work this principal has
+      // already done. Flushed first so it becomes a revision this pass can
+      // rewrite, rather than one recorded under the old id three seconds later.
+      this.flushLiveEdit();
+
+      let changed = 0;
+      for (const comment of this.comments.values()) {
+        if (comment.authorId !== from) continue;
+        const moved: Comment = { ...comment, authorId: to };
+        this.comments.set(comment.id, moved);
+        // Emitted, not merely stored: the emit is what makes the mirror write
+        // the *corrected* row, so a later persist cannot put the old id back.
+        this.emit({ kind: 'comment', comment: moved });
+        changed++;
+      }
+      for (const suggestion of this.suggestions.values()) {
+        if (suggestion.authorId !== from) continue;
+        const moved: Suggestion = { ...suggestion, authorId: to };
+        this.suggestions.set(suggestion.id, moved);
+        this.emit({ kind: 'suggestion', suggestion: moved });
+        changed++;
+      }
+      // No event for these. A revision row is written once, when the revision
+      // happens, and is never re-mirrored from memory — so there is nothing to
+      // write stale data back, and the store's own rewrite is enough.
+      changed += this.history.reassignAuthor(from, to);
+
+      this.counters.inc('reassignments', changed);
+      return changed;
+    });
+  }
+
   /** Mark proposals stale when the text they were written against has moved. */
   private refreshSuggestionStaleness(): void {
     // Parsing the whole document to check nothing is 19% of a PATCH's p99 on a

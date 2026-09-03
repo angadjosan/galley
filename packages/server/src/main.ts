@@ -102,6 +102,15 @@ const GUEST_TTL_MS = 30 * 86_400_000;
  * store keeps their comment either way, but deleting the principal would leave
  * a note signed by an id that resolves to nobody. Cheap enough at this cadence
  * — the scan only runs when there is actually something expired to consider.
+ *
+ * The set of "wrote something" comes from `Workspace.attributedPrincipals`
+ * rather than being assembled here, and that is the whole correctness of this
+ * function. It used to be comments and suggestions read out of SQLite, which
+ * missed two things: a link that confers `write` lets a guest author
+ * **revisions**, and for an open document the freshest comments live in the
+ * actor's sidecar and may not have reached the tables yet. Either omission is
+ * the same failure as a botched claim — a principal deleted out from under work
+ * that still names it.
  */
 function collectGuests(server: ReturnType<typeof build>): void {
   const stale = server.store.listGuestPrincipalsOlderThan(
@@ -109,11 +118,7 @@ function collectGuests(server: ReturnType<typeof build>): void {
   );
   if (stale.length === 0) return;
 
-  const authors = new Set<string>();
-  for (const doc of server.workspace.list('')) {
-    for (const comment of server.store.listComments(doc.docId)) authors.add(comment.authorId);
-    for (const suggestion of server.store.listSuggestions(doc.docId)) authors.add(suggestion.authorId);
-  }
+  const authors = server.workspace.attributedPrincipals();
 
   let collected = 0;
   for (const id of stale) {
