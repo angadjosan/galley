@@ -4,7 +4,7 @@
 # hold divergent state for the same document and the per-document mutex would
 # serialize nothing between them. Do not raise the machine count without moving
 # that coordination into an external store first.
-app = "galley"
+app = "galley-app"
 primary_region = "sjc"
 
 [build]
