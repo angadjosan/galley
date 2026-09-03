@@ -42,6 +42,14 @@ export const DEFAULT_TRASH_DAYS = 30;
 const REHYDRATE_REVISIONS = 200;
 
 /**
+ * Page size for a scan that only wants ids out of the revision archive.
+ *
+ * A revision holds the whole document it produced, so the bound here is about
+ * peak memory rather than round trips.
+ */
+const REVISION_SCAN_PAGE = 200;
+
+/**
  * Who the sweep acts as.
  *
  * The audit log records an actor for every entry, and the actor here is not a
@@ -167,6 +175,14 @@ export class Workspace {
       this.store.getDocumentByPath(this.workspaceId, normalized),
     );
     if (existing) throw new Error(`a document already exists at ${normalized}`);
+
+    // A guest arrives through a share link scoped to one document, so there is
+    // no document they could be creating and no owner to record if they did.
+    // Refused here rather than at the route, because an unowned document is
+    // invisible to the staleness nudge and would simply rot unnoticed.
+    if (principal.kind === 'guest') {
+      throw new InvalidPathError('a guest cannot create a document');
+    }
 
     const doc = GalleyDocument.create(source, {
       owner: principal.kind === 'human' ? principal.id : undefined,
@@ -619,6 +635,108 @@ export class Workspace {
       if (gone) purged += 1;
     }
     return purged;
+  }
+
+  // -------------------------------------------------------------------------
+  // Attribution
+  // -------------------------------------------------------------------------
+
+  /**
+   * Move everything attributed to one principal onto another, everywhere.
+   *
+   * The case is a guest signing in. `Store.reassignAuthor` rewrites the tables
+   * correctly, but for an **open** document the tables are a mirror, not the
+   * record: the sidecar in the `DocumentActor` is what every read answers from,
+   * and it is what the next mirror writes back. So a claim has to reach both.
+   *
+   * ### Why the actors go first
+   *
+   * Store-then-actors is the ordering that can lose the write. Between the two
+   * halves, anything that touches a comment on an open document — a resolve, an
+   * orphan reattachment — mirrors the record the actor still holds, which is
+   * the one with the *old* id in it, straight over the row the SQL just fixed.
+   * The rewrite would then be undone by a completely unrelated request, minutes
+   * later, and only sometimes.
+   *
+   * Actors-then-store cannot lose it. Each rewritten comment is emitted, so the
+   * mirror writes the corrected row on its own; the SQL that follows is what
+   * covers every document that was cold. A crash in between leaves the tables
+   * still naming the guest, which is survivable precisely because the caller
+   * deletes the guest principal *after* this resolves — the id still resolves
+   * to somebody, and the claim can simply be run again.
+   *
+   * ### Why the actors are swept twice
+   *
+   * A document that is cold when the first sweep runs, and is opened during the
+   * store write, would rehydrate the old id out of the tables and then never be
+   * visited. The second sweep closes that window: `openDocument` puts the entry
+   * in the open map before it rehydrates from the store, both synchronously, so
+   * any document whose rehydrate read stale rows is already in the map by the
+   * time the store transaction commits — and is therefore visited by the pass
+   * that follows it. A document that opens later reads the corrected rows. The
+   * sweep is idempotent and costs one map scan per open document, so paying for
+   * it twice is not worth being clever about.
+   */
+  async reassignAuthor(from: string, to: string): Promise<number> {
+    if (from === to) return 0;
+    let moved = await this.sweepOpen(from, to);
+    await this.store.transaction(() => this.store.reassignAuthor(from, to));
+    moved += await this.sweepOpen(from, to);
+    return moved;
+  }
+
+  private async sweepOpen(from: string, to: string): Promise<number> {
+    let moved = 0;
+    for (const docId of [...this.open.keys()]) {
+      const entry = this.open.get(docId);
+      if (!entry) continue; // evicted while we were awaiting an earlier one
+      try {
+        moved += await entry.actor.reassignAuthor(from, to);
+      } catch {
+        // A document that faulted mid-sweep is not a reason to abandon the
+        // claim: its rows are still rewritten by the store, and it will be
+        // reloaded from them.
+        this.counters.inc('reassign-failures');
+      }
+    }
+    return moved;
+  }
+
+  /**
+   * Every principal id that anything in this workspace still attributes work to.
+   *
+   * Exists for the guest sweep, whose whole job is to delete only the guests
+   * that left nothing behind. Getting this set too small is how a purge turns a
+   * signed note into an id that renders as a raw string, so it reads the *live*
+   * sidecar of any open document as well as the tables — a comment left ten
+   * seconds ago is in the actor and may not have been mirrored yet.
+   *
+   * Revisions are paged rather than listed: each one carries the whole document
+   * it produced, so asking for all of them at once would put a copy of every
+   * version of every document into memory to compute a set of strings.
+   */
+  attributedPrincipals(): Set<string> {
+    const ids = new Set<string>();
+    const add = (id: string | null | undefined): void => {
+      if (id) ids.add(id);
+    };
+    for (const doc of this.list('')) {
+      add(doc.ownerId);
+      for (const comment of this.store.listComments(doc.docId)) add(comment.authorId);
+      for (const suggestion of this.store.listSuggestions(doc.docId)) add(suggestion.authorId);
+      for (let before: number | undefined; ; ) {
+        const page = this.store.listRevisions<Revision>(doc.docId, REVISION_SCAN_PAGE, before);
+        for (const revision of page) add(revision.authorId);
+        if (page.length < REVISION_SCAN_PAGE) break;
+        before = page[0]!.ticket; // oldest first; page back from there
+      }
+      const entry = this.open.get(doc.docId);
+      if (!entry) continue;
+      for (const comment of entry.actor.listComments()) add(comment.authorId);
+      for (const suggestion of entry.actor.listSuggestions()) add(suggestion.authorId);
+      for (const attribution of entry.actor.allAttribution()) add(attribution.authorId);
+    }
+    return ids;
   }
 
   /**

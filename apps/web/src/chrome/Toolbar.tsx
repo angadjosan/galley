@@ -74,6 +74,14 @@ export interface ToolbarProps {
   run(command: Command): void;
   onLink(): void;
   onComment(): void;
+  /**
+   * False at `read`, where there is nowhere to put a note.
+   *
+   * Absent rather than disabled — the exception to this row's rule, because a
+   * permission is not a property of the selection and greying cannot say which
+   * of the two it is.
+   */
+  canComment?: boolean;
   onImage(): void;
   onDesign(): void;
   onTable(): void;
@@ -301,13 +309,15 @@ function buildGroups(props: ToolbarProps): Group[] {
             enabled={!disabled && !!current}
             onClick={props.onLink}
           />
-          <ToolButton
-            label="Add comment"
-            shortcut="⌘⌥M"
-            icon={<CommentIcon />}
-            enabled={!!current}
-            onClick={props.onComment}
-          />
+          {props.canComment !== false && (
+            <ToolButton
+              label="Add comment"
+              shortcut="⌘⌥M"
+              icon={<CommentIcon />}
+              enabled={!!current}
+              onClick={props.onComment}
+            />
+          )}
           <ToolButton
             label="Insert image"
             icon={<ImageIcon />}

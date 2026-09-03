@@ -59,6 +59,18 @@ export interface MenuBarProps {
   onDesign(): void;
   onTable(): void;
   onShare(): void;
+  /** False for a guest, who may edit through a link but not share or create. */
+  canShare?: boolean;
+  canCreate?: boolean;
+  /**
+   * False at `read`, where leaving a note would be refused.
+   *
+   * The one place this menu bar's "disabled, not hidden" rule gives way, and
+   * for the same reason `canShare` does: a permission is not a state of the
+   * selection. A greyed-out Comment says "not right now"; the truth is "not
+   * with this link", which greying cannot say.
+   */
+  canComment?: boolean;
   onHistory(): void;
   onNewDocument(): void;
   onToggleLibrary(): void;
@@ -383,10 +395,10 @@ function buildMenus(props: MenuBarProps): Menu[] {
       id: 'file',
       label: 'File',
       entries: () => [
-        app('new', 'New document', props.onNewDocument),
+        ...(props.canCreate === false ? [] : [app('new', 'New document', props.onNewDocument)]),
         app('open', 'Open a document', props.onToggleLibrary, { shortcut: '⌘K' }),
         separator('f1'),
-        app('share', 'Share', props.onShare),
+        ...(props.canShare === false ? [] : [app('share', 'Share', props.onShare)]),
         app('history', 'Version history', props.onHistory),
         separator('f2'),
         // The two places the format is allowed to be named, and the only two.
@@ -415,7 +427,9 @@ function buildMenus(props: MenuBarProps): Menu[] {
         app('table', 'Table', props.onTable, { enabled: !readOnly && !!state }),
         separator('i1'),
         app('link', 'Link', props.onLink, { shortcut: '⌘K', enabled: !readOnly && !!state }),
-        app('comment', 'Comment', props.onComment, { shortcut: '⌘⌥M', enabled: !!state }),
+        ...(props.canComment === false
+          ? []
+          : [app('comment', 'Comment', props.onComment, { shortcut: '⌘⌥M', enabled: !!state })]),
         separator('i2'),
         action(INSERT_QUOTE),
         action(INSERT_CALLOUT),

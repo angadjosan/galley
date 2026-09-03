@@ -11,7 +11,11 @@ import { DesignEditor } from './design/DesignEditor.js';
 import { MenuBar } from './chrome/MenuBar.js';
 import { Toolbar } from './chrome/Toolbar.js';
 import { emptyHighlights } from './editor/plugins.js';
-import { LiveConnection, clearCredentials, makeClient, readCredentials, } from './api.js';
+import { LiveConnection, bootstrap, currentToken, makeClient, onSessionLost, serverBaseUrl, signOut as endSession, } from './api.js';
+import { SignIn, SignInForm } from './share/SignIn.js';
+import { ShareDialog } from './share/ShareDialog.js';
+import { AgentsPanel } from './share/AgentsPanel.js';
+import { GuestBadge } from './share/GuestBadge.js';
 /**
  * Report a failure in a sentence, and keep the exception for the console.
  *
@@ -23,60 +27,64 @@ function failure(text, error) {
     console.error('[galley]', error);
     return { tone: 'bad', text };
 }
+/**
+ * The app, and the question it has to answer before it can draw anything:
+ * who is holding this tab?
+ *
+ * Three answers, and they are genuinely different products for a moment —
+ * a signed-in person, a guest who followed a link, and nobody. Deciding once,
+ * up front, is what keeps every surface below from having to ask again.
+ */
 export function App() {
-    const [credentials, setCredentials] = useState(() => readCredentials());
-    if (!credentials)
-        return _jsx(SignIn, { onSignIn: setCredentials });
-    return (_jsx(Workspace, { credentials: credentials, onSignOut: () => {
-            clearCredentials();
-            setCredentials(null);
-        } }));
-}
-// ---------------------------------------------------------------------------
-function SignIn({ onSignIn }) {
-    const [link, setLink] = useState('');
-    const [advanced, setAdvanced] = useState(false);
-    const [server, setServer] = useState(window.location.origin);
-    const [token, setToken] = useState('');
-    const [error, setError] = useState(null);
-    const enter = (baseUrl, value) => {
-        sessionStorage.setItem('galley.session', JSON.stringify({ baseUrl, token: value }));
-        onSignIn({ baseUrl, token: value });
-    };
-    return (_jsx("div", { className: "signin", children: _jsxs("form", { className: "signin-card", onSubmit: (event) => {
-                event.preventDefault();
-                if (advanced) {
-                    enter(server, token);
-                    return;
-                }
-                // One field, because two labelled credential fields is a login screen
-                // for engineers. The link people are sent already carries both.
-                const parsed = parseInvite(link.trim());
-                if (!parsed) {
-                    setError("That doesn't look like a Galley link. Paste the whole thing, or open Advanced.");
-                    return;
-                }
-                enter(parsed.baseUrl, parsed.token);
-            }, children: [_jsxs("div", { className: "brand brand-lg", children: [_jsx(Mark, {}), _jsx("span", { children: "Galley" })] }), _jsx("p", { className: "signin-lede", children: "Write like normal. Your agents get something they can actually read." }), advanced ? (_jsxs(_Fragment, { children: [_jsxs("label", { children: ["Server", _jsx("input", { value: server, onChange: (e) => setServer(e.target.value), spellCheck: false })] }), _jsxs("label", { children: ["Token", _jsx("input", { value: token, onChange: (e) => setToken(e.target.value), placeholder: "glly_\u2026", spellCheck: false, "data-testid": "token-input" })] })] })) : (_jsxs("label", { children: ["Your invite link", _jsx("input", { value: link, onChange: (event) => {
-                                setLink(event.target.value);
-                                setError(null);
-                            }, placeholder: "https://\u2026", spellCheck: false, autoFocus: true, "data-testid": "invite-input" })] })), error && _jsx("p", { className: "signin-error", children: error }), _jsx("button", { type: "submit", className: "primary", "data-testid": "sign-in", children: "Open Galley" }), _jsx("button", { type: "button", className: "link-quiet", onClick: () => setAdvanced((on) => !on), children: advanced ? 'Use an invite link instead' : 'Advanced' })] }) }));
-}
-/** Pull a server and token out of whatever someone pasted. */
-function parseInvite(value) {
-    if (!value)
-        return null;
-    try {
-        const url = new URL(value);
-        const token = url.searchParams.get('token');
-        if (!token)
-            return null;
-        const server = url.searchParams.get('server');
-        return { baseUrl: server ?? url.origin, token };
+    const [boot, setBoot] = useState(null);
+    /**
+     * The document a guest was reading when they signed in.
+     *
+     * Signing in from a share link claims the guest's work on the server. Landing
+     * that person back in an empty workspace, having just been told their work
+     * was kept, would be a lie told by a router.
+     */
+    const [claimed, setClaimed] = useState(null);
+    useEffect(() => {
+        let live = true;
+        void bootstrap().then((result) => {
+            if (live)
+                setBoot(result);
+        });
+        return () => {
+            live = false;
+        };
+    }, []);
+    // A token that could not be re-minted is a session that is over. Saying so
+    // beats every screen in the app quietly failing one request at a time.
+    useEffect(() => {
+        onSessionLost(() => setBoot({ kind: 'signedOut', message: 'Your session ended. Sign in again to carry on.' }));
+        return () => onSessionLost(null);
+    }, []);
+    // The token is read during render rather than held in state because it is
+    // re-minted without anybody re-rendering; what this has to be stable across
+    // is renders, so that the client below is not rebuilt on every one of them.
+    const token = currentToken() ?? '';
+    const credentials = useMemo(() => ({ baseUrl: serverBaseUrl(), token }), [token]);
+    if (!boot) {
+        return (_jsx("div", { className: "signin", children: _jsxs("div", { className: "signin-card signin-opening", "aria-busy": "true", children: [_jsxs("div", { className: "brand brand-lg", children: [_jsx(Mark, {}), _jsx("span", { children: "Galley" })] }), _jsx("p", { className: "signin-lede", children: "Opening\u2026" })] }) }));
     }
-    catch {
-        return value.startsWith('glly_') ? { baseUrl: window.location.origin, token: value } : null;
+    if (boot.kind === 'signedOut') {
+        return (_jsx(SignIn, { brand: _jsxs(_Fragment, { children: [_jsx(Mark, {}), _jsx("span", { children: "Galley" })] }), notice: boot.message, onSignedIn: (viewer) => setBoot({ kind: 'user', viewer }) }));
     }
+    const guest = boot.kind === 'guest';
+    return (_jsx(Workspace
+    // Remounted when the identity changes: a claimed guest session and the
+    // person it became share no state worth keeping.
+    , { credentials: credentials, viewer: boot.viewer, guest: guest, initialDocId: guest ? boot.docId : claimed, onSignedIn: (viewer) => {
+            if (guest)
+                setClaimed(boot.docId);
+            setBoot({ kind: 'user', viewer });
+        }, onSignOut: () => {
+            void endSession();
+            setClaimed(null);
+            setBoot({ kind: 'signedOut' });
+        } }, guest ? `guest:${boot.linkId}` : `user:${boot.viewer.id}`));
 }
 // ---------------------------------------------------------------------------
 /**
@@ -100,7 +108,7 @@ function blankDesign(name) {
     ].join('\n');
     return `# ${name}\n\n\`\`\`design\n${source}\n\`\`\`\n`;
 }
-function Workspace({ credentials, onSignOut, }) {
+function Workspace({ credentials, viewer, guest, initialDocId, onSignedIn, onSignOut, }) {
     const client = useMemo(() => makeClient(credentials), [credentials]);
     const [documents, setDocuments] = useState([]);
     const [people, setPeople] = useState(new Map());
@@ -119,17 +127,41 @@ function Workspace({ credentials, onSignOut, }) {
     const [confirming, setConfirming] = useState(null);
     const [creatingOpen, setCreatingOpen] = useState(false);
     const [trashOpen, setTrashOpen] = useState(false);
+    const [agentsOpen, setAgentsOpen] = useState(false);
+    /** A guest who has asked to sign in, without losing the document behind it. */
+    const [claiming, setClaiming] = useState(false);
     const refreshList = useCallback(async () => {
         try {
+            // A guest can see exactly one document — the one the link points at.
+            // Asking for the library would be asking a question they are not allowed
+            // to ask, and answering it with an error banner would be theatre.
+            if (guest) {
+                if (!initialDocId) {
+                    setDocuments([]);
+                    return;
+                }
+                const doc = await client.read(initialDocId);
+                setDocuments([
+                    {
+                        docId: initialDocId,
+                        path: doc.path,
+                        title: titleOf(doc.content, doc.path),
+                        updatedAt: new Date().toISOString(),
+                    },
+                ]);
+                setSelected(initialDocId);
+                setError(null);
+                return;
+            }
             const list = await client.list();
             setDocuments(list);
-            setSelected((current) => current ?? list[0]?.docId ?? null);
+            setSelected((current) => current ?? initialDocId ?? list[0]?.docId ?? null);
             setError(null);
         }
         catch (err) {
             setError(err instanceof Error ? err.message : String(err));
         }
-    }, [client]);
+    }, [client, guest, initialDocId]);
     useEffect(() => {
         void refreshList();
     }, [refreshList]);
@@ -245,7 +277,7 @@ function Workspace({ credentials, onSignOut, }) {
             setError(err instanceof Error ? err.message : String(err));
         }
     };
-    return (_jsxs("div", { className: `app ${libraryOpen ? 'library-open' : ''}`, children: [_jsxs("aside", { className: "library", children: [_jsxs("div", { className: "brand", children: [_jsx(Mark, {}), _jsx("span", { children: "Galley" })] }), _jsx("div", { className: "search", children: _jsx("input", { value: query, onChange: (event) => setQuery(event.target.value), placeholder: "Search everything", "aria-label": "Search", "data-testid": "search-input" }) }), hits ? (_jsxs("nav", { className: "doc-list", "data-testid": "search-results", children: [_jsxs("div", { className: "folder-label", children: [hits.length, " match", hits.length === 1 ? '' : 'es', " in", ' ', new Set(hits.map((hit) => hit.path)).size, " document", new Set(hits.map((hit) => hit.path)).size === 1 ? '' : 's'] }), hits.map((hit) => (_jsxs("button", { className: "doc-item hit", onClick: () => {
+    return (_jsxs("div", { className: `app ${libraryOpen ? 'library-open' : ''}`, children: [_jsxs("aside", { className: "library", children: [_jsxs("div", { className: "brand", children: [_jsx(Mark, {}), _jsx("span", { children: "Galley" })] }), !guest && (_jsx("div", { className: "search", children: _jsx("input", { value: query, onChange: (event) => setQuery(event.target.value), placeholder: "Search everything", "aria-label": "Search", "data-testid": "search-input" }) })), hits ? (_jsxs("nav", { className: "doc-list", "data-testid": "search-results", children: [_jsxs("div", { className: "folder-label", children: [hits.length, " match", hits.length === 1 ? '' : 'es', " in", ' ', new Set(hits.map((hit) => hit.path)).size, " document", new Set(hits.map((hit) => hit.path)).size === 1 ? '' : 's'] }), hits.map((hit) => (_jsxs("button", { className: "doc-item hit", onClick: () => {
                                     const doc = documents.find((d) => d.path === hit.path);
                                     if (doc)
                                         setSelected(doc.docId);
@@ -254,7 +286,10 @@ function Workspace({ credentials, onSignOut, }) {
                                 }, children: [_jsx("span", { className: "doc-title", children: hit.heading || prettyName(hit.path) }), _jsx("span", { className: "hit-snippet", children: hit.snippet })] }, hit.ref)))] })) : (_jsx("nav", { className: "doc-list", "data-testid": "doc-list", children: grouped.map(([folder, docs]) => (_jsxs("div", { className: "folder", children: [_jsx("div", { className: "folder-label", children: folder ? prettyName(folder) : 'No folder' }), docs.map((doc) => (_jsxs("div", { className: "doc-row", children: [_jsx("button", { className: `doc-item ${doc.docId === selected ? 'is-selected' : ''}`, onClick: () => {
                                                 setSelected(doc.docId);
                                                 setLibraryOpen(false);
-                                            }, "data-testid": `doc-${doc.path}`, children: _jsx("span", { className: "doc-title", children: doc.title }) }), _jsx("button", { className: "doc-delete", onClick: () => setConfirming(doc), title: `Delete ${doc.title}`, "aria-label": `Delete ${doc.title}`, "data-testid": `delete-${doc.path}`, children: _jsx(TrashIcon, {}) })] }, doc.docId)))] }, folder))) })), _jsxs("div", { className: "library-foot", children: [_jsxs("div", { className: "new-doc-wrap", children: [creatingOpen && (_jsxs("div", { className: "new-doc-menu", "data-testid": "new-menu", children: [_jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('doc'), children: [_jsx(DocumentIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Document" }), _jsx("em", { children: "Words, in a page" })] })] }), _jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('design'), "data-testid": "new-design", children: [_jsx(DesignIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Design" }), _jsx("em", { children: "A screen, on a canvas" })] })] })] })), _jsxs("button", { className: "new-doc", onClick: () => setCreatingOpen((open) => !open), "aria-expanded": creatingOpen, "data-testid": "new-button", children: [_jsx("span", { "aria-hidden": "true", children: "+" }), " New"] })] }), _jsx("button", { className: "link-quiet", onClick: () => setTrashOpen(true), "data-testid": "open-trash", children: "Trash" }), _jsx("button", { className: "link-quiet", onClick: onSignOut, children: "Sign out" })] })] }), confirming && (_jsx(ConfirmDelete, { doc: confirming, onCancel: () => setConfirming(null), onConfirm: () => void deleteDocument(confirming) })), trashOpen && (_jsx(Trash, { client: client, onClose: () => setTrashOpen(false), onChanged: () => void refreshList() })), _jsx("button", { className: "scrim", "aria-label": "Close the document list", tabIndex: libraryOpen ? 0 : -1, onClick: () => setLibraryOpen(false) }), _jsxs("div", { className: "main-column", children: [error && _jsx("div", { className: "banner error", children: error }), selected && current ? (_jsx(DocumentView, { client: client, credentials: credentials, docId: selected, path: current.path, people: people, onToggleLibrary: () => setLibraryOpen((open) => !open), onNewDocument: () => void createDocument('doc'), onSignOut: onSignOut, onRenamed: (title) => setDocuments((list) => list.map((doc) => (doc.docId === selected ? { ...doc, title } : doc))), onOpenPath: (path) => {
+                                            }, "data-testid": `doc-${doc.path}`, children: _jsx("span", { className: "doc-title", children: doc.title }) }), !guest && (_jsx("button", { className: "doc-delete", onClick: () => setConfirming(doc), title: `Delete ${doc.title}`, "aria-label": `Delete ${doc.title}`, "data-testid": `delete-${doc.path}`, children: _jsx(TrashIcon, {}) }))] }, doc.docId)))] }, folder))) })), _jsx("div", { className: "library-foot", children: guest ? (_jsx("p", { className: "library-guest", "data-testid": "library-guest", children: "You are reading this as a guest. Signing in keeps your notes under your own name." })) : (_jsxs(_Fragment, { children: [_jsxs("div", { className: "new-doc-wrap", children: [creatingOpen && (_jsxs("div", { className: "new-doc-menu", "data-testid": "new-menu", children: [_jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('doc'), children: [_jsx(DocumentIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Document" }), _jsx("em", { children: "Words, in a page" })] })] }), _jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('design'), "data-testid": "new-design", children: [_jsx(DesignIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Design" }), _jsx("em", { children: "A screen, on a canvas" })] })] })] })), _jsxs("button", { className: "new-doc", onClick: () => setCreatingOpen((open) => !open), "aria-expanded": creatingOpen, "data-testid": "new-button", children: [_jsx("span", { "aria-hidden": "true", children: "+" }), " New"] })] }), _jsxs("div", { className: "foot-links", children: [_jsx("button", { className: "link-quiet", onClick: () => setTrashOpen(true), "data-testid": "open-trash", children: "Trash" }), _jsx("button", { className: "link-quiet", onClick: () => setAgentsOpen(true), "data-testid": "open-agents", children: "Agents" }), _jsx("button", { className: "link-quiet", onClick: onSignOut, children: "Sign out" })] })] })) })] }), confirming && (_jsx(ConfirmDelete, { doc: confirming, onCancel: () => setConfirming(null), onConfirm: () => void deleteDocument(confirming) })), trashOpen && (_jsx(Trash, { client: client, onClose: () => setTrashOpen(false), onChanged: () => void refreshList() })), agentsOpen && (_jsx(Overlay, { title: "Agents", onClose: () => setAgentsOpen(false), children: _jsx(AgentsPanel, { sponsorName: viewer.name }) })), claiming && (_jsxs(Overlay, { title: "Keep your work", onClose: () => setClaiming(false), children: [_jsx("p", { className: "overlay-lead", children: "Sign in and everything you have written here \u2014 your notes, your suggestions \u2014 comes with you, under your own name." }), _jsx(SignInForm, { submitLabel: "Sign in and keep my work", onSignedIn: (person) => {
+                            setClaiming(false);
+                            onSignedIn(person);
+                        } })] })), _jsx("button", { className: "scrim", "aria-label": "Close the document list", tabIndex: libraryOpen ? 0 : -1, onClick: () => setLibraryOpen(false) }), _jsxs("div", { className: "main-column", children: [error && _jsx("div", { className: "banner error", children: error }), selected && current ? (_jsx(DocumentView, { client: client, credentials: credentials, docId: selected, path: current.path, people: people, guest: guest, viewer: viewer, onClaim: () => setClaiming(true), onToggleLibrary: () => setLibraryOpen((open) => !open), onNewDocument: () => void createDocument('doc'), onSignOut: onSignOut, onRenamed: (title) => setDocuments((list) => list.map((doc) => (doc.docId === selected ? { ...doc, title } : doc))), onOpenPath: (path) => {
                             const target = documents.find((doc) => doc.path === path);
                             if (target) {
                                 setSelected(target.docId);
@@ -268,18 +303,41 @@ function Workspace({ credentials, onSignOut, }) {
                                 .then((list) => list.find((doc) => doc.path === path))
                                 .then((found) => found && setSelected(found.docId))
                                 .catch(() => undefined));
-                        } }, selected)) : (_jsx(FirstRun, { onCreate: () => void createDocument('doc') }))] })] }));
+                        } }, selected)) : guest ? (_jsx("div", { className: "desk", children: _jsx("div", { className: "spread", children: _jsxs("main", { className: "page page-empty", children: [_jsx("h1", { children: "This link has nothing behind it" }), _jsx("p", { children: "The document it pointed at is gone, or the link was turned off." })] }) }) })) : (_jsx(FirstRun, { onCreate: () => void createDocument('doc') }))] })] }));
 }
 function FirstRun({ onCreate }) {
     return (_jsx("div", { className: "desk", children: _jsx("div", { className: "spread", children: _jsxs("main", { className: "page page-empty", children: [_jsx("h1", { children: "Start a document" }), _jsx("p", { children: "Write the way you always do. Galley keeps it in a format your agents can read, cite, and suggest edits to." }), _jsx("button", { className: "primary", onClick: onCreate, children: "Blank document" })] }) }) }));
 }
 // ---------------------------------------------------------------------------
-function DocumentView({ client, credentials, docId, path, people, onToggleLibrary, onNewDocument, onSignOut, onOpenPath, onRenamed, }) {
+function DocumentView({ client, credentials, docId, path, people, guest, viewer, onClaim, onToggleLibrary, onNewDocument, onSignOut, onOpenPath, onRenamed, }) {
     const editor = useRef(null);
     const desk = useRef(null);
     const lane = useRef(null);
     const cardNodes = useRef(new Map());
     const [loaded, setLoaded] = useState(null);
+    /**
+     * What this reader is allowed to do here, as the server sees it.
+     *
+     * Read from the document rather than inferred from the identity: a guest on a
+     * `write` link may edit, and a signed-in colleague on a `read` share may not.
+     * Being a guest is not a capability.
+     *
+     * `write` until the first read answers, and `write` again if an older server
+     * omits the field. Defaulting the other way would lock out every writer the
+     * moment a response was slow, and the server is the thing that actually
+     * enforces this — the UI's job is to stop offering what would be refused.
+     */
+    const [capability, setCapability] = useState('write');
+    /**
+     * The four questions every surface below asks, answered once.
+     *
+     * Each maps to the capability the server checks for the corresponding route,
+     * so a control that is offered is a control that will work.
+     */
+    const canEdit = capability === 'write' || capability === 'admin';
+    const canComment = canEdit || capability === 'comment' || capability === 'suggest';
+    const canSuggest = canEdit || capability === 'suggest';
+    const canShare = capability === 'admin';
     const [draft, setDraft] = useState('');
     const [save, setSave] = useState('saved');
     const [comments, setComments] = useState([]);
@@ -333,6 +391,8 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
             client.history(docId),
         ]);
         serverContent.current = doc.content;
+        if (doc.capability)
+            setCapability(doc.capability);
         // Only re-seed the editor when the server is telling us something we do
         // not already have. Every save echoes back as a change event, and feeding
         // that echo to the editor would rebuild it — throwing the caret of the
@@ -404,6 +464,12 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
     const flush = useCallback(async () => {
         if (saving.current)
             return;
+        // Nothing typed here can be saved, so there is nothing to try. Without
+        // this the round trip comes back 403 and says "we'll keep trying", which
+        // is both a lie and the wrong sentence: the person did not lose a change,
+        // they were never able to make one.
+        if (!canEdit)
+            return;
         const ops = diffToBlockOps(serverContent.current, latestDraft.current);
         if (ops.length === 0) {
             setSave('saved');
@@ -443,7 +509,7 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
             setSave('error');
             setNotice(failure("That change couldn't be saved. It is still here — we'll keep trying.", err));
         }
-    }, [client, docId, path, onRenamed]);
+    }, [canEdit, client, docId, path, onRenamed]);
     useEffect(() => {
         if (save !== 'dirty')
             return;
@@ -583,6 +649,10 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
         }
     }, [client, docId, loadAll, suggestions]);
     const suggestionHandlers = useMemo(() => ({
+        // Accepting or dismissing a suggestion rewrites the document, so both are
+        // a `write`. A reader still sees what was proposed; they are simply not
+        // offered the two buttons that would come back 403.
+        readOnly: !canEdit,
         accept: (id) => void acceptSuggestion(id),
         acceptAndEdit: (id) => void acceptSuggestion(id, true),
         reject: (id) => {
@@ -592,7 +662,7 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
                 setNotice({ tone: 'good', text: "Dismissed. It won't come back." });
             })();
         },
-    }), [acceptSuggestion, client, docId]);
+    }), [acceptSuggestion, canEdit, client, docId]);
     // Cards sit beside the paragraph they are about. That vertical coupling is
     // the whole reason a margin works and a tab does not: the connection is
     // spatial, so nobody has to rebuild it in their head.
@@ -760,7 +830,7 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
     // the selection was lost when the save landed. The editor was unusable.
     const asDesign = extractDesign(draft || loaded.content);
     if (asDesign) {
-        return (_jsxs(_Fragment, { children: [_jsx("header", { className: "chrome", children: _jsxs("div", { className: "chrome-top", children: [_jsx("button", { className: "icon-button chrome-menu", onClick: onToggleLibrary, "aria-label": "Documents", children: _jsx("span", { "aria-hidden": "true", children: "\u2630" }) }), _jsxs("nav", { className: "breadcrumb", "aria-label": "Location", children: [folder && (_jsxs(_Fragment, { children: [_jsx("span", { className: "crumb", children: prettyName(folder) }), _jsx("span", { className: "crumb-sep", "aria-hidden": "true", children: "\u203A" })] })), _jsx("span", { className: "crumb is-current", "data-testid": "doc-title", children: title })] }), _jsxs("div", { className: "chrome-right", children: [_jsx(SaveBadge, { state: save }), _jsx(Presence, { peers: peers }), _jsx("button", { className: "chrome-button chrome-share", onClick: () => setShareOpen(true), children: "Share" })] })] }) }), notice && (_jsxs("div", { className: `banner banner-${notice.tone}`, "data-testid": "notice", children: [_jsx("span", { children: notice.text }), _jsx("button", { className: "icon-button", onClick: () => setNotice(null), "aria-label": "Dismiss", children: _jsx("span", { "aria-hidden": "true", children: "\u2715" }) })] })), _jsx(Boundary, { what: "the design canvas", children: _jsx(DesignEditor, { source: asDesign.source, 
+        return (_jsxs(_Fragment, { children: [_jsx("header", { className: "chrome", children: _jsxs("div", { className: "chrome-top", children: [_jsx("button", { className: "icon-button chrome-menu", onClick: onToggleLibrary, "aria-label": "Documents", children: _jsx("span", { "aria-hidden": "true", children: "\u2630" }) }), _jsxs("nav", { className: "breadcrumb", "aria-label": "Location", children: [folder && (_jsxs(_Fragment, { children: [_jsx("span", { className: "crumb", children: prettyName(folder) }), _jsx("span", { className: "crumb-sep", "aria-hidden": "true", children: "\u203A" })] })), _jsx("span", { className: "crumb is-current", "data-testid": "doc-title", children: title })] }), _jsxs("div", { className: "chrome-right", children: [_jsx(AccessNote, { capability: capability, canSuggest: canSuggest }), _jsx(SaveBadge, { state: save }), _jsx(Presence, { peers: peers }), guest ? (_jsx(GuestBadge, { name: viewer.name, onSignIn: onClaim })) : (canShare && (_jsx("button", { className: "chrome-button chrome-share", onClick: () => setShareOpen(true), children: "Share" })))] })] }) }), notice && (_jsxs("div", { className: `banner banner-${notice.tone}`, "data-testid": "notice", children: [_jsx("span", { children: notice.text }), _jsx("button", { className: "icon-button", onClick: () => setNotice(null), "aria-label": "Dismiss", children: _jsx("span", { "aria-hidden": "true", children: "\u2715" }) })] })), _jsx(Boundary, { what: "the design canvas", children: _jsx(DesignEditor, { source: asDesign.source, readOnly: !canEdit, 
                         // A layer with a note on it keeps its id in the file. Same rule as a
                         // paragraph: identity materializes when something durable needs it.
                         anchored: new Set(comments
@@ -784,9 +854,9 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
                         // A design *is* a document, so there is nowhere to go "back" to.
                         // Closing means putting it down and picking another one, which is
                         // what the document list is for.
-                        onClose: onToggleLibrary }) }), shareOpen && _jsx(Share, { path: loaded.path, onClose: () => setShareOpen(false) })] }));
+                        onClose: onToggleLibrary }) }), shareOpen && canShare && (_jsx(Overlay, { title: "Share", onClose: () => setShareOpen(false), children: _jsx(ShareDialog, { docRef: docId, path: loaded.path, onCopyForAgent: () => void navigator.clipboard?.writeText(loaded.path) }) }))] }));
     }
-    return (_jsxs(_Fragment, { children: [_jsxs("header", { className: "chrome", children: [_jsxs("div", { className: "chrome-top", children: [_jsx("button", { className: "icon-button chrome-menu", onClick: onToggleLibrary, "aria-label": "Documents", children: _jsx("span", { "aria-hidden": "true", children: "\u2630" }) }), _jsxs("nav", { className: "breadcrumb", "aria-label": "Location", children: [folder && (_jsxs(_Fragment, { children: [_jsx("span", { className: "crumb", children: prettyName(folder) }), _jsx("span", { className: "crumb-sep", "aria-hidden": "true", children: "\u203A" })] })), _jsx("span", { className: "crumb is-current", "data-testid": "doc-title", children: title })] }), _jsxs("div", { className: "chrome-right", children: [_jsx(SaveBadge, { state: save }), _jsx(Presence, { peers: peers }), _jsx("button", { className: "chrome-button chrome-share", onClick: () => setShareOpen(true), children: "Share" })] })] }), _jsx(MenuBar, { state: editorState, readOnly: false, run: (command) => editor.current?.run(command), onLink: () => editor.current?.openLink(), onComment: () => editor.current?.openComment(), onImage: () => setInserting('image'), onDesign: () => void insertDesign(), onTable: () => editor.current?.run(INSERT_TABLE), onShare: () => setShareOpen(true), onHistory: () => setHistoryOpen(true), onNewDocument: onNewDocument, onToggleLibrary: onToggleLibrary, onCopyMarkdown: () => void navigator.clipboard?.writeText(editor.current?.markdown() ?? loaded.content), onDownload: () => downloadMarkdown(loaded.path, editor.current?.markdown() ?? loaded.content), onSignOut: onSignOut }), _jsx(Toolbar, { state: editorState, readOnly: false, run: (command) => editor.current?.run(command), onLink: () => editor.current?.openLink(), onComment: () => editor.current?.openComment(), onImage: () => setInserting('image'), onDesign: () => void insertDesign(), onTable: () => editor.current?.run(INSERT_TABLE) })] }), notice && (_jsxs("div", { className: `banner banner-${notice.tone}`, "data-testid": "notice", children: [_jsx("span", { children: notice.text }), notice.action && (_jsx("button", { className: "link-quiet", onClick: notice.action.run, children: notice.action.label })), _jsx("button", { className: "icon-button", onClick: () => setNotice(null), "aria-label": "Dismiss", children: _jsx("span", { "aria-hidden": "true", children: "\u2715" }) })] })), _jsx("div", { className: "desk", ref: desk, children: _jsxs("div", { className: "spread", children: [_jsx("main", { className: "page", children: _jsx(Editor, { ref: editor, markdown: loaded.content, revision: loaded.version, highlights: highlights, designs: designs, suggestions: inlineSuggestions, suggestionHandlers: suggestionHandlers, onChange: (markdown) => {
+    return (_jsxs(_Fragment, { children: [_jsxs("header", { className: "chrome", children: [_jsxs("div", { className: "chrome-top", children: [_jsx("button", { className: "icon-button chrome-menu", onClick: onToggleLibrary, "aria-label": "Documents", children: _jsx("span", { "aria-hidden": "true", children: "\u2630" }) }), _jsxs("nav", { className: "breadcrumb", "aria-label": "Location", children: [folder && (_jsxs(_Fragment, { children: [_jsx("span", { className: "crumb", children: prettyName(folder) }), _jsx("span", { className: "crumb-sep", "aria-hidden": "true", children: "\u203A" })] })), _jsx("span", { className: "crumb is-current", "data-testid": "doc-title", children: title })] }), _jsxs("div", { className: "chrome-right", children: [_jsx(AccessNote, { capability: capability, canSuggest: canSuggest }), _jsx(SaveBadge, { state: save }), _jsx(Presence, { peers: peers }), guest ? (_jsx(GuestBadge, { name: viewer.name, onSignIn: onClaim })) : (canShare && (_jsx("button", { className: "chrome-button chrome-share", onClick: () => setShareOpen(true), children: "Share" })))] })] }), !guest && (_jsx(MenuBar, { state: editorState, readOnly: !canEdit, canShare: canShare, canComment: canComment, run: (command) => editor.current?.run(command), onLink: () => editor.current?.openLink(), onComment: () => editor.current?.openComment(), onImage: () => setInserting('image'), onDesign: () => void insertDesign(), onTable: () => editor.current?.run(INSERT_TABLE), onShare: () => setShareOpen(true), onHistory: () => setHistoryOpen(true), onNewDocument: onNewDocument, onToggleLibrary: onToggleLibrary, onCopyMarkdown: () => void navigator.clipboard?.writeText(editor.current?.markdown() ?? loaded.content), onDownload: () => downloadMarkdown(loaded.path, editor.current?.markdown() ?? loaded.content), onSignOut: onSignOut })), _jsx(Toolbar, { state: editorState, readOnly: !canEdit, canComment: canComment, run: (command) => editor.current?.run(command), onLink: () => editor.current?.openLink(), onComment: () => editor.current?.openComment(), onImage: () => setInserting('image'), onDesign: () => void insertDesign(), onTable: () => editor.current?.run(INSERT_TABLE) })] }), notice && (_jsxs("div", { className: `banner banner-${notice.tone}`, "data-testid": "notice", children: [_jsx("span", { children: notice.text }), notice.action && (_jsx("button", { className: "link-quiet", onClick: notice.action.run, children: notice.action.label })), _jsx("button", { className: "icon-button", onClick: () => setNotice(null), "aria-label": "Dismiss", children: _jsx("span", { "aria-hidden": "true", children: "\u2715" }) })] })), _jsx("div", { className: "desk", ref: desk, children: _jsxs("div", { className: "spread", children: [_jsx("main", { className: "page", children: _jsx(Editor, { ref: editor, markdown: loaded.content, revision: loaded.version, readOnly: !canEdit, canComment: canComment, highlights: highlights, designs: designs, suggestions: inlineSuggestions, suggestionHandlers: suggestionHandlers, onChange: (markdown) => {
                                     setDraft(markdown);
                                     setSave('dirty');
                                 }, onStateChange: setEditorState, imageUploader: imageUploader, onSelectBlock: (blockId) => {
@@ -796,6 +866,8 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
                                     setActiveThread(threadId);
                                     setNoteDraft(null);
                                 }, onRequestComment: (target) => {
+                                    if (!canComment)
+                                        return;
                                     setNoteDraft({
                                         blockId: target.blockId,
                                         quotedText: target.quotedText,
@@ -812,26 +884,32 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
                                         });
                                         setNoteDraft(null);
                                         setComments(await client.comments(docId));
-                                    } }, "draft")), openThreads.map((comment) => (_jsx(NoteCard, { comment: comment, register: registerCard, author: nameOf(comment.authorId), isAgent: people.get(comment.authorId)?.kind === 'agent', sponsor: people.get(comment.authorId)?.sponsorId
+                                    } }, "draft")), openThreads.map((comment) => (_jsx(NoteCard, { comment: comment, register: registerCard, author: nameOf(comment.authorId), isAgent: people.get(comment.authorId)?.kind === 'agent', isGuest: people.get(comment.authorId)?.kind === 'guest', sponsor: people.get(comment.authorId)?.sponsorId
                                         ? nameOf(people.get(comment.authorId).sponsorId)
                                         : null, active: activeThread === comment.threadId, hovered: hoveredThread === comment.threadId, onHover: setHoveredThread, onOpen: () => {
                                         setActiveThread(comment.threadId);
                                         if (comment.anchor.blockId)
                                             editor.current?.revealBlock(comment.anchor.blockId);
-                                    }, onResolve: async () => {
-                                        await client.resolveComment(docId, comment.id);
-                                        setComments(await client.comments(docId));
-                                        setNotice({ tone: 'good', text: 'Note resolved.' });
-                                    } }, comment.id))), orphans.length > 0 && (_jsxs("div", { className: "lost-dock", children: [_jsxs("div", { className: "lost-head", children: [_jsxs("strong", { children: [orphans.length, " note", orphans.length === 1 ? '' : 's', " lost", ' ', orphans.length === 1 ? 'its' : 'their', " place"] }), _jsx("span", { children: "Someone edited this document outside Galley. We kept these rather than guessing where they go." })] }), orphans.map((orphan) => (_jsxs("article", { className: "card is-lost", "data-testid": "orphan-card", children: [_jsx("p", { className: "card-quote", children: orphan.lastKnownText.slice(0, 200) }), _jsx("footer", { className: "card-foot", children: activeBlock ? (_jsx("button", { className: "primary", onClick: async () => {
+                                    }, onResolve: canComment
+                                        ? async () => {
+                                            await client.resolveComment(docId, comment.id);
+                                            setComments(await client.comments(docId));
+                                            setNotice({ tone: 'good', text: 'Note resolved.' });
+                                        }
+                                        : undefined }, comment.id))), orphans.length > 0 && (_jsxs("div", { className: "lost-dock", children: [_jsxs("div", { className: "lost-head", children: [_jsxs("strong", { children: [orphans.length, " note", orphans.length === 1 ? '' : 's', " lost", ' ', orphans.length === 1 ? 'its' : 'their', " place"] }), _jsx("span", { children: "Someone edited this document outside Galley. We kept these rather than guessing where they go." })] }), orphans.map((orphan) => (_jsxs("article", { className: "card is-lost", "data-testid": "orphan-card", children: [_jsx("p", { className: "card-quote", children: orphan.lastKnownText.slice(0, 200) }), _jsx("footer", { className: "card-foot", children: activeBlock && canComment ? (_jsx("button", { className: "primary", onClick: async () => {
                                                             await client.reattach(docId, orphan.anchorId, activeBlock);
                                                             await loadAll();
-                                                        }, children: "Put it here" })) : (_jsx("span", { className: "card-help", children: "Click the paragraph this belongs to" })) })] }, orphan.anchorId)))] })), openThreads.length === 0 && !noteDraft && orphans.length === 0 && (_jsxs("p", { className: "lane-empty", children: ["No notes yet. Select any text and press ", _jsx("kbd", { children: "\u2318\u2325M" }), " to leave one."] }))] })] }) }), inserting === 'image' && (_jsx(ImagePicker, { onClose: () => {
+                                                        }, children: "Put it here" })) : (_jsx("span", { className: "card-help", children: "Click the paragraph this belongs to" })) })] }, orphan.anchorId)))] })), openThreads.length === 0 && !noteDraft && orphans.length === 0 && (_jsx("p", { className: "lane-empty", children: canComment ? (canEdit ? (_jsxs(_Fragment, { children: ["No notes yet. Select any text and press ", _jsx("kbd", { children: "\u2318\u2325M" }), " to leave one."] })) : (
+                                    // The shortcut is a keystroke the editor swallows when it is
+                                    // not editable, so a reader is pointed at the button instead
+                                    // of at a key that does nothing.
+                                    _jsx(_Fragment, { children: "No notes yet. Select any text and choose Add comment to leave one." }))) : (_jsx(_Fragment, { children: "No notes yet." })) }))] })] }) }), inserting === 'image' && (_jsx(ImagePicker, { onClose: () => {
                     setInserting(null);
                     editor.current?.focus();
                 }, onInsert: (src, alt) => {
                     setInserting(null);
                     editor.current?.run(insertImage(src, alt));
-                } })), shareOpen && (_jsx(Share, { path: loaded.path, onClose: () => setShareOpen(false) })), historyOpen && (_jsx(HistoryOverlay, { revisions: history.revisions, checkpoints: history.checkpoints, attribution: history.attribution, activeBlock: activeBlock, nameOf: nameOf, total: history.total, more: history.more, onClose: () => setHistoryOpen(false), onOlder: async () => {
+                } })), shareOpen && canShare && (_jsx(Overlay, { title: "Share", onClose: () => setShareOpen(false), children: _jsx(ShareDialog, { docRef: docId, path: loaded.path, onCopyForAgent: () => void navigator.clipboard?.writeText(loaded.path) }) })), historyOpen && (_jsx(HistoryOverlay, { revisions: history.revisions, checkpoints: history.checkpoints, attribution: history.attribution, activeBlock: activeBlock, nameOf: nameOf, total: history.total, more: history.more, onClose: () => setHistoryOpen(false), onOlder: async () => {
                     if (history.more == null)
                         return;
                     const page = await client.history(docId, 100, history.more);
@@ -862,8 +940,8 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
 // ---------------------------------------------------------------------------
 // The margin
 // ---------------------------------------------------------------------------
-function NoteCard({ comment, register, author, isAgent, sponsor, active, hovered, onHover, onOpen, onResolve, }) {
-    return (_jsxs("article", { ref: (node) => register(comment.id, node), "data-block-id": comment.anchor.blockId ?? '', className: `card note ${active ? 'is-active' : ''} ${hovered ? 'is-hovered' : ''} ${comment.orphanedAt ? 'is-lost' : ''}`, "data-testid": "comment-card", onMouseEnter: () => onHover(comment.threadId), onMouseLeave: () => onHover(null), onClick: onOpen, children: [_jsxs("header", { className: "card-head", children: [_jsx("span", { className: isAgent ? 'avatar avatar-agent' : 'avatar', "aria-hidden": "true", children: isAgent ? '' : author.slice(0, 1).toUpperCase() }), _jsxs("div", { className: "card-who", children: [_jsx("span", { className: "who-name", children: author }), _jsxs("span", { className: "who-sub", children: [isAgent && sponsor ? `set up by ${sponsor} · ` : '', when(comment.createdAt)] })] })] }), _jsx("p", { className: "card-body", children: comment.body }), comment.orphanedAt && _jsx("p", { className: "card-lost", children: "The text this note pointed to has changed." }), active && (_jsx("footer", { className: "card-foot", children: _jsx("button", { className: "ghost", onClick: (event) => {
+function NoteCard({ comment, register, author, isAgent, isGuest, sponsor, active, hovered, onHover, onOpen, onResolve, }) {
+    return (_jsxs("article", { ref: (node) => register(comment.id, node), "data-block-id": comment.anchor.blockId ?? '', className: `card note ${active ? 'is-active' : ''} ${hovered ? 'is-hovered' : ''} ${comment.orphanedAt ? 'is-lost' : ''}`, "data-testid": "comment-card", onMouseEnter: () => onHover(comment.threadId), onMouseLeave: () => onHover(null), onClick: onOpen, children: [_jsxs("header", { className: "card-head", children: [_jsx("span", { className: isAgent ? 'avatar avatar-agent' : 'avatar', "aria-hidden": "true", children: isAgent ? '' : author.slice(0, 1).toUpperCase() }), _jsxs("div", { className: "card-who", children: [_jsxs("span", { className: "who-name", children: [author, isGuest && _jsx("span", { className: "guest-chip", children: "Guest" })] }), _jsxs("span", { className: "who-sub", children: [isAgent && sponsor ? `set up by ${sponsor} · ` : '', when(comment.createdAt)] })] })] }), _jsx("p", { className: "card-body", children: comment.body }), comment.orphanedAt && _jsx("p", { className: "card-lost", children: "The text this note pointed to has changed." }), active && onResolve && (_jsx("footer", { className: "card-foot", children: _jsx("button", { className: "ghost", onClick: (event) => {
                         event.stopPropagation();
                         void onResolve();
                     }, children: "Resolve" }) }))] }));
@@ -881,13 +959,6 @@ function NoteComposer({ register, blockId, quoted, onSubmit, onCancel, }) {
                 } }), _jsxs("footer", { className: "card-foot", children: [_jsx("button", { type: "submit", className: "primary", disabled: !body.trim(), "data-testid": "comment-submit", children: "Add note" }), _jsx("button", { type: "button", className: "ghost", onClick: onCancel, children: "Cancel" })] })] }));
 }
 // ---------------------------------------------------------------------------
-function Share({ path, onClose }) {
-    const [copied, setCopied] = useState(false);
-    return (_jsx(Overlay, { title: "Share", onClose: onClose, children: _jsxs("div", { className: "share", children: [_jsxs("p", { className: "share-lede", children: [path.includes('/') ? `${prettyName(path.slice(0, path.lastIndexOf('/')))} › ` : '', prettyName(path)] }), _jsx("p", { className: "share-note", children: "Paste this into your assistant. It can read the document and suggest changes \u2014 only you can accept them." }), _jsx("code", { className: "share-ref", children: path }), _jsx("button", { className: "primary", onClick: () => {
-                        void navigator.clipboard?.writeText(path);
-                        setCopied(true);
-                    }, children: copied ? 'Copied' : 'Copy for an agent' })] }) }));
-}
 /**
  * The timeline.
  *
@@ -905,7 +976,7 @@ function HistoryOverlay({ revisions, checkpoints, attribution, activeBlock, name
     const [loadingOlder, setLoadingOlder] = useState(false);
     const byTicket = useMemo(() => new Map(checkpoints.map((c) => [c.ticket, c])), [checkpoints]);
     const current = activeBlock ? attribution.find((a) => a.blockId === activeBlock) : undefined;
-    return (_jsx(Overlay, { title: "Version history", onClose: onClose, children: _jsxs("div", { className: "history", "data-testid": "history-rail", children: [current && (_jsxs("div", { className: "attribution", "data-testid": "attribution", children: [_jsx("span", { className: "attribution-label", children: "This paragraph" }), _jsxs("span", { className: "who-name", children: [current.authorName, current.byAgent && _jsx("span", { className: "agent-chip", children: "Agent" })] }), _jsx("time", { dateTime: current.at, children: when(current.at) })] })), _jsxs("form", { className: "composer compact", onSubmit: async (event) => {
+    return (_jsx(Overlay, { title: "Version history", onClose: onClose, children: _jsxs("div", { className: "history", "data-testid": "history-rail", children: [current && (_jsxs("div", { className: "attribution", "data-testid": "attribution", children: [_jsx("span", { className: "attribution-label", children: "This paragraph" }), _jsxs("span", { className: "who-name", children: [current.authorName, current.byAgent && _jsx("span", { className: "agent-chip", children: "Agent" }), current.byGuest && _jsx("span", { className: "guest-chip", children: "Guest" })] }), _jsx("time", { dateTime: current.at, children: when(current.at) })] })), _jsxs("form", { className: "composer compact", onSubmit: async (event) => {
                         event.preventDefault();
                         if (!name.trim())
                             return;
@@ -913,7 +984,7 @@ function HistoryOverlay({ revisions, checkpoints, attribution, activeBlock, name
                         setName('');
                     }, children: [_jsx("input", { value: name, onChange: (event) => setName(event.target.value), placeholder: "Name this version", "data-testid": "checkpoint-input" }), _jsx("button", { type: "submit", className: "ghost", disabled: !name.trim(), "data-testid": "checkpoint-submit", children: "Save" })] }), revisions.length === 0 && _jsx("p", { className: "lane-empty", children: "Nothing has changed yet." }), _jsx("ol", { className: "timeline", children: revisions.map((revision) => {
                         const checkpoint = byTicket.get(revision.ticket);
-                        return (_jsxs("li", { className: "revision", "data-testid": "revision", children: [_jsx("span", { className: `dot ${revision.byAgent ? 'agent' : ''}` }), _jsxs("div", { className: "revision-body", children: [checkpoint && _jsx("span", { className: "checkpoint-name", children: checkpoint.name }), _jsx("span", { className: "revision-summary", children: revision.summary }), _jsxs("span", { className: "revision-meta", children: [revision.authorName || nameOf(revision.authorId), revision.byAgent && _jsx("span", { className: "agent-chip", children: "Agent" }), " \u00B7 ", when(revision.at)] })] }), _jsx("button", { className: "ghost tiny", onClick: () => void onRestore(revision.ticket), "data-testid": `restore-${revision.ticket}`, title: "Bring this version back", children: "Restore" })] }, revision.ticket));
+                        return (_jsxs("li", { className: "revision", "data-testid": "revision", children: [_jsx("span", { className: `dot ${revision.byAgent ? 'agent' : ''} ${revision.byGuest ? 'guest' : ''}` }), _jsxs("div", { className: "revision-body", children: [checkpoint && _jsx("span", { className: "checkpoint-name", children: checkpoint.name }), _jsx("span", { className: "revision-summary", children: revision.summary }), _jsxs("span", { className: "revision-meta", children: [revision.authorName || nameOf(revision.authorId), revision.byAgent && _jsx("span", { className: "agent-chip", children: "Agent" }), revision.byGuest && _jsx("span", { className: "guest-chip", children: "Guest" }), " \u00B7 ", when(revision.at)] })] }), _jsx("button", { className: "ghost tiny", onClick: () => void onRestore(revision.ticket), "data-testid": `restore-${revision.ticket}`, title: "Bring this version back", children: "Restore" })] }, revision.ticket));
                     }) }), more !== null && (_jsx("button", { className: "ghost history-older", "data-testid": "history-older", disabled: loadingOlder, onClick: () => {
                         setLoadingOlder(true);
                         void onOlder().finally(() => setLoadingOlder(false));
@@ -1004,7 +1075,11 @@ function Overlay({ title, onClose, children, }) {
                 return;
             // `aria-modal` is a promise to assistive technology that the rest of the
             // page is inert. Tab has to honour it or the promise is a lie.
-            const focusable = panel.current.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])');
+            const focusable = panel.current.querySelectorAll(
+            // `select` is in the list because the share dialog has two of them. A
+            // control the trap does not know about is a control Tab can escape the
+            // dialog through, which is exactly the promise `aria-modal` makes.
+            'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])');
             if (focusable.length === 0)
                 return;
             const first = focusable[0];
@@ -1029,6 +1104,23 @@ function Overlay({ title, onClose, children, }) {
 // ---------------------------------------------------------------------------
 // Small pieces
 // ---------------------------------------------------------------------------
+/**
+ * Why this document cannot be typed in.
+ *
+ * One quiet line, always in the same place, said once. Not a toast — this is
+ * not an event, it is a standing fact about the document, and a message that
+ * disappears leaves someone who looks up two minutes later with no explanation
+ * for why the keyboard does nothing. Not a modal either: nobody did anything
+ * wrong, and there is nothing to acknowledge.
+ *
+ * It also says what they *can* do, because "read only" on its own reads as a
+ * closed door to someone who was invited specifically to leave notes.
+ */
+function AccessNote({ capability, canSuggest, }) {
+    if (capability === 'write' || capability === 'admin')
+        return null;
+    return (_jsxs("span", { className: "access-note", "data-testid": "access-note", children: ["Read only", canSuggest ? ' \u00b7 you can suggest edits' : capability === 'comment' ? ' \u00b7 you can comment' : ''] }));
+}
 function SaveBadge({ state }) {
     const label = state === 'saved'
         ? 'Saved'

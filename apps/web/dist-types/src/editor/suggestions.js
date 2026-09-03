@@ -68,6 +68,14 @@ function renderCard(suggestion, currentText, handlers) {
     name.className = 'who-name';
     name.textContent = suggestion.authorName;
     who.append(name);
+    if (suggestion.byGuest) {
+        // Grey, never violet. A guest is an unverified participant, not an agent,
+        // and the violet is the one colour this interface asks people to learn.
+        const chip = document.createElement('span');
+        chip.className = 'guest-chip';
+        chip.textContent = 'Guest';
+        who.append(chip);
+    }
     const sub = document.createElement('span');
     sub.className = 'who-sub';
     // The single most reassuring string in the product: it turns an
@@ -99,6 +107,8 @@ function renderCard(suggestion, currentText, handlers) {
         diff.append(span);
     }
     card.append(diff);
+    if (handlers.current.readOnly)
+        return card;
     const foot = document.createElement('footer');
     foot.className = 'suggestion-foot';
     if (suggestion.state === 'stale') {

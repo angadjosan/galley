@@ -52,7 +52,7 @@ export interface TrashedDocument {
  */
 export interface Person {
   id: string;
-  kind: 'human' | 'agent' | 'system';
+  kind: 'human' | 'agent' | 'system' | 'guest';
   name: string;
   sponsorId: string | null;
 }
@@ -74,6 +74,8 @@ export interface RevisionSummary {
   authorName: string;
   sponsorId: string | null;
   byAgent: boolean;
+  /** Absent on revisions recorded before guests existed, where false is right. */
+  byGuest?: boolean;
   blockIds: string[];
   summary: string;
 }
@@ -92,6 +94,7 @@ export interface AttributionSummary {
   authorName: string;
   at: string;
   byAgent: boolean;
+  byGuest?: boolean;
   sponsorId: string | null;
   ticket: number;
 }
@@ -171,7 +174,18 @@ export class GalleyClient {
   async read(
     ref: string,
     options: { markers?: boolean } = {},
-  ): Promise<{ docId: string; path: string; content: string; ticket: number }> {
+  ): Promise<{
+    docId: string;
+    path: string;
+    content: string;
+    ticket: number;
+    /**
+     * What this caller may do here. Optional because a server that predates
+     * the field still answers this route, and a client that assumed the worst
+     * would lock everyone out of it.
+     */
+    capability?: 'read' | 'comment' | 'suggest' | 'write' | 'admin';
+  }> {
     const query = options.markers ? '?markers=1' : '';
     return this.call('GET', `/v1/docs/${encodeURIComponent(ref)}${query}`);
   }

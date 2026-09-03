@@ -12,6 +12,7 @@
     "@galley/client": "*",
     "@galley/concurrency": "*",
     "@galley/core": "*",
+    "@galley/design": "*",
     "@galley/markdown": "*",
     "loro-crdt": "^1.4.6",
     "mermaid": "^11.10.0",
@@ -27,8 +28,7 @@
     "prosemirror-transform": "^1.10.2",
     "prosemirror-view": "^1.37.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "@galley/design": "*"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

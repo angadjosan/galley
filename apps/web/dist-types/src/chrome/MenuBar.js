@@ -243,10 +243,10 @@ function buildMenus(props) {
             id: 'file',
             label: 'File',
             entries: () => [
-                app('new', 'New document', props.onNewDocument),
+                ...(props.canCreate === false ? [] : [app('new', 'New document', props.onNewDocument)]),
                 app('open', 'Open a document', props.onToggleLibrary, { shortcut: '⌘K' }),
                 separator('f1'),
-                app('share', 'Share', props.onShare),
+                ...(props.canShare === false ? [] : [app('share', 'Share', props.onShare)]),
                 app('history', 'Version history', props.onHistory),
                 separator('f2'),
                 // The two places the format is allowed to be named, and the only two.
@@ -275,7 +275,9 @@ function buildMenus(props) {
                 app('table', 'Table', props.onTable, { enabled: !readOnly && !!state }),
                 separator('i1'),
                 app('link', 'Link', props.onLink, { shortcut: '⌘K', enabled: !readOnly && !!state }),
-                app('comment', 'Comment', props.onComment, { shortcut: '⌘⌥M', enabled: !!state }),
+                ...(props.canComment === false
+                    ? []
+                    : [app('comment', 'Comment', props.onComment, { shortcut: '⌘⌥M', enabled: !!state })]),
                 separator('i2'),
                 action(INSERT_QUOTE),
                 action(INSERT_CALLOUT),

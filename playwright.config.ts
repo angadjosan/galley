@@ -29,7 +29,9 @@ export default defineConfig({
       url: 'http://127.0.0.1:8788/v1/health',
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
-      env: { GALLEY_TOKEN_FILE: '.galley-e2e-tokens.json' },
+      // The development identity provider, so `/v1/auth/session` accepts
+      // `dev:<email>` and the sharing walkthroughs can actually sign people in.
+      env: { GALLEY_TOKEN_FILE: '.galley-e2e-tokens.json', GALLEY_DEV_AUTH: '1' },
     },
     {
       command: 'npx vite --port 5174 --host 127.0.0.1',

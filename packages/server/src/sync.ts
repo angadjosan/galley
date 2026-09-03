@@ -337,6 +337,13 @@ export class SyncHub {
           return frame;
         };
         for (const connection of this.connectionsFor(actor.docId)) {
+          // A connection already at this version has nothing to be sent. That
+          // is the client whose own edit this is: the socket handler advances
+          // its watermark as the update lands, so the delta here would be
+          // empty. Offering it anyway is a frame per keystroke back to the
+          // person typing — enough, at speed, to evict the writer from their
+          // own document for being too far behind.
+          if (connection.lastVersion && sameVersion(connection.lastVersion, version)) continue;
           const update = frameFor(connection.lastVersion ?? undefined);
           connection.lastVersion = version;
           if (!connection.offer({ t: 'update', update })) {
@@ -376,4 +383,8 @@ export class SyncHub {
     this.pumps.clear();
     await this.group.wait();
   }
+}
+
+function sameVersion(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && Buffer.from(a).equals(Buffer.from(b));
 }

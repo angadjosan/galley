@@ -121,7 +121,7 @@ function buildGroups(props) {
         {
             id: 'insert',
             width: 216,
-            render: (current, disabled) => (_jsxs(_Fragment, { children: [_jsx(ToolButton, { label: "Insert link", shortcut: "\u2318K", icon: _jsx(LinkIcon, {}), enabled: !disabled && !!current, onClick: props.onLink }), _jsx(ToolButton, { label: "Add comment", shortcut: "\u2318\u2325M", icon: _jsx(CommentIcon, {}), enabled: !!current, onClick: props.onComment }), _jsx(ToolButton, { label: "Insert image", icon: _jsx(ImageIcon, {}), enabled: !disabled && !!current, onClick: props.onImage }), _jsx(ToolButton, { label: "Insert design", icon: _jsx(DesignIcon, {}), enabled: !disabled && !!current, onClick: props.onDesign }), _jsx(ToolButton, { label: "Insert table", icon: _jsx(TableIcon, {}), enabled: !disabled && !!current, onClick: props.onTable })] })),
+            render: (current, disabled) => (_jsxs(_Fragment, { children: [_jsx(ToolButton, { label: "Insert link", shortcut: "\u2318K", icon: _jsx(LinkIcon, {}), enabled: !disabled && !!current, onClick: props.onLink }), props.canComment !== false && (_jsx(ToolButton, { label: "Add comment", shortcut: "\u2318\u2325M", icon: _jsx(CommentIcon, {}), enabled: !!current, onClick: props.onComment })), _jsx(ToolButton, { label: "Insert image", icon: _jsx(ImageIcon, {}), enabled: !disabled && !!current, onClick: props.onImage }), _jsx(ToolButton, { label: "Insert design", icon: _jsx(DesignIcon, {}), enabled: !disabled && !!current, onClick: props.onDesign }), _jsx(ToolButton, { label: "Insert table", icon: _jsx(TableIcon, {}), enabled: !disabled && !!current, onClick: props.onTable })] })),
         },
         {
             id: 'lists',

@@ -12,6 +12,7 @@ import {
 import { anchorsFor, blockId, reanchor, type Anchor, type Resolution } from '@galley/anchor';
 import { applyBlockOps, parseDocument, type BlockOp } from '@galley/markdown';
 import { GalleyDocument, type ApplyResult } from './document.js';
+import { diffToBlockOps } from './diff.js';
 import {
   CommentBudget,
   assertTransition,
@@ -62,6 +63,11 @@ export interface ActorOptions {
   replacementThreshold?: number;
   /** Bound on the outbound event feed before a subscriber is dropped. */
   feedCapacity?: number;
+  /**
+   * Quiet period, in milliseconds, before a burst of live edits becomes one
+   * revision. See `ingestUpdate`.
+   */
+  liveEditWindowMs?: number;
   now?: () => string;
 }
 
@@ -104,7 +110,10 @@ export class DocumentActor {
   private readonly budget: CommentBudget;
   private readonly replacementThreshold: number;
   private readonly feedCapacity: number;
+  private readonly liveEditWindowMs: number;
   private readonly now: () => string;
+  /** The live-edit burst currently being coalesced. See `ingestUpdate`. */
+  private liveEdit: LiveEditWindow | null = null;
   private readonly persistBreaker = new CircuitBreaker({ name: 'persist' });
   readonly history = new History();
   private sessionEnded: SessionEndReason | null = null;
@@ -123,6 +132,7 @@ export class DocumentActor {
     this.budget = options.budget ?? new CommentBudget();
     this.replacementThreshold = options.replacementThreshold ?? 0.5;
     this.feedCapacity = options.feedCapacity ?? 256;
+    this.liveEditWindowMs = options.liveEditWindowMs ?? 3_000;
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
@@ -273,6 +283,137 @@ export class DocumentActor {
     });
   }
 
+  /**
+   * Take in a CRDT update from a live editing session.
+   *
+   * This is the socket path, and it exists because the socket used to call
+   * `document.importUpdates` directly: the bytes landed, the document changed,
+   * and **nothing was recorded**. Live collaborative typing — the way most
+   * editing actually happens — produced no revision, no per-block attribution
+   * and no audit trail. A document that cannot say who wrote a sentence is the
+   * one thing `idea.md` says it must never be.
+   *
+   * Three things the direct call could not do, and the reasons they are here
+   * rather than in the socket handler:
+   *
+   * - **A real ticket.** The update goes through the lane like every other
+   *   mutation. Reading the cursor from outside would hand every update in a
+   *   burst the same number, and `History.record` drops a duplicate ticket
+   *   silently — so all but the first revision would vanish. The lane also
+   *   serializes this against `applyOps`, which was a live race: `importUpdates`
+   *   mutated the CRDT while a queued operation held the write lock.
+   * - **Real operations.** `recordRevision` derives its summary and its touched
+   *   blocks from an op list, and an empty one yields "no change" and attributes
+   *   nothing. `diffToBlockOps` recovers the operations from the document's own
+   *   before and after, which is the same route `galley push` takes.
+   * - **Coalescing.** Every keystroke is an update. One revision each would
+   *   blow `History`'s bounds — 500 revisions and 4 MB, each holding the whole
+   *   document — in seconds of typing, evicting the real history to make room
+   *   for individual letters, and would leave a timeline nobody can read. The
+   *   burst is applied and returned immediately, so broadcast latency is
+   *   untouched; the revision is written after the document goes quiet.
+   *
+   * `validateUpdate` stays with the caller: bytes from another document merge
+   * cleanly and must be refused *before* they reach the CRDT, which is earlier
+   * than this.
+   *
+   * Known limit: `diffToBlockOps` addresses a block with no materialized id as
+   * `@index`, and `History.record` skips those — so a freshly typed paragraph
+   * has no per-block attribution until something anchors it. That matches every
+   * other path in the system rather than being special to this one.
+   */
+  ingestUpdate(bytes: Uint8Array, principal: Principal): Promise<{ changed: boolean; ticket: number }> {
+    let ticket = -1;
+    const submission = this.sequencer.submit<{ changed: boolean; ticket: number }>(
+      this.docId,
+      async () => {
+        this.assertLive();
+        const stop = this.applyLatency.start();
+        try {
+          const before = await this.lock.withRead(() => this.doc.toMarkdown());
+          const changed = await this.lock.withWrite(() => this.doc.importUpdates(bytes));
+          if (!changed) return { changed: false, ticket };
+
+          const after = await this.lock.withRead(() => this.doc.toMarkdown());
+          this.counters.inc('live-updates');
+          this.refreshSuggestionStaleness();
+          this.openLiveEdit(principal, before, after, ticket);
+          // Emitted per update, not per revision: "the document changed" is
+          // true now, and the feed is a bounded drop-oldest notification built
+          // for exactly this traffic. The `revision` event still fires once,
+          // when the window closes.
+          this.emit({
+            kind: 'changed',
+            docId: this.docId,
+            ticket,
+            by: describePrincipal(principal),
+          });
+          return { changed: true, ticket };
+        } finally {
+          stop();
+        }
+      },
+    );
+    ticket = submission.ticket;
+    return submission.result;
+  }
+
+  /**
+   * Extend the open burst, or start one.
+   *
+   * The window keeps the document's bytes from *before* the first update in the
+   * burst and the ticket of the *latest*, so the revision that eventually lands
+   * describes the whole burst and sits at a ticket that is real and unique.
+   *
+   * A different principal closes the window immediately rather than joining it.
+   * Two people typing in the same three seconds is the normal case in a
+   * collaborative document, and merging their work into one revision would
+   * attribute one person's sentence to the other — the precise failure this
+   * whole path exists to fix.
+   */
+  private openLiveEdit(principal: Principal, before: string, after: string, ticket: number): void {
+    if (this.liveEdit && this.liveEdit.principal.id !== principal.id) {
+      this.flushLiveEdit();
+    }
+    if (this.liveEdit) {
+      clearTimeout(this.liveEdit.timer);
+      this.liveEdit = { ...this.liveEdit, after, ticket, timer: this.armLiveEditTimer() };
+      return;
+    }
+    this.liveEdit = { principal, before, after, ticket, timer: this.armLiveEditTimer() };
+  }
+
+  private armLiveEditTimer(): ReturnType<typeof setTimeout> {
+    const timer = setTimeout(() => this.flushLiveEdit(), this.liveEditWindowMs);
+    // A pending history write is not a reason to keep a process alive; the
+    // flush on `close` is what guarantees the burst is not lost.
+    timer.unref?.();
+    return timer;
+  }
+
+  /**
+   * Write the open burst to history now.
+   *
+   * Called by the quiet timer, by `close`, and by the server when a connection
+   * drops — someone who closes the tab mid-sentence must still appear in the
+   * timeline, and waiting three seconds for a socket that is already gone is
+   * three seconds of a document with no record of who changed it.
+   */
+  flushLiveEdit(): void {
+    const window = this.liveEdit;
+    if (!window) return;
+    this.liveEdit = null;
+    clearTimeout(window.timer);
+    if (window.before === window.after) return; // a CRDT change with no textual effect
+    this.recordRevision({
+      ops: diffToBlockOps(window.before, window.after),
+      principal: window.principal,
+      ticket: window.ticket,
+      kind: 'edit',
+      content: window.after,
+    });
+  }
+
   /** Leave a comment anchored to a block. */
   comment(
     input: {
@@ -373,6 +514,11 @@ export class DocumentActor {
           ops: input.ops,
           targets,
           authorId: principal.id,
+          // Captured here, not reconstructed at accept time: this is the only
+          // moment the proposer's own principal is in hand.
+          authorKind: principal.kind,
+          authorName: principal.name,
+          authorSponsorId: principal.sponsorId ?? null,
           rationale: input.rationale,
           createdAt: this.now(),
           baseTicket: this.sequencer.watermark.cursor,
@@ -396,6 +542,12 @@ export class DocumentActor {
    * Refused for a stale proposal, and refused for a human trying to accept
    * their own agent's work automatically — acceptance is a deliberate act by a
    * principal who is not the author.
+   *
+   * Refused for a guest too. Acceptance is the moment a proposal becomes the
+   * document, and the thing that makes it safe is that someone accountable
+   * chose it. A guest arrived through a link and is answerable to nobody, so
+   * letting one accept would mean anyone holding the URL can write the
+   * document while the audit trail names an anonymous otter.
    */
   acceptSuggestion(suggestionId: string, principal: Principal, requestId?: string): Promise<Suggestion> {
     return this.command(requestId, () =>
@@ -411,6 +563,12 @@ export class DocumentActor {
             `agent ${principal.id} cannot accept a suggestion; acceptance is a human act by design`,
           );
         }
+        if (principal.kind === 'guest') {
+          throw new Error(
+            `guest ${principal.id} cannot accept a suggestion; acceptance needs a signed-in person ` +
+              `who is accountable for the change landing`,
+          );
+        }
 
         const applied = await this.lock.withWrite(() => this.doc.applyOps(suggestion.ops));
         // Attributed to the *proposer*, not the accepter. `idea.md`: "becomes
@@ -418,7 +576,7 @@ export class DocumentActor {
         // acceptance, which the audit trail records separately.
         this.recordRevision({
           ops: suggestion.ops,
-          principal: { id: suggestion.authorId, kind: 'agent', name: suggestion.authorId, sponsorId: principal.id },
+          principal: proposerOf(suggestion, principal),
           ticket: this.sequencer.watermark.cursor,
           kind: 'suggestion-accepted',
           content: applied.source,
@@ -615,6 +773,73 @@ export class DocumentActor {
     });
   }
 
+  /**
+   * Move everything this document attributes to one principal onto another.
+   *
+   * The case this exists for is a guest signing in: the work they did before
+   * they had a name has to follow them onto the account, and the guest
+   * principal is deleted immediately afterwards, so anything left pointing at
+   * it becomes an id that resolves to nobody.
+   *
+   * **Why it cannot be done in SQL alone.** For as long as a document is open
+   * the sidecar here is the source of truth — `listComments`, `listSuggestions`
+   * and `listRevisions` all answer from these maps, and the store is a *mirror*
+   * fed by the events this actor emits. A claim that rewrote only the tables
+   * would therefore be invisible to every read, and worse, would be silently
+   * undone the next time anything touched a comment: `resolveComment` mirrors
+   * the record this actor still holds, which is the one with the old id in it.
+   *
+   * Runs on the document's sequencer lane like every other mutation, so it
+   * cannot interleave with a comment being left or a proposal being resolved
+   * halfway through the rewrite.
+   *
+   * **Scope is exactly `authorId`**, matching `Store.reassignAuthor`. A
+   * document that is closed at claim time is rewritten by that SQL alone, so
+   * rewriting a wider set of fields here (`resolvedBy`, `assigneeId`,
+   * `authorName`) would make an open document and a cold one disagree — a
+   * discrepancy that would appear and vanish with memory pressure. Those fields
+   * can also strand a deleted guest id; that is the same bug in a different
+   * column and wants the same fix on both sides at once.
+   *
+   * @returns how many records moved. Zero is the overwhelmingly common answer.
+   */
+  reassignAuthor(from: string, to: string): Promise<number> {
+    // A faulted or ended document has no lane left to run on, and the store
+    // rewrite still covers it. Refusing the claim over it would be worse.
+    if (this.sessionEnded) return Promise.resolve(0);
+    return this.sequencer.run(this.docId, async () => {
+      // A burst still inside its quiet window is work this principal has
+      // already done. Flushed first so it becomes a revision this pass can
+      // rewrite, rather than one recorded under the old id three seconds later.
+      this.flushLiveEdit();
+
+      let changed = 0;
+      for (const comment of this.comments.values()) {
+        if (comment.authorId !== from) continue;
+        const moved: Comment = { ...comment, authorId: to };
+        this.comments.set(comment.id, moved);
+        // Emitted, not merely stored: the emit is what makes the mirror write
+        // the *corrected* row, so a later persist cannot put the old id back.
+        this.emit({ kind: 'comment', comment: moved });
+        changed++;
+      }
+      for (const suggestion of this.suggestions.values()) {
+        if (suggestion.authorId !== from) continue;
+        const moved: Suggestion = { ...suggestion, authorId: to };
+        this.suggestions.set(suggestion.id, moved);
+        this.emit({ kind: 'suggestion', suggestion: moved });
+        changed++;
+      }
+      // No event for these. A revision row is written once, when the revision
+      // happens, and is never re-mirrored from memory — so there is nothing to
+      // write stale data back, and the store's own rewrite is enough.
+      changed += this.history.reassignAuthor(from, to);
+
+      this.counters.inc('reassignments', changed);
+      return changed;
+    });
+  }
+
   /** Mark proposals stale when the text they were written against has moved. */
   private refreshSuggestionStaleness(): void {
     // Parsing the whole document to check nothing is 19% of a PATCH's p99 on a
@@ -787,6 +1012,10 @@ export class DocumentActor {
   // -------------------------------------------------------------------------
 
   async close(reason: SessionEndReason = 'closed'): Promise<void> {
+    // Before anything else: a burst still inside its quiet window is real work
+    // that has already changed the document, and dropping it on close would
+    // make "who wrote this" unanswerable for whatever was typed last.
+    this.flushLiveEdit();
     this.sessionEnded = reason;
     this.sequencer.seal(this.docId);
     await this.sequencer.drainLane(this.docId);
@@ -801,6 +1030,11 @@ export class DocumentActor {
    * ended, so a consumer accumulating state rolls back instead of committing.
    */
   fault(cause: unknown): void {
+    // Not flushed: a fault means the stream broke, and a consumer accumulating
+    // state is expected to roll back rather than commit. Recording a partial
+    // burst here would commit exactly what everyone else is discarding.
+    if (this.liveEdit) clearTimeout(this.liveEdit.timer);
+    this.liveEdit = null;
     this.sessionEnded = 'faulted';
     for (const channel of this.subscribers) channel.fault(cause);
     this.subscribers.clear();
@@ -838,6 +1072,18 @@ export class DocumentActor {
   }
 }
 
+/** One burst of live edits being coalesced into a single revision. */
+interface LiveEditWindow {
+  readonly principal: Principal;
+  /** The document's bytes before the first update in the burst. */
+  readonly before: string;
+  /** Its bytes after the latest one. */
+  readonly after: string;
+  /** The ticket of the latest update in the burst. */
+  readonly ticket: number;
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
 interface DiffMagnitude {
   readonly changed: number;
   readonly total: number;
@@ -867,6 +1113,37 @@ export function diffMagnitude(before: string, after: string): DiffMagnitude {
   const total = Math.max(beforeBlocks.size, afterBlocks.length, 1);
   const changed = total - survived;
   return { changed, total, fraction: changed / total };
+}
+
+/**
+ * The proposer, as a principal, for attributing an accepted suggestion.
+ *
+ * Attribution is read as a claim about *who wrote this sentence*, and the UI
+ * teaches one colour — violet — to mean "an agent did this". So a wrong `kind`
+ * is not a cosmetic slip: it tells a reader a person's paragraph was machine
+ * written. The kind and name are therefore recorded when the proposal is made
+ * and simply read back here.
+ *
+ * Suggestions written before those fields existed are durable JSON blobs that
+ * lack them. They fall back to the old assumption rather than throwing: a
+ * legacy row is nearly always an agent's proposal — agent edits are suggestions
+ * by default — and a wrong avatar on an old row is a far smaller harm than an
+ * accept path that crashes on it.
+ */
+function proposerOf(suggestion: Suggestion, accepter: Principal): Principal {
+  const kind = suggestion.authorKind ?? 'agent';
+  const name = suggestion.authorName ?? suggestion.authorId;
+  // Only an agent carries a sponsor — `assertValidDelegation` rejects a human
+  // or a guest that has one, so this must not be filled in unconditionally.
+  // The accepter is the legacy fallback, not the truth: it is who vouched for
+  // the change landing, which is the closest thing an old row records.
+  if (kind !== 'agent') return { id: suggestion.authorId, kind, name };
+  return {
+    id: suggestion.authorId,
+    kind,
+    name,
+    sponsorId: suggestion.authorSponsorId ?? accepter.id,
+  };
 }
 
 function targetsOf(ops: readonly BlockOp[]): string[] {

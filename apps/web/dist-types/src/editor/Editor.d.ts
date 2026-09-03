@@ -35,6 +35,12 @@ export interface EditorProps {
      */
     revision: number;
     readOnly?: boolean;
+    /**
+     * Whether leaving a note is offered while `readOnly` — someone shared this
+     * document at `comment` or `suggest` can select words and comment on them,
+     * and only the typing is refused.
+     */
+    canComment?: boolean;
     highlights: CommentHighlightState;
     /**
      * The designs this document links to, so each reference draws underneath the

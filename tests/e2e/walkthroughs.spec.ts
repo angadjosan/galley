@@ -16,7 +16,7 @@
  * that is the assertion these tests exist for.
  */
 import { readFileSync } from 'node:fs';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { STARTERS } from '@galley/design';
 
 const API = 'http://127.0.0.1:8788';
@@ -1369,4 +1369,270 @@ test.describe('two people in one document', () => {
     }
   });
 
+});
+
+/**
+ * Sharing, as the people involved actually experience it.
+ *
+ * Everything here goes through the sign-in form rather than a token in the
+ * address bar. That is the point: the routes in `.contract/SHARING.md` exist so
+ * that a document can reach somebody who does not yet have a credential — a
+ * colleague, a stranger with an invitation, a person holding a link and nothing
+ * else — and a test that starts by handing everyone a bearer token has quietly
+ * skipped the only interesting part.
+ *
+ * The dev server runs the development identity provider (`GALLEY_DEV_AUTH=1`,
+ * see `playwright.config.ts`), so proof of identity is an email address. The
+ * server normally tells the client that by inlining a flag into the app shell
+ * it serves; under Vite the shell comes from Vite, so the flag is set here — in
+ * the browser, before the app boots, exactly where the server would have put it.
+ */
+test.describe('sharing', () => {
+  /** A browser that has never signed in to anything. */
+  async function freshContext(browser: Browser): Promise<BrowserContext> {
+    const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+    await context.addInitScript(() => {
+      (window as unknown as { __GALLEY_DEV_AUTH__: boolean }).__GALLEY_DEV_AUTH__ = true;
+    });
+    return context;
+  }
+
+  /** Sign in from the app's own front door, the way a person does. */
+  async function signIn(page: Page, email: string): Promise<void> {
+    await page.goto('/');
+    await expect(page.getByTestId('dev-email')).toBeVisible();
+    await page.getByTestId('dev-email').fill(email);
+    await page.getByTestId('sign-in').click();
+  }
+
+  /**
+   * An address nobody has ever used.
+   *
+   * The dev server keeps its workspace in memory but is reused between local
+   * runs (`reuseExistingServer`), so "new" has to mean new to this run rather
+   * than new to this process — otherwise the second run of the day finds the
+   * brand-new person already has an account.
+   */
+  const nobody = (who: string): string => `${who}-${Date.now().toString(36)}@example.test`;
+
+  async function openShareDialog(page: Page): Promise<void> {
+    await page.getByRole('button', { name: 'Share', exact: true }).first().click();
+    await expect(page.getByTestId('share-dialog')).toBeVisible();
+  }
+
+  test('a brand-new person signs in and lands in an empty workspace', async ({ browser }) => {
+    const context = await freshContext(browser);
+    try {
+      const page = await context.newPage();
+      await signIn(page, nobody('newcomer'));
+
+      // Nothing of Priya's, and — the part worth asserting — no error either.
+      // An empty workspace is a state this product has to be able to be in.
+      await expect(page.getByRole('heading', { name: 'Start a document' })).toBeVisible();
+      await expect(page.getByTestId('doc-list').locator('.doc-item')).toHaveCount(0);
+      await expect(page.locator('.banner.error')).toHaveCount(0);
+      await expect(page.getByTestId('signin-error')).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('sharing with a colleague says shared, and they can read but not write', async ({
+    browser,
+  }) => {
+    const priyaContext = await freshContext(browser);
+    const samContext = await freshContext(browser);
+    try {
+      const priya = await priyaContext.newPage();
+      await signIn(priya, 'priya@acme.test');
+      await priya.getByTestId('doc-policies/refunds').click();
+      await expect(priya.getByTestId('doc-title')).toHaveText('Refund policy');
+
+      await openShareDialog(priya);
+      await priya.getByTestId('share-email').fill('sam@acme.test');
+      await priya.getByTestId('share-capability').selectOption('comment');
+      await priya.getByTestId('share-submit').click();
+
+      // "Shared", not "invited": Sam has an account, so this took effect now.
+      // The distinction is the one piece of copy in that dialog that carries a
+      // fact rather than a reassurance.
+      const outcome = priya.getByTestId('share-outcome');
+      await expect(outcome).toContainText('Shared with sam@acme.test');
+      await expect(outcome).not.toContainText('invited');
+      await expect(priya.getByTestId('share-grant').filter({ hasText: 'sam' })).toBeVisible();
+
+      // Sam, in a browser of his own, signing in as himself.
+      const sam = await samContext.newPage();
+      await signIn(sam, 'sam@acme.test');
+      await sam.getByTestId('doc-policies/refunds').click();
+      await expect(sam.getByTestId('doc-title')).toHaveText('Refund policy');
+      await expect(sam.locator('.prose')).toContainText('thirty days of delivery');
+
+      // And cannot change it. He was given `comment`, so the editor itself
+      // refuses the keystrokes — they never reach the document, let alone the
+      // server. This used to be tested the other way round: Sam typed, the
+      // words appeared, and a save came back 403 as "That change couldn't be
+      // saved... we'll keep trying", which reads as a network blip and is a
+      // promise the app cannot keep. The absence of that banner is half the
+      // assertion.
+      await expect(sam.getByTestId('access-note')).toContainText('Read only');
+      await expect(sam.getByTestId('access-note')).toContainText('comment');
+      await expect(sam.locator('.prose')).toHaveAttribute('contenteditable', 'false');
+      await caretAtEndOf(sam, '.prose > p[data-block-id]');
+      await sam.keyboard.type(' SAM-SHOULD-NOT-WRITE.');
+      await expect(sam.locator('.prose')).not.toContainText('SAM-SHOULD-NOT-WRITE');
+      await expect(sam.getByTestId('notice')).toHaveCount(0);
+      expect(await readAsAgent('policies/refunds')).not.toContain('SAM-SHOULD-NOT-WRITE.');
+
+      // Commenting is what he *was* given, so it is still on the toolbar, and
+      // sharing — which needs `admin` — is not offered at all.
+      await expect(sam.getByRole('button', { name: 'Add comment' })).toBeVisible();
+      await expect(sam.getByRole('button', { name: 'Share', exact: true })).toHaveCount(0);
+    } finally {
+      await priyaContext.close();
+      await samContext.close();
+    }
+  });
+
+  test('sharing with a stranger invites them, and the document is waiting when they sign up', async ({
+    browser,
+  }) => {
+    const address = nobody('stranger');
+    const priyaContext = await freshContext(browser);
+    const strangerContext = await freshContext(browser);
+    try {
+      const priya = await priyaContext.newPage();
+      await signIn(priya, 'priya@acme.test');
+      await priya.getByTestId('doc-runbooks/deploy').click();
+      await expect(priya.getByTestId('doc-title')).toHaveText('Deploy runbook');
+
+      await openShareDialog(priya);
+      await priya.getByTestId('share-email').fill(address);
+      await priya.getByTestId('share-capability').selectOption('read');
+      await priya.getByTestId('share-submit').click();
+
+      // Nothing has happened for this person yet, and the dialog has to say so
+      // rather than reporting the same success it reports for a colleague.
+      const outcome = priya.getByTestId('share-outcome');
+      await expect(outcome).toContainText("doesn't have an account yet");
+      await expect(outcome).toContainText('invited');
+      await expect(outcome).toContainText('the moment they sign up');
+      await expect(priya.getByTestId('share-invite').filter({ hasText: address })).toContainText(
+        'Invited — gets access when they sign up',
+      );
+
+      // Now they sign up with that address, having been told nothing else.
+      const stranger = await strangerContext.newPage();
+      await signIn(stranger, address);
+      await expect(stranger.getByTestId('doc-runbooks/deploy')).toBeVisible();
+      await stranger.getByTestId('doc-runbooks/deploy').click();
+      await expect(stranger.getByTestId('doc-title')).toHaveText('Deploy runbook');
+      await expect(stranger.locator('.prose')).toContainText('Deploys go out');
+    } finally {
+      await priyaContext.close();
+      await strangerContext.close();
+    }
+  });
+
+  test('anyone with a write link can read and type, without an account', async ({ browser }) => {
+    const priyaContext = await freshContext(browser);
+    // No credential of any kind, and none reachable: a separate context is a
+    // separate cookie jar and a separate in-memory token, which is the entire
+    // claim this test is making.
+    const guestContext = await freshContext(browser);
+    try {
+      const priya = await priyaContext.newPage();
+      await signIn(priya, 'priya@acme.test');
+      await priya.getByTestId('doc-specs/checkout-v2').click();
+      await expect(priya.getByTestId('doc-title')).toHaveText('Checkout v2');
+
+      await openShareDialog(priya);
+      await priya.getByTestId('link-capability').selectOption('write');
+      await priya.getByTestId('create-link').click();
+
+      const row = priya.getByTestId('share-link').filter({ hasText: 'Can edit' }).last();
+      await expect(row).toBeVisible();
+      await row.getByRole('button', { name: 'Copy', exact: true }).click();
+      await expect(row.getByRole('button', { name: 'Copied' })).toBeVisible();
+
+      // What is on the clipboard is what gets sent to somebody, so that — not
+      // the text on screen — is what the guest opens.
+      const copied = await priya.evaluate(() => navigator.clipboard.readText());
+      expect(copied, 'the copied link is not a share link').toMatch(/\/l\/[A-Za-z0-9_-]+$/);
+
+      const guest = await guestContext.newPage();
+      await guest.goto(new URL(copied).pathname);
+
+      // They are told what they are, once and quietly.
+      await expect(guest.getByTestId('guest-badge')).toBeVisible();
+      await expect(guest.getByTestId('guest-badge')).toContainText('Guest');
+      await expect(guest.getByTestId('library-guest')).toContainText('reading this as a guest');
+
+      // They can read it.
+      await expect(guest.getByTestId('doc-title')).toHaveText('Checkout v2');
+      await expect(guest.locator('.prose')).toContainText('currency field');
+
+      // Every control a guest may not use is absent, not merely disabled —
+      // a disabled Share button still tells a stranger this document has a
+      // sharing model and invites them to poke at it.
+      await expect(guest.getByRole('button', { name: 'Share', exact: true })).toHaveCount(0);
+      await expect(guest.getByTestId('new-button')).toHaveCount(0);
+      await expect(guest.getByTestId('menu-file')).toHaveCount(0);
+      await expect(guest.getByTestId('open-agents')).toHaveCount(0);
+      await expect(guest.getByRole('button', { name: /^Delete /i })).toHaveCount(0);
+
+      // And they can write, because the link said so.
+      await caretAtEndOf(guest, '.prose > p[data-block-id]');
+      await guest.keyboard.type(' GUEST-WAS-HERE.');
+      await expect(guest.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+      expect(await readAsAgent('specs/checkout-v2')).toContain('GUEST-WAS-HERE.');
+
+      // Priya sees the guest's words arrive, under the guest's own name.
+      await expect(priya.locator('.prose')).toContainText('GUEST-WAS-HERE.', { timeout: 15_000 });
+    } finally {
+      await priyaContext.close();
+      await guestContext.close();
+    }
+  });
+
+  test('a guest who signs in stops being a guest', async ({ browser }) => {
+    const priyaContext = await freshContext(browser);
+    const guestContext = await freshContext(browser);
+    try {
+      const priya = await priyaContext.newPage();
+      await signIn(priya, 'priya@acme.test');
+      await priya.getByTestId('doc-policies/refunds').click();
+      await expect(priya.getByTestId('doc-title')).toHaveText('Refund policy');
+      await openShareDialog(priya);
+      await priya.getByTestId('link-capability').selectOption('comment');
+      await priya.getByTestId('create-link').click();
+      const row = priya.getByTestId('share-link').filter({ hasText: 'Can comment' }).last();
+      await row.getByRole('button', { name: 'Copy', exact: true }).click();
+      const url = await priya.evaluate(() => navigator.clipboard.readText());
+
+      const guest = await guestContext.newPage();
+      await guest.goto(new URL(url).pathname);
+      await expect(guest.getByTestId('guest-badge')).toBeVisible();
+      const guestName = (await guest.locator('.guest-name').innerText()).trim();
+      expect(guestName, 'a guest with no name').not.toEqual('');
+
+      // The offer is made where the guest already is, and it is about their
+      // work rather than about accounts.
+      await guest.getByTestId('guest-sign-in').click();
+      await expect(guest.getByRole('heading', { name: 'Keep your work' })).toBeVisible();
+      await guest.getByTestId('dev-email').fill(nobody('was-a-guest'));
+      await guest.getByTestId('sign-in').click();
+
+      // The generated identity is gone, replaced by the account. Nothing on
+      // screen still calls this person a guest.
+      await expect(guest.getByTestId('guest-badge')).toHaveCount(0);
+      await expect(guest.getByTestId('library-guest')).toHaveCount(0);
+      await expect(guest.locator('body')).not.toContainText(guestName);
+      // And they now have the surfaces an account holder has.
+      await expect(guest.getByTestId('new-button')).toBeVisible();
+    } finally {
+      await priyaContext.close();
+      await guestContext.close();
+    }
+  });
 });
