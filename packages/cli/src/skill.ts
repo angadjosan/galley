@@ -19,6 +19,30 @@ description: Read, cite, annotate and propose edits to Galley documents. Use whe
 Galley is where this team's specs, policies and prompts live. A document is
 Markdown; every block in it has an identity you can cite and attach work to.
 
+## Getting in
+
+Two doors, and which one you use depends on what you were given.
+
+**A URL like \`https://…/l/<id>\`** — a share link. Redeem it and work the
+document behind it. Nobody has to mint you anything, and you get exactly the
+capability its creator chose:
+
+\`\`\`
+galley auth link https://galley.example.com/l/MncinC9gb2Gx
+\`\`\`
+
+**Nothing, and a workspace you are meant to have** — ask for access by name.
+This prints a code and a URL; a person opens it and approves you. Say who you
+are, because that name is the whole of what they have to decide on:
+
+\`\`\`
+galley auth login --server https://galley.example.com --as "claude code on api-refactor"
+\`\`\`
+
+You are a principal in your own right either way — never the person who
+approved you. Everything you do is recorded as yours, and the audit trail names
+them as the one who vouched for it.
+
 ## Reading
 
 After \`galley pull\`, documents are ordinary \`.md\` files in the folder. **Read

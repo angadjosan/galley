@@ -38,7 +38,8 @@ The agent-facing surface is a binary, not a server — the one integration point
 every harness already has.
 
 ```bash
-galley auth login --server http://localhost:8787 --token glly_…
+galley auth login --server http://localhost:8787   # prints a code; approve it in the browser
+galley auth link  http://localhost:8787/l/<id>     # or come in through a share link
 galley pull ./docs                     # mirror a workspace to disk
 galley read specs/checkout-v2          # clean Markdown on stdout
 galley read specs/checkout-v2#a1b2c3   # one block

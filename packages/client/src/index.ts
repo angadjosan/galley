@@ -26,6 +26,26 @@ export class GalleyApiError extends Error {
   }
 }
 
+/** A login waiting on a person: what to show them, and where to send them. */
+export interface DeviceLoginRequest {
+  readonly deviceCode: string;
+  readonly userCode: string;
+  /** Path on the server, so the CLI can print an absolute URL. */
+  readonly verificationUri: string;
+  /** Seconds between polls, chosen by the server. */
+  readonly interval: number;
+  readonly expiresAt: string;
+}
+
+export type DeviceLoginResult =
+  | { readonly status: 'pending' }
+  | {
+      readonly status: 'approved';
+      readonly token: string;
+      readonly principal: { readonly id: string; readonly name: string };
+      readonly sponsor: { readonly id: string; readonly name: string } | null;
+    };
+
 export interface DocumentSummary {
   docId: string;
   path: string;
@@ -241,6 +261,42 @@ export class GalleyClient {
 
   async ingest(ref: string, content: string): Promise<{ kind: string; magnitude: number }> {
     return this.call('POST', `/v1/docs/${encodeURIComponent(ref)}/ingest`, { content });
+  }
+
+  // -------------------------------------------------------------------------
+  // Getting in
+  // -------------------------------------------------------------------------
+
+  /**
+   * Ask to be let in, by name.
+   *
+   * Both device-flow calls run before there is any credential to send, so a
+   * client built for them carries an empty token. That is not a special case in
+   * the transport — the routes simply do not read the header.
+   */
+  async startDeviceLogin(clientName: string): Promise<DeviceLoginRequest> {
+    return this.call('POST', '/v1/auth/device', { clientName });
+  }
+
+  /**
+   * Collect the token, if a person has approved yet.
+   *
+   * `pending` is a status rather than an error, so a caller loops on the shape
+   * of the answer instead of on the shape of a thrown thing.
+   */
+  async pollDeviceLogin(deviceCode: string): Promise<DeviceLoginResult> {
+    return this.call('POST', '/v1/auth/device/token', { deviceCode });
+  }
+
+  /**
+   * Redeem a share link.
+   *
+   * The token that comes back carries the link's authority and nothing else,
+   * which is exactly what an agent handed a URL should get: the document behind
+   * it, at the capability its creator chose, for as long as the link lives.
+   */
+  async openLink(linkId: string): Promise<{ token: string; docId: string; principal?: unknown }> {
+    return this.call('POST', `/v1/links/${encodeURIComponent(linkId)}/open`, {});
   }
 
   // -------------------------------------------------------------------------

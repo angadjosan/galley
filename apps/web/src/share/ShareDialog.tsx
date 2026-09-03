@@ -27,14 +27,9 @@ import { SHAREABLE, capabilityLabel } from './capabilities.js';
  */
 export function ShareDialog({
   docRef,
-  path,
-  onCopyForAgent,
 }: {
   /** What the routes address this document by. */
   docRef: string;
-  /** The path an agent is given. */
-  path: string;
-  onCopyForAgent(): void;
 }): JSX.Element {
   const [access, setAccess] = useState<Access | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +42,6 @@ export function ShareDialog({
   const [linkCapability, setLinkCapability] = useState<Capability>('read');
   const [allowAgents, setAllowAgents] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
-  const [agentCopied, setAgentCopied] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -303,32 +297,13 @@ export function ShareDialog({
             <strong>Let agents use this link</strong>
             <em>
               Agents may read and act on this document through the link, sponsored by you — their
-              work is recorded in your name.
+              work is recorded in your name. Hand an agent the URL: <code>galley auth link</code>{' '}
+              takes it from there, with no account and nothing to paste.
             </em>
           </span>
         </label>
       </section>
 
-      <section className="share-section">
-        <h3>Your own agents</h3>
-        <p className="share-note">
-          Paste this into your assistant. It can read the document and suggest changes — only you
-          can accept them.
-        </p>
-        <div className="share-agent-row">
-          <code className="share-ref">{path}</code>
-          <button
-            className="ghost"
-            onClick={() => {
-              onCopyForAgent();
-              setAgentCopied(true);
-              window.setTimeout(() => setAgentCopied(false), 1800);
-            }}
-          >
-            {agentCopied ? 'Copied' : 'Copy'}
-          </button>
-        </div>
-      </section>
     </div>
   );
 }

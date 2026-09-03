@@ -9,7 +9,8 @@
  *     principal, and stops conferring anything the moment it is revoked.
  *  4. The delegation rules survive the new doors. Agents pass through a link
  *     only when the link says so, on the *creator's* authority and never their
- *     own, and nothing but a signed-in person can register an agent.
+ *     own, and an agent comes into existence only when a signed-in person
+ *     approves one — the device code alone confers nothing.
  *  5. Work done as a guest follows the person who signs in.
  *  6. So does the access, and it stays tied to the link that gave it: signing
  *     in keeps the document open in front of them, and revoking the link still
@@ -95,6 +96,14 @@ interface Opened {
   token: string;
   docId: string;
   principal: { id: string; kind: string; name: string };
+}
+
+interface Device {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  interval: number;
+  expiresAt: string;
 }
 
 describe('sharing by address', () => {
@@ -696,48 +705,124 @@ describe('agents', () => {
     expect(session.grants).toEqual([]);
   });
 
-  it('is registered by a person and by nobody else', async () => {
+  it('is created by a person approving a device login, and by nobody else', async () => {
     const h = await open();
-    const created = await h.json<{ agentId: string; token: string }>('/v1/agents', {
+    const started = await h.json<Device>('/v1/auth/device', {
       method: 'POST',
-      body: JSON.stringify({ name: 'galley-bot/docs', scope: '/specs' }),
+      token: '',
+      body: JSON.stringify({ clientName: 'galley cli on laptop' }),
     });
-    expect(created.agentId).toMatch(/^a-/);
+    expect(started.userCode).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
 
-    const asAgent = await h.request('/v1/agents', {
+    // Nothing is conferred until a person acts: the code alone redeems nothing.
+    const early = await h.request('/v1/auth/device/token', {
       method: 'POST',
-      token: created.token,
-      body: JSON.stringify({ name: 'galley-bot/spawn', scope: '/' }),
+      token: '',
+      body: JSON.stringify({ deviceCode: started.deviceCode }),
+    });
+    expect(early.status).toBe(202);
+
+    // An agent cannot approve one, which is the delegation rule the old
+    // registration route enforced, checked at the new door.
+    const asAgent = await h.request(`/v1/auth/device/${started.userCode}/approve`, {
+      method: 'POST',
+      token: h.tokens.bot,
     });
     expect(asAgent.status).toBe(403);
-    expect(await errorOf(asAgent)).toMatch(/agent cannot register another agent/);
+    expect(await errorOf(asAgent)).toMatch(/only a signed-in person/);
 
     const { docId } = await seedDocument(h);
     const linkId = await makeLink(h, docId, 'read');
     const guest = await h.json<Opened>(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
-    const asGuest = await h.request('/v1/agents', {
+    const asGuest = await h.request(`/v1/auth/device/${started.userCode}/approve`, {
       method: 'POST',
       token: guest.token,
-      body: JSON.stringify({ name: 'galley-bot/anon', scope: '/' }),
     });
     expect(asGuest.status).toBe(403);
-    expect(await errorOf(asGuest)).toMatch(/guest cannot register an agent/);
+
+    await h.json(`/v1/auth/device/${started.userCode}/approve`, { method: 'POST' });
+    const collected = await h.json<{ status: string; token: string; sponsor: { id: string } }>(
+      '/v1/auth/device/token',
+      { method: 'POST', token: '', body: JSON.stringify({ deviceCode: started.deviceCode }) },
+    );
+    expect(collected.status).toBe('approved');
+    expect(collected.sponsor.id).toBe('u-priya');
+
+    const session = h.server.auth.verify(collected.token);
+    expect(session.principal.kind).toBe('agent');
+    expect(session.principal.name).toBe('galley cli on laptop');
   });
 
-  it('lists and revokes what a person set up', async () => {
+  it('hands a device code its token exactly once', async () => {
     const h = await open();
-    const created = await h.json<{ agentId: string; token: string }>('/v1/agents', {
+    const started = await h.json<Device>('/v1/auth/device', {
       method: 'POST',
-      body: JSON.stringify({ name: 'galley-bot/docs', scope: '/specs' }),
+      token: '',
+      body: JSON.stringify({ clientName: 'galley cli' }),
     });
+    await h.json(`/v1/auth/device/${started.userCode}/approve`, { method: 'POST' });
+
+    const first = await h.request('/v1/auth/device/token', {
+      method: 'POST',
+      token: '',
+      body: JSON.stringify({ deviceCode: started.deviceCode }),
+    });
+    expect(first.status).toBe(200);
+
+    // Replayed out of a shell history, a CI log, a screen recording: the row
+    // went with the first collection, so there is nothing left to take.
+    const again = await h.request('/v1/auth/device/token', {
+      method: 'POST',
+      token: '',
+      body: JSON.stringify({ deviceCode: started.deviceCode }),
+    });
+    expect(again.status).toBe(404);
+  });
+
+  it('lets a person decline, and says so', async () => {
+    const h = await open();
+    const started = await h.json<Device>('/v1/auth/device', {
+      method: 'POST',
+      token: '',
+      body: JSON.stringify({ clientName: 'something nobody ran' }),
+    });
+    expect((await h.request(`/v1/auth/device/${started.userCode}/deny`, { method: 'POST' })).status)
+      .toBe(204);
+
+    const collected = await h.request('/v1/auth/device/token', {
+      method: 'POST',
+      token: '',
+      body: JSON.stringify({ deviceCode: started.deviceCode }),
+    });
+    expect(collected.status).toBe(403);
+    expect(await errorOf(collected)).toMatch(/declined/);
+  });
+
+  it('lists and revokes what a person approved', async () => {
+    const h = await open();
+    const started = await h.json<Device>('/v1/auth/device', {
+      method: 'POST',
+      token: '',
+      body: JSON.stringify({ clientName: 'galley-bot/docs' }),
+    });
+    const created = await h.json<{ agentId: string }>(
+      `/v1/auth/device/${started.userCode}/approve`,
+      { method: 'POST' },
+    );
+    const collected = await h.json<{ token: string }>('/v1/auth/device/token', {
+      method: 'POST',
+      token: '',
+      body: JSON.stringify({ deviceCode: started.deviceCode }),
+    });
+
     const listed = await h.json<{ agents: { id: string; scope: string; sponsorName: string }[] }>(
       '/v1/agents',
     );
     const row = listed.agents.find((a) => a.id === created.agentId);
-    expect(row).toMatchObject({ scope: '/specs', sponsorName: 'priya' });
+    expect(row).toMatchObject({ scope: '/', sponsorName: 'priya' });
 
     expect((await h.request(`/v1/agents/${created.agentId}`, { method: 'DELETE' })).status).toBe(204);
-    expect((await h.request('/v1/me', { token: created.token })).status).toBe(401);
+    expect((await h.request('/v1/me', { token: collected.token })).status).toBe(401);
   });
 });
 

@@ -934,6 +934,45 @@ export function build(options: ServerOptions = {}): GalleyServer {
   const GUEST_TTL_MS = 30 * 86_400_000;
   const GUEST_COOKIE = 'galley_guest';
 
+  /**
+   * Long enough to walk to the browser, short enough that a code read aloud in
+   * a screen share is dead before anyone could act on it.
+   */
+  const DEVICE_CODE_TTL_MS = 600_000;
+  const DEVICE_POLL_INTERVAL_SECONDS = 3;
+
+  /**
+   * Crockford's alphabet, minus the vowels it already omits: no `I`/`1`,
+   * no `O`/`0`, so nothing in a user code can be mistyped by looking at it.
+   * Eight characters over 32 symbols is forty bits, split by a dash because a
+   * code is retyped by hand and `XXXX-XXXX` is the shape people expect.
+   */
+  const USER_CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+  function newUserCode(): string {
+    const bytes = randomBytes(8);
+    const symbols = [...bytes].map((byte) => USER_CODE_ALPHABET[byte % USER_CODE_ALPHABET.length]);
+    return `${symbols.slice(0, 4).join('')}-${symbols.slice(4).join('')}`;
+  }
+
+  /**
+   * A pending request, or nothing.
+   *
+   * Normalizes what a person types: they are reading eight characters off a
+   * terminal, and case and the dash are exactly the two things they will get
+   * wrong. Already-decided rows are not live — an approval is not a thing you
+   * can perform twice.
+   */
+  function liveDeviceAuth(raw: string): ReturnType<typeof store.getDeviceAuthByUserCode> {
+    const normalized = raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (normalized.length !== 8) return undefined;
+    const row = store.getDeviceAuthByUserCode(`${normalized.slice(0, 4)}-${normalized.slice(4)}`);
+    if (!row) return undefined;
+    if (row.approvedBy || row.deniedAt) return undefined;
+    if (new Date(row.expiresAt) <= new Date()) return undefined;
+    return row;
+  }
+
   const isCapability = (value: unknown): value is Capability =>
     value === 'read' ||
     value === 'comment' ||
@@ -1373,51 +1412,164 @@ export function build(options: ServerOptions = {}): GalleyServer {
   });
 
   /**
-   * Register an agent.
+   * `galley auth login`, step one: the agent asks.
    *
-   * `idea.md`: agents never self-register. The check is on the *kind* of the
-   * caller rather than on their capabilities, because an agent with admin
-   * everywhere is still an agent, and an agent that can mint agents is a
-   * delegation chain with no person at the end of it.
+   * Unauthenticated, because the whole point is that the thing calling it has
+   * no credential yet. That is safe only because this route hands out no
+   * authority whatsoever — it opens a request that a signed-in person must go
+   * and approve, and until they do, the device code redeems nothing.
+   *
+   * `idea.md`, hard question #4 survives intact: an agent still never
+   * self-registers. It asks, by name, and a human is the one who creates it.
+   * What has gone is the copy-and-paste — the person approves in the browser
+   * they are already signed into, and the credential travels to the CLI
+   * without ever being displayed to anybody.
    */
-  app.post('/v1/agents', async (request, reply) => {
+  app.post('/v1/auth/device', async (request, reply) => {
+    // Cheap, bounded, and on the one route that creates rows without a
+    // credential. Doing it here rather than on a timer means an instance that
+    // is never called never sweeps, and one that is called constantly sweeps
+    // constantly, which is the correct shape for both.
+    store.purgeExpiredDeviceAuth();
+
+    const body = (request.body ?? {}) as { clientName?: string };
+    const clientName = body.clientName?.trim();
+    if (!clientName) return reply.code(400).send({ error: 'an agent has to say what it is' });
+    if (clientName.length > 60) {
+      return reply.code(400).send({ error: 'that name is too long to fit on an approval screen' });
+    }
+
+    const deviceCode = `glly_dc_${randomBytes(32).toString('base64url')}`;
+    const userCode = newUserCode();
+    const expiresAt = new Date(Date.now() + DEVICE_CODE_TTL_MS).toISOString();
+    store.insertDeviceAuth({
+      deviceCodeHash: hashToken(deviceCode),
+      userCode,
+      clientName,
+      expiresAt,
+    });
+
+    return reply.code(201).send({
+      deviceCode,
+      userCode,
+      verificationUri: '/cli',
+      // Seconds, and the CLI is expected to honour it: a poll loop with no
+      // floor is a denial of service written by the client author's optimism.
+      interval: DEVICE_POLL_INTERVAL_SECONDS,
+      expiresAt,
+    });
+  });
+
+  /**
+   * What the approval screen is being asked to approve.
+   *
+   * Deliberately thin — a name and an age. The person is deciding whether they
+   * just ran this command, and nothing else on the row helps them answer that.
+   */
+  app.get('/v1/auth/device/:userCode', async (request, reply) => {
     const session = sessionOf(request);
-    if (session.principal.kind === 'guest') {
-      return reply.code(403).send({ error: 'a guest cannot register an agent; sign in first' });
-    }
     if (session.principal.kind !== 'human') {
-      return reply
-        .code(403)
-        .send({ error: 'an agent cannot register another agent; ask the person who sponsors you' });
+      return reply.code(403).send({ error: 'only a signed-in person can approve an agent' });
+    }
+    const pending = liveDeviceAuth((request.params as { userCode: string }).userCode);
+    if (!pending) return reply.code(404).send({ error: 'that code has expired or was never issued' });
+    return {
+      userCode: pending.userCode,
+      clientName: pending.clientName,
+      requestedAt: pending.createdAt,
+      expiresAt: pending.expiresAt,
+    };
+  });
+
+  /**
+   * `galley auth login`, step two: a person says yes.
+   *
+   * The agent principal is created *here*, on the approver's authority, with
+   * their grants — which is the same delegation the old registration route
+   * performed, moved to the moment where a human is demonstrably present.
+   */
+  app.post('/v1/auth/device/:userCode/approve', async (request, reply) => {
+    const session = sessionOf(request);
+    if (session.principal.kind !== 'human') {
+      return reply.code(403).send({ error: 'only a signed-in person can approve an agent' });
     }
 
-    const body = (request.body ?? {}) as { name?: string; scope?: string };
-    const name = body.name?.trim();
-    if (!name) return reply.code(400).send({ error: 'an agent needs a name' });
+    const raw = (request.params as { userCode: string }).userCode;
+    const pending = liveDeviceAuth(raw);
+    if (!pending) return reply.code(404).send({ error: 'that code has expired or was never issued' });
 
-    const raw = body.scope?.trim() || '/';
-    const path = raw === '/' ? '/' : `/${normalizePath(raw)}`;
-    // The scope is a path, and the capability is whatever the sponsor has
-    // there — the intersection is recomputed at every verification anyway, so
-    // asking the caller to name a capability would only let them name one they
-    // do not have.
-    const capability = capabilityFor(session.grants, path);
-    if (!capability) {
-      return reply.code(403).send({ error: `you have no access to ${path} to delegate` });
-    }
+    // The scope is the whole workspace, and the capability is whatever the
+    // approver has there. Naming a narrower capability was never useful: the
+    // intersection with the sponsor is recomputed on every request anyway, so
+    // a scope is a ceiling, not a grant.
+    const capability = capabilityFor(session.grants, '/');
+    if (!capability) return reply.code(403).send({ error: 'you have no access to delegate' });
 
     const agentId = `a-${randomBytes(6).toString('hex')}`;
-    const scope = [{ path, capability }];
+    const scope = [{ path: '/', capability }];
     const token = auth.issueForAgent(
-      { agentId, agentName: name, sponsorId: session.principal.id, workspaceId: workspace.workspaceId },
-      { label: `agent ${name}`, scope },
+      {
+        agentId,
+        agentName: pending.clientName,
+        sponsorId: session.principal.id,
+        workspaceId: workspace.workspaceId,
+      },
+      { label: `agent ${pending.clientName}`, scope },
     );
     // Recorded on the principal as well as in the token, so the roster can say
     // what an agent was set up to do without holding the token that says it.
     // Enforcement still comes from the token, intersected with the sponsor.
     store.setGrants(agentId, scope);
-    workspace.audit(principalOf(session), 'agent.create', null, `${name} on ${path}`);
-    return reply.code(201).send({ agentId, token });
+    store.approveDeviceAuth(pending.userCode, session.principal.id, token);
+    workspace.audit(principalOf(session), 'agent.create', null, `${pending.clientName} via device code`);
+    return { agentId, clientName: pending.clientName };
+  });
+
+  /** A person says no. The row stays, so the CLI learns why it is not getting a token. */
+  app.post('/v1/auth/device/:userCode/deny', async (request, reply) => {
+    const session = sessionOf(request);
+    if (session.principal.kind !== 'human') {
+      return reply.code(403).send({ error: 'only a signed-in person can approve an agent' });
+    }
+    const pending = liveDeviceAuth((request.params as { userCode: string }).userCode);
+    if (!pending) return reply.code(404).send({ error: 'that code has expired or was never issued' });
+    store.denyDeviceAuth(pending.userCode);
+    return reply.code(204).send();
+  });
+
+  /**
+   * `galley auth login`, step three: the agent collects.
+   *
+   * Unauthenticated for the same reason step one is, and safe for a stronger
+   * reason: the device code *is* the credential here, it was never displayed,
+   * and `takeDeviceAuthToken` deletes the row as it hands the token over, so a
+   * code that leaks after the fact redeems nothing.
+   */
+  app.post('/v1/auth/device/token', async (request, reply) => {
+    const body = (request.body ?? {}) as { deviceCode?: string };
+    if (!body.deviceCode) return reply.code(400).send({ error: 'deviceCode is required' });
+
+    const row = store.getDeviceAuthByCodeHash(hashToken(body.deviceCode));
+    // One answer for unknown, spent and expired. A poller learns whether it
+    // holds a live request, and nothing about anybody else's.
+    if (!row || new Date(row.expiresAt) <= new Date()) {
+      return reply.code(404).send({ error: 'that login request has expired; start again' });
+    }
+    if (row.deniedAt) {
+      store.deleteDeviceAuth(row.userCode);
+      return reply.code(403).send({ error: 'that request was declined' });
+    }
+    if (!row.token) return reply.code(202).send({ status: 'pending' });
+
+    const token = store.takeDeviceAuthToken(row.deviceCodeHash);
+    if (!token) return reply.code(404).send({ error: 'that login request has expired; start again' });
+    const session = auth.verify(token);
+    return {
+      status: 'approved',
+      token,
+      principal: principalView(session.principal.id) ?? session.principal,
+      sponsor: session.sponsor ? principalView(session.sponsor.id) : null,
+    };
   });
 
   app.get('/v1/agents', async (request) => {

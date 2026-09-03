@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { hostname } from 'node:os';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { Semaphore } from '@galley/concurrency';
@@ -8,6 +9,7 @@ import { parseDocument } from '@galley/markdown';
 import { flagBool, flagNumber, flagString, parseArgs, parseRef, type ParsedArgs } from './args.js';
 import {
   basePath,
+  readConfig,
   readManifest,
   resolveCredentials,
   writeConfig,
@@ -47,7 +49,8 @@ const HELP = `galley — a writing surface whose output is machine-consumable
 
 usage: galley <command> [options]
 
-  auth login --server <url> --token <token>   store credentials
+  auth login [--server <url>] [--as <name>]   ask a person to approve this agent
+  auth link <share-url>                       come in through a share link
   ls [prefix]                                 list documents
   pull <dir> [--prefix p] [--force]           mirror a workspace to disk
   push [dir] [--write]                        send local edits back
@@ -95,7 +98,7 @@ export async function run(argv: readonly string[], io: Io = defaultIo): Promise<
     const message = err instanceof Error ? err.message : String(err);
     io.err(`galley: ${message}\n`);
     if (err instanceof GalleyApiError && err.status === 401) {
-      io.err('hint: run `galley auth login --server <url> --token <token>`\n');
+      io.err('hint: run `galley auth login --server <url>`, or `galley auth link <share-url>`\n');
     }
     return 1;
   }
@@ -157,18 +160,154 @@ function client(): GalleyClient {
 // auth, skill
 // ---------------------------------------------------------------------------
 
-function authCommand(args: ParsedArgs, io: Io): number {
+/**
+ * How this agent introduces itself on the approval screen.
+ *
+ * Whatever harness is running the binary usually knows its own name, and the
+ * person approving is trying to answer "is this the thing I just ran". A
+ * hostname is the honest fallback: it is at least the machine they are sitting
+ * at, and it is never a claim about software that isn't there.
+ */
+function defaultClientName(): string {
+  const declared = process.env.GALLEY_CLIENT_NAME?.trim();
+  if (declared) return declared.slice(0, 60);
+  return `galley cli on ${hostname()}`.slice(0, 60);
+}
+
+async function authCommand(args: ParsedArgs, io: Io): Promise<number> {
+  if (args.subcommand === 'link') return authLink(args, io);
   if (args.subcommand !== 'login') {
-    io.err('usage: galley auth login --server <url> --token <token>\n');
+    io.err('usage: galley auth login [--server <url>]\n');
+    io.err('       galley auth link <share-url>\n');
     return 2;
   }
-  writeConfig({
-    server: flagString(args, 'server'),
-    token: flagString(args, 'token'),
-    ...(typeof args.flags.prefix === 'string' ? { prefix: args.flags.prefix } : {}),
-  });
-  io.out('credentials saved\n');
+  return authLogin(args, io);
+}
+
+/**
+ * Ask a person for access, by name.
+ *
+ * `idea.md`, hard question #4 is unchanged by this: an agent still never
+ * self-registers, and the token still belongs to an *(agent, sponsor)* pair.
+ * What has gone is the copy-and-paste. The agent says what it is, a human
+ * approves it in a browser they are already signed into, and the credential
+ * travels straight from the server to this process without ever being
+ * displayed — which is strictly better than a token on a clipboard.
+ */
+async function authLogin(args: ParsedArgs, io: Io): Promise<number> {
+  // The flag this replaced. Said plainly, because the alternative is a script
+  // that used to work now sitting in a poll loop nobody is going to approve.
+  if (args.flags.token !== undefined) {
+    io.err('galley auth login no longer takes --token; a person approves this agent instead.\n');
+    io.err('for CI, set GALLEY_SERVER and GALLEY_TOKEN in the environment.\n');
+    return 2;
+  }
+
+  const server = (
+    typeof args.flags.server === 'string' ? args.flags.server : readConfig()?.server
+  )?.replace(/\/+$/, '');
+  if (!server) {
+    io.err('usage: galley auth login --server <url>\n');
+    return 2;
+  }
+
+  const clientName =
+    typeof args.flags.as === 'string' && args.flags.as.trim()
+      ? args.flags.as.trim()
+      : defaultClientName();
+  const anonymous = new GalleyClient({ baseUrl: server, token: '' });
+  const request = await anonymous.startDeviceLogin(clientName);
+
+  io.out(`\n  Approve "${clientName}" at:\n\n`);
+  io.out(`    ${server}${request.verificationUri}\n\n`);
+  io.out(`  and enter the code:  ${request.userCode}\n\n`);
+  io.out('  Waiting…\n');
+
+  const deadline = new Date(request.expiresAt).getTime();
+  while (Date.now() < deadline) {
+    await sleep(request.interval * 1000);
+    let result;
+    try {
+      result = await anonymous.pollDeviceLogin(request.deviceCode);
+    } catch (err) {
+      // 403 is a decision — a person said no — and 404 is a request that ran
+      // out of time. Both are answers, so neither is worth a stack trace.
+      io.err(`\n${err instanceof Error ? err.message : String(err)}\n`);
+      return 1;
+    }
+    if (result.status !== 'approved') continue;
+
+    writeConfig({
+      server,
+      token: result.token,
+      ...(typeof args.flags.prefix === 'string' ? { prefix: args.flags.prefix } : {}),
+    });
+    const sponsor = result.sponsor ? `, sponsored by ${result.sponsor.name}` : '';
+    io.out(`\n  Signed in as ${result.principal.name}${sponsor}.\n`);
+    return 0;
+  }
+
+  io.err('\nthat login request expired; run `galley auth login` again\n');
+  return 1;
+}
+
+/**
+ * Come in through a share link instead.
+ *
+ * The other half of getting in, and the one that needs nobody's account: a
+ * link that admits agents is a credential its creator deliberately handed out,
+ * so an agent holding the URL should be able to work the document behind it
+ * without anyone minting anything. What it gets is the link's capability and
+ * nothing else — no workspace, no other documents.
+ */
+async function authLink(args: ParsedArgs, io: Io): Promise<number> {
+  // positional[0] is the subcommand itself — `auth link <url>`.
+  const target = args.positional[1];
+  if (!target) {
+    io.err('usage: galley auth link <share-url>\n');
+    return 2;
+  }
+
+  const parsed = parseShareUrl(target, readConfig()?.server);
+  if (!parsed) {
+    io.err('that does not look like a share link (expected https://host/l/<id>)\n');
+    return 2;
+  }
+
+  const anonymous = new GalleyClient({ baseUrl: parsed.server, token: '' });
+  const opened = await anonymous.openLink(parsed.linkId);
+  writeConfig({ server: parsed.server, token: opened.token });
+  io.out(`${opened.docId}\n`);
   return 0;
+}
+
+/**
+ * Split a share URL into the server that issued it and the link id.
+ *
+ * A bare id is accepted too, but only when a server is already configured —
+ * guessing which host an id belongs to is how an agent posts a document to the
+ * wrong company.
+ */
+function parseShareUrl(
+  target: string,
+  configuredServer?: string,
+): { server: string; linkId: string } | null {
+  if (/^https?:\/\//.test(target)) {
+    try {
+      const url = new URL(target);
+      const id = /^\/l\/([^/]+)\/?$/.exec(url.pathname)?.[1];
+      if (!id) return null;
+      return { server: url.origin, linkId: decodeURIComponent(id) };
+    } catch {
+      return null;
+    }
+  }
+  if (!configuredServer || target.includes('/')) return null;
+  return { server: configuredServer.replace(/\/+$/, ''), linkId: target };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**

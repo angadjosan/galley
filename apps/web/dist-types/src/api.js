@@ -466,14 +466,29 @@ export async function listAgents() {
         };
     });
 }
-export async function registerAgent(name, scope) {
-    const result = await request('POST', '/v1/agents', { name, scope });
-    if (!result.token)
-        throw new ApiError(500, 'The agent was created but no token came back. Revoke it and try again.');
-    return { agentId: result.agentId ?? '', token: result.token };
-}
 export async function revokeAgent(id) {
     await request('DELETE', `/v1/agents/${encodeURIComponent(id)}`);
+}
+/** `/cli/<code>` — somebody sent here by a terminal, or arriving to type a code. */
+export function userCodeFromLocation() {
+    const code = /^\/cli\/([^/]+)\/?$/.exec(window.location.pathname)?.[1];
+    return code ? decodeURIComponent(code) : null;
+}
+export async function lookUpPendingAgent(userCode) {
+    return request('GET', `/v1/auth/device/${encodeURIComponent(userCode)}`);
+}
+/**
+ * Say yes.
+ *
+ * No token comes back, and that is the point: the credential goes to the
+ * process that asked for it, which is the only party holding the device code.
+ * This tab is where a person is, not where the secret goes.
+ */
+export async function approvePendingAgent(userCode) {
+    return request('POST', `/v1/auth/device/${encodeURIComponent(userCode)}/approve`);
+}
+export async function denyPendingAgent(userCode) {
+    await request('POST', `/v1/auth/device/${encodeURIComponent(userCode)}/deny`);
 }
 /**
  * The live connection for one document.

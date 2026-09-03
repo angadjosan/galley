@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { build, type GalleyServer } from '@galley/server';
 import type { Grant } from '@galley/core';
 import { run, type Io } from '../src/main.js';
+import { writeConfig } from '../src/config.js';
 
 const FULL: Grant[] = [{ path: '/', capability: 'admin' }];
 
@@ -78,7 +79,10 @@ beforeEach(async () => {
   delete process.env.GALLEY_TOKEN;
 
   ctx = { server, baseUrl, root, configFile, tokens: { priya, bot } };
-  await galley('auth', 'login', '--server', baseUrl, '--token', priya);
+  // Written rather than logged in: `galley auth login` is a device flow now,
+  // and waiting for a browser is not a thing a test can do. Through the same
+  // function the flow ends in, so the file's mode is the real one.
+  writeConfig({ server: baseUrl, token: priya });
   await ctx.server.workspace.create(
     'specs/checkout-v2',
     SPEC,
@@ -113,6 +117,51 @@ describe('auth', () => {
   it('writes the credentials file with owner-only permissions', () => {
     const stats = require('node:fs').statSync(ctx.configFile) as { mode: number };
     expect(stats.mode & 0o077, 'the token file must not be group or world readable').toBe(0);
+  });
+
+  it('refuses --token rather than waiting for an approval nobody will give', async () => {
+    const result = await galley('auth', 'login', '--server', ctx.baseUrl, '--token', 'glly_x');
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/no longer takes --token/);
+    expect(result.err).toMatch(/GALLEY_TOKEN/);
+  });
+
+  /**
+   * The door that needs no account.
+   *
+   * An agent handed a URL gets the document behind it at the capability its
+   * creator chose — the thing the share dialog's "agents allowed" toggle
+   * promises, and could not deliver while the CLI only spoke tokens.
+   */
+  it('comes in through a share link', async () => {
+    const docId = String(
+      ctx.server.store.getDocumentByPath('default', 'specs/checkout-v2')?.docId,
+    );
+    const linkId = 'lnk-cli-test';
+    ctx.server.store.createShareLink({
+      id: linkId,
+      docId,
+      capability: 'comment',
+      createdBy: 'u-priya',
+      allowAgents: true,
+    });
+
+    process.env.GALLEY_CONFIG = join(ctx.root, 'link.json');
+    const opened = await galley('auth', 'link', `${ctx.baseUrl}/l/${linkId}`);
+    expect(opened.err).toBe('');
+    expect(opened.code).toBe(0);
+    expect(opened.out.trim()).toBe(docId);
+
+    const read = await galley('read', docId);
+    expect(read.code).toBe(0);
+    expect(read.out).toContain('The currency field is optional');
+  });
+
+  it('will not guess which server a bare link id belongs to', async () => {
+    process.env.GALLEY_CONFIG = join(ctx.root, 'nowhere.json');
+    const result = await galley('auth', 'link', 'lnk-somewhere');
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/does not look like a share link/);
   });
 });
 

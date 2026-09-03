@@ -12,11 +12,8 @@ import { type JSX } from 'react';
  * a stranger signs up. Collapsing them into "Done" is how a document quietly
  * fails to reach the person it was meant for.
  */
-export declare function ShareDialog({ docRef, path, onCopyForAgent, }: {
+export declare function ShareDialog({ docRef, }: {
     /** What the routes address this document by. */
     docRef: string;
-    /** The path an agent is given. */
-    path: string;
-    onCopyForAgent(): void;
 }): JSX.Element;
 //# sourceMappingURL=ShareDialog.d.ts.map

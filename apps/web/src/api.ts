@@ -620,17 +620,46 @@ export async function listAgents(): Promise<AgentRow[]> {
   });
 }
 
-export async function registerAgent(
-  name: string,
-  scope: string,
-): Promise<{ agentId: string; token: string }> {
-  const result = await request<{ agentId?: string; token?: string }>('POST', '/v1/agents', { name, scope });
-  if (!result.token) throw new ApiError(500, 'The agent was created but no token came back. Revoke it and try again.');
-  return { agentId: result.agentId ?? '', token: result.token };
-}
-
 export async function revokeAgent(id: string): Promise<void> {
   await request('DELETE', `/v1/agents/${encodeURIComponent(id)}`);
+}
+
+// ---------------------------------------------------------------------------
+// Approving a `galley auth login`
+// ---------------------------------------------------------------------------
+
+export interface PendingAgent {
+  userCode: string;
+  clientName: string;
+  requestedAt: string;
+}
+
+/** `/cli/<code>` — somebody sent here by a terminal, or arriving to type a code. */
+export function userCodeFromLocation(): string | null {
+  const code = /^\/cli\/([^/]+)\/?$/.exec(window.location.pathname)?.[1];
+  return code ? decodeURIComponent(code) : null;
+}
+
+export async function lookUpPendingAgent(userCode: string): Promise<PendingAgent> {
+  return request<PendingAgent>('GET', `/v1/auth/device/${encodeURIComponent(userCode)}`);
+}
+
+/**
+ * Say yes.
+ *
+ * No token comes back, and that is the point: the credential goes to the
+ * process that asked for it, which is the only party holding the device code.
+ * This tab is where a person is, not where the secret goes.
+ */
+export async function approvePendingAgent(userCode: string): Promise<{ clientName: string }> {
+  return request<{ clientName: string }>(
+    'POST',
+    `/v1/auth/device/${encodeURIComponent(userCode)}/approve`,
+  );
+}
+
+export async function denyPendingAgent(userCode: string): Promise<void> {
+  await request('POST', `/v1/auth/device/${encodeURIComponent(userCode)}/deny`);
 }
 
 // ---------------------------------------------------------------------------

@@ -115,11 +115,26 @@ export interface AgentRow {
     createdAt: string | null;
 }
 export declare function listAgents(): Promise<AgentRow[]>;
-export declare function registerAgent(name: string, scope: string): Promise<{
-    agentId: string;
-    token: string;
-}>;
 export declare function revokeAgent(id: string): Promise<void>;
+export interface PendingAgent {
+    userCode: string;
+    clientName: string;
+    requestedAt: string;
+}
+/** `/cli/<code>` — somebody sent here by a terminal, or arriving to type a code. */
+export declare function userCodeFromLocation(): string | null;
+export declare function lookUpPendingAgent(userCode: string): Promise<PendingAgent>;
+/**
+ * Say yes.
+ *
+ * No token comes back, and that is the point: the credential goes to the
+ * process that asked for it, which is the only party holding the device code.
+ * This tab is where a person is, not where the secret goes.
+ */
+export declare function approvePendingAgent(userCode: string): Promise<{
+    clientName: string;
+}>;
+export declare function denyPendingAgent(userCode: string): Promise<void>;
 export interface PeerPresence {
     peerId: string;
     name: string;

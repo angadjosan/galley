@@ -1,30 +1,28 @@
 import { useCallback, useEffect, useState, type JSX } from 'react';
-import { listAgents, messageOf, registerAgent, revokeAgent, type AgentRow } from '../api.js';
+import { listAgents, messageOf, revokeAgent, type AgentRow } from '../api.js';
 
 /**
- * The agents you have set up.
+ * The agents you have approved.
  *
  * Violet everywhere, because violet already means "not a person" everywhere
  * else in this app and an admin screen is exactly where that association has
  * to hold. Nothing here is decorated with it; the rows *are* agents.
  *
- * Two rules the interface has to make visible rather than merely obey:
+ * This screen used to mint tokens, and no longer does. An agent asks for
+ * itself, by name, through `galley auth login`, and a person approves it on the
+ * approval screen — which is the same delegation, performed at the moment the
+ * human is demonstrably present, and without a secret ever crossing a
+ * clipboard. What is left here is the half that was always the point: seeing
+ * what has access, and taking it away.
  *
- * - **An agent never registers itself.** It exists because a named human made
- *   it, and it acts with that human's authority, narrowed to a path.
- * - **The token is shown once.** Not because it is dramatic, but because a
- *   secret a server can re-read is a secret the server can leak. The line
- *   saying so is next to the token, before it disappears — not in a tooltip
- *   afterwards.
+ * The rule the interface still has to make visible rather than merely obey:
+ * **an agent never registers itself.** Every row exists because a named human
+ * said yes, and acts with that human's authority.
  */
-export function AgentsPanel({ sponsorName }: { sponsorName: string }): JSX.Element {
+export function AgentsPanel(): JSX.Element {
   const [agents, setAgents] = useState<AgentRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [name, setName] = useState('');
-  const [scope, setScope] = useState('/');
-  const [minted, setMinted] = useState<{ name: string; token: string } | null>(null);
-  const [copied, setCopied] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -41,29 +39,12 @@ export function AgentsPanel({ sponsorName }: { sponsorName: string }): JSX.Eleme
     void load();
   }, [load]);
 
-  const create = async (): Promise<void> => {
-    const label = name.trim();
-    if (!label) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const created = await registerAgent(label, scope.trim() || '/');
-      setMinted({ name: label, token: created.token });
-      setCopied(false);
-      setName('');
-      await load();
-    } catch (err) {
-      setError(messageOf(err, `${label} could not be registered.`));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div className="agents" data-testid="agents-panel">
       <p className="overlay-lead">
-        An agent acts on your behalf, inside the path you give it, and everything it does is
-        recorded as its own — set up by {sponsorName}.
+        An agent acts on your behalf and everything it does is recorded as its own. One appears here
+        when you approve a <code>galley auth login</code>; revoking it takes its access away
+        immediately.
       </p>
 
       {error && (
@@ -75,65 +56,10 @@ export function AgentsPanel({ sponsorName }: { sponsorName: string }): JSX.Eleme
         </p>
       )}
 
-      {minted && (
-        <div className="agent-token" role="status" data-testid="agent-token">
-          <strong>{minted.name} is ready.</strong>
-          <p>This token is shown once. Close this and it is gone — we do not keep a copy.</p>
-          <code>{minted.token}</code>
-          <div className="agent-token-actions">
-            <button
-              className="primary"
-              onClick={() => {
-                void navigator.clipboard?.writeText(minted.token);
-                setCopied(true);
-              }}
-              data-testid="copy-agent-token"
-            >
-              {copied ? 'Copied' : 'Copy token'}
-            </button>
-            <button className="link-quiet" onClick={() => setMinted(null)}>
-              {copied ? 'Done' : 'Dismiss without copying'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      <form
-        className="agent-new"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!busy) void create();
-        }}
-      >
-        <label>
-          Name
-          <input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="Release notes drafter"
-            data-testid="agent-name"
-          />
-        </label>
-        <label>
-          Can touch
-          <input
-            value={scope}
-            onChange={(event) => setScope(event.target.value)}
-            placeholder="/"
-            spellCheck={false}
-            data-testid="agent-scope"
-          />
-          <small>A path. `/specs` limits it to that folder; `/` is everything you can reach.</small>
-        </label>
-        <button type="submit" className="primary" disabled={busy || !name.trim()} data-testid="agent-create">
-          Register agent
-        </button>
-      </form>
-
       {agents === null && !error && <p className="share-note">Looking…</p>}
       {agents?.length === 0 && (
         <p className="share-note" data-testid="agents-empty">
-          No agents yet.
+          No agents yet. Run <code>galley auth login</code> and approve it here.
         </p>
       )}
 
@@ -148,7 +74,7 @@ export function AgentsPanel({ sponsorName }: { sponsorName: string }): JSX.Eleme
               </strong>
               <em>
                 {agent.scope}
-                {agent.sponsorName ? ` · set up by ${agent.sponsorName}` : ''}
+                {agent.sponsorName ? ` · approved by ${agent.sponsorName}` : ''}
               </em>
             </span>
             {revoking === agent.id ? (

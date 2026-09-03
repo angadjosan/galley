@@ -2298,3 +2298,51 @@ from the same `STARTERS` the package exports. The starters are still worth
 having: they are worked examples an agent can read to learn the format, which is
 what `starters.ts` said they were for. What they are no longer is a question
 put to a person who just wanted to draw something.
+
+## D74 — An agent asks for itself; nobody carries a token to a terminal
+
+**Context:** there were two ways an agent was supposed to get access, and
+neither of them worked.
+
+The first was an Agents panel that minted a bearer token, showed it once, and
+asked a person to copy it into a terminal. The second was a box in the share
+dialog headed *Your own agents* that handed over a document path — and nothing
+else — on the assumption that credentials were already in place. Between them
+sat the gap: the panel was the only thing in the product that could produce a
+credential, and the share dialog never mentioned it. Someone following the
+share dialog's instruction landed on `not authenticated` with no way to find
+the screen that would have fixed it.
+
+The token step was also the wrong shape on its own terms. A secret that a human
+carries between two windows is a secret in a clipboard, a scrollback buffer,
+and — because it is the fastest way to make an agent work — a chat message.
+
+**Decision: the CLI asks, by name, and a person approves it in the browser.**
+
+`galley auth login` posts a client name and gets back a short code. The person
+opens `/cli`, sees the name and the code, and approves; the server mints the
+agent token and holds it until the CLI's next poll collects it. Nothing secret
+is displayed to anybody, and the row is deleted as the token is handed over, so
+a device code replayed out of a shell history redeems nothing.
+
+**What this deliberately does not change** is `idea.md`'s hard question #4. The
+token still belongs to an *(agent, sponsor)* pair, an agent still cannot
+approve another agent, and the intersection with the sponsor's grants is still
+recomputed on every request. The delegation is identical; it now happens at the
+one moment a human is demonstrably present, rather than at a form they had to
+find first.
+
+**And the second door is now real.** `galley auth link <url>` redeems a share
+link, so an agent handed a Galley URL can work the document behind it with no
+account and nothing provisioned — which is what the *agents allowed* toggle
+already promised and could not deliver. It confers the link's capability and
+nothing else: no workspace, no other documents, revoked with the link.
+
+**What is left of the Agents panel** is the half that was always the point:
+seeing what has access and taking it away. It no longer creates anything.
+
+**The alternative, rejected:** log the CLI in as the person. It is what `gh`
+does and it is one fewer concept. It also makes every agent an impersonation,
+which erases the distinction the audit trail is built on — `galley-bot/ci,
+sponsored by priya` becomes `priya`, and the question "did a human write this"
+stops having an answer.

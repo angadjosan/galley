@@ -56,6 +56,19 @@ export interface DocInvite {
   readonly createdAt: string;
 }
 
+/** One `galley auth login` waiting on a person. */
+export interface DeviceAuth {
+  readonly deviceCodeHash: string;
+  readonly userCode: string;
+  readonly clientName: string;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+  readonly approvedBy: string | null;
+  /** The minted agent token, held until the CLI's next poll collects it. */
+  readonly token: string | null;
+  readonly deniedAt: string | null;
+}
+
 export interface ShareLink {
   readonly id: string;
   readonly docId: string;
@@ -273,6 +286,33 @@ CREATE TABLE IF NOT EXISTS guest_sessions (
   last_seen_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS guest_sessions_link ON guest_sessions(link_id);
+
+/**
+ * A "galley auth login" waiting for a person to approve it.
+ *
+ * Two secrets, and they are different on purpose. user_code is the short
+ * string a human retypes into a browser, so it is small enough to read off a
+ * terminal and therefore guessable; it can only ever *name* a pending request.
+ * device_code_hash is what actually redeems the token, is never displayed,
+ * and is stored hashed for the same reason tokens are — a database dump must
+ * not be a set of credentials.
+ *
+ * Guessing a user code is not a way into anybody's workspace: approving one
+ * gives away the *approver's* access, so the attack it buys is handing your own
+ * grants to a stranger's terminal. The defence is therefore proportionate —
+ * forty bits of entropy and a ten-minute life — rather than a lockout counter.
+ */
+CREATE TABLE IF NOT EXISTS device_auth (
+  device_code_hash TEXT PRIMARY KEY,
+  user_code        TEXT NOT NULL UNIQUE,
+  client_name      TEXT NOT NULL,
+  created_at       TEXT NOT NULL,
+  expires_at       TEXT NOT NULL,
+  approved_by      TEXT,
+  token            TEXT,
+  denied_at        TEXT
+);
+CREATE INDEX IF NOT EXISTS device_auth_user_code ON device_auth(user_code);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS blocks_fts USING fts5(
   block_id UNINDEXED,
@@ -888,6 +928,99 @@ export class Store {
       new Date().toISOString(),
       hash,
     );
+  }
+
+  // -------------------------------------------------------------------------
+  // Device authorization
+  // -------------------------------------------------------------------------
+
+  insertDeviceAuth(input: {
+    deviceCodeHash: string;
+    userCode: string;
+    clientName: string;
+    expiresAt: string;
+  }): void {
+    this.prepare(
+      `INSERT INTO device_auth (device_code_hash, user_code, client_name, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      input.deviceCodeHash,
+      input.userCode,
+      input.clientName,
+      new Date().toISOString(),
+      input.expiresAt,
+    );
+  }
+
+  getDeviceAuthByCodeHash(hash: string): DeviceAuth | undefined {
+    return this.readDeviceAuth('device_code_hash', hash);
+  }
+
+  getDeviceAuthByUserCode(userCode: string): DeviceAuth | undefined {
+    return this.readDeviceAuth('user_code', userCode);
+  }
+
+  /**
+   * Record the decision, whichever way it went.
+   *
+   * The token is written here rather than handed straight to the browser: the
+   * person approving is not the one who needs the credential. Their tab gets a
+   * confirmation, and the CLI's next poll — which is the only party holding the
+   * device code — is what carries the token away.
+   */
+  approveDeviceAuth(userCode: string, approvedBy: string, token: string): void {
+    this.prepare(
+      'UPDATE device_auth SET approved_by = ?, token = ? WHERE user_code = ? AND approved_by IS NULL',
+    ).run(approvedBy, token, userCode);
+  }
+
+  denyDeviceAuth(userCode: string): void {
+    this.prepare(
+      'UPDATE device_auth SET denied_at = ? WHERE user_code = ? AND approved_by IS NULL',
+    ).run(new Date().toISOString(), userCode);
+  }
+
+  /**
+   * Hand the token over exactly once.
+   *
+   * The row is deleted rather than blanked, so a device code that is replayed —
+   * out of a shell history, a CI log, a screen recording — finds nothing rather
+   * than the credential it carried the first time.
+   */
+  takeDeviceAuthToken(hash: string): string | null {
+    const row = this.getDeviceAuthByCodeHash(hash);
+    if (!row?.token) return null;
+    this.prepare('DELETE FROM device_auth WHERE device_code_hash = ?').run(hash);
+    return row.token;
+  }
+
+  deleteDeviceAuth(userCode: string): void {
+    this.prepare('DELETE FROM device_auth WHERE user_code = ?').run(userCode);
+  }
+
+  /** Drop everything nobody came back for. Cheap, and unbounded growth if not. */
+  purgeExpiredDeviceAuth(now = new Date()): number {
+    const result = this.prepare('DELETE FROM device_auth WHERE expires_at <= ?').run(
+      now.toISOString(),
+    );
+    return Number(result.changes ?? 0);
+  }
+
+  private readDeviceAuth(column: 'device_code_hash' | 'user_code', value: string): DeviceAuth | undefined {
+    const row = this.prepare(`SELECT * FROM device_auth WHERE ${column} = ?`).get(value) as
+      | Record<string, unknown>
+      | undefined;
+    if (!row) return undefined;
+    return {
+      deviceCodeHash: String(row.device_code_hash),
+      userCode: String(row.user_code),
+      clientName: String(row.client_name),
+      createdAt: String(row.created_at),
+      expiresAt: String(row.expires_at),
+      approvedBy: row.approved_by === null ? null : String(row.approved_by),
+      token: row.token === null ? null : String(row.token),
+      deniedAt: row.denied_at === null ? null : String(row.denied_at),
+    };
   }
 
   // -------------------------------------------------------------------------

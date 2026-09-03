@@ -40,6 +40,7 @@ import {
   onSessionLost,
   serverBaseUrl,
   signOut as endSession,
+  userCodeFromLocation,
   type Boot,
   type Capability,
   type Credentials,
@@ -49,6 +50,7 @@ import {
 import { SignIn, SignInForm } from './share/SignIn.js';
 import { ShareDialog } from './share/ShareDialog.js';
 import { AgentsPanel } from './share/AgentsPanel.js';
+import { ApproveAgent } from './share/ApproveAgent.js';
 import { GuestBadge } from './share/GuestBadge.js';
 
 type SaveState = 'saved' | 'saving' | 'dirty' | 'error';
@@ -153,6 +155,19 @@ export function App(): JSX.Element {
         onSignedIn={(viewer) => setBoot({ kind: 'user', viewer })}
       />
     );
+  }
+
+  /**
+   * `/cli` is a different product for a moment, so it gets to be one.
+   *
+   * Somebody here was sent by a terminal to approve an agent, and dropping them
+   * into the workspace first — where they would have to find a menu and retype
+   * a code from memory — is how a two-second confirmation becomes a support
+   * question. It is checked after sign-in, because approving is an act of
+   * delegation and there is nothing to delegate until we know who is asking.
+   */
+  if (boot.kind === 'user' && window.location.pathname.startsWith('/cli')) {
+    return <ApproveAgent initialCode={userCodeFromLocation()} viewerName={boot.viewer.name} />;
   }
 
   const guest = boot.kind === 'guest';
@@ -563,7 +578,7 @@ function Workspace({
 
       {agentsOpen && (
         <Overlay title="Agents" onClose={() => setAgentsOpen(false)}>
-          <AgentsPanel sponsorName={viewer.name} />
+          <AgentsPanel />
         </Overlay>
       )}
 
@@ -1354,11 +1369,7 @@ function DocumentView({
         </Boundary>
         {shareOpen && canShare && (
           <Overlay title="Share" onClose={() => setShareOpen(false)}>
-            <ShareDialog
-              docRef={docId}
-              path={loaded.path}
-              onCopyForAgent={() => void navigator.clipboard?.writeText(loaded.path)}
-            />
+            <ShareDialog docRef={docId} />
           </Overlay>
         )}
       </>
@@ -1634,11 +1645,7 @@ function DocumentView({
 
       {shareOpen && canShare && (
         <Overlay title="Share" onClose={() => setShareOpen(false)}>
-          <ShareDialog
-            docRef={docId}
-            path={loaded.path}
-            onCopyForAgent={() => void navigator.clipboard?.writeText(loaded.path)}
-          />
+          <ShareDialog docRef={docId} />
         </Overlay>
       )}
 

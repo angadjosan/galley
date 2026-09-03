@@ -1991,17 +1991,6 @@ kbd {
   font-weight: 600;
 }
 
-.share-ref {
-  font-family: var(--mono);
-  font-size: var(--fs-ui);
-  width: 100%;
-  padding: 10px 12px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  user-select: all;
-}
-
 .share-note {
   font-size: var(--fs-small);
   color: var(--text-3);
@@ -4028,21 +4017,15 @@ kbd {
   background: var(--agent-tint);
 }
 
-.share-agent-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 /* -------------------------------------------------------------- agents */
 
 /**
  * The agent admin surface.
  *
  * Violet, because violet already means "not a person" everywhere else here and
- * this is the screen where that association is load-bearing. The token panel
- * is the one thing on it that gets emphasis, and it earns it: the secret is
- * shown once, and the sentence saying so has to be read before it is gone.
+ * this is the screen where that association is load-bearing. The emphasis goes
+ * on the approval code, and it earns it: it is the one thing a person is meant
+ * to read character by character before saying yes.
  */
 .agents {
   display: flex;
@@ -4050,80 +4033,23 @@ kbd {
   gap: 14px;
 }
 
-.agent-new {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--surface);
-}
+/*
+  The code on the approval screen.
 
-.agent-new label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: var(--fs-small);
-  color: var(--text-2);
-}
-
-.agent-new input {
-  padding: 7px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--page);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--fs-ui);
-}
-
-.agent-new input:focus {
-  outline: none;
-  border-color: var(--accent-line);
-  box-shadow: var(--focus);
-}
-
-.agent-new small {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-}
-
-.agent-new .primary {
-  align-self: flex-start;
-}
-
-.agent-token {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 14px;
-  border: 1px solid var(--agent-line);
-  border-left: 3px solid var(--agent);
-  border-radius: var(--r-md);
-  background: var(--agent-tint);
-}
-
-.agent-token strong {
-  font-weight: 600;
-  color: var(--agent-text);
-}
-
-.agent-token p {
-  font-size: var(--fs-small);
-  line-height: 1.55;
-  color: var(--text-2);
-}
-
-.agent-token code {
-  display: block;
+  Large, monospaced and letter-spaced, because its whole job is to be compared
+  character by character against a terminal on the other side of the desk. A
+  code that is merely legible is a code people approve without reading.
+*/
+.agent-usercode {
   font-family: var(--mono);
-  font-size: var(--fs-small);
-  padding: 9px 10px;
-  background: var(--page);
+  font-size: 28px;
+  letter-spacing: 0.14em;
+  text-align: center;
+  padding: 14px;
+  color: var(--agent-text);
+  background: var(--agent-tint);
   border: 1px solid var(--agent-line);
-  border-radius: var(--r-sm);
-  word-break: break-all;
+  border-radius: var(--r-md);
   user-select: all;
 }
 

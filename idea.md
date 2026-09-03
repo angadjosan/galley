@@ -324,6 +324,10 @@ This still needs a number, so it becomes an acceptance gate rather than an unkno
 
 `galley auth login` issues a token to an *(agent, sponsor)* pair. The agent's permissions are the intersection of the sponsor's grants and the token's declared scope — always a subset, never equal to the human's. The audit trail records both, and reads as `galley-bot/ci, sponsored by priya`. The agent is the actor; the sponsor is accountable for the grant.
 
+**How the pair is formed matters as much as the pair.** The agent asks, by name: `galley auth login` prints a short code, a person opens it in the browser they are already signed into, and approves. The credential then travels from the server to the process that asked, and is never displayed to anybody. An earlier version had the app mint a token and a human carry it to a terminal, which put the one irrecoverable secret in the system through a clipboard — and, worse, made the fastest path to "an agent that works" a token pasted into a chat window. The delegation rule is unchanged and now happens where a human is demonstrably present.
+
+**The other door needs no account at all.** A share link marked *agents allowed* is a credential its creator deliberately handed out, and `galley auth link <url>` redeems it: the agent gets that document at that capability, sponsored by whoever made the link, and nothing else. This is what makes a Galley URL something you can paste into any assistant — the thing the product claims in its first paragraph, which it cannot claim if reading a shared document requires an account somebody has to provision.
+
 What follows:
 
 - Revoking a human's access revokes every token they sponsor. No orphaned 3am agents.
