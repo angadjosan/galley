@@ -52,6 +52,7 @@ export class ClerkProvider implements IdentityProvider {
   constructor(
     private readonly issuer: string,
     readonly publishableKey?: string,
+    private readonly secretKey?: string,
   ) {}
 
   async verify(idToken: string): Promise<ExternalIdentity> {
@@ -62,20 +63,65 @@ export class ClerkProvider implements IdentityProvider {
         jwks: createRemoteJWKSet(new URL(`${this.issuer}/.well-known/jwks.json`)),
       };
     }
+    let payload: Record<string, unknown>;
     try {
-      const { payload } = await jwtVerify(
+      ({ payload } = await jwtVerify(
         idToken,
         this.keys.jwks as Parameters<typeof jwtVerify>[1],
         { issuer: this.issuer },
-      );
-      const externalId = typeof payload.sub === 'string' ? payload.sub : '';
-      const email = readClaim(payload, 'email');
-      if (!externalId || !email) throw new IdentityError('token carried no subject or email');
-      return { externalId, email: email.toLowerCase(), name: readClaim(payload, 'name') || email };
+      ));
     } catch (err) {
-      if (err instanceof IdentityError) throw err;
       throw new IdentityError(`could not verify sign-in: ${(err as Error).message}`);
     }
+
+    const externalId = typeof payload.sub === 'string' ? payload.sub : '';
+    if (!externalId) throw new IdentityError('sign-in carried no subject');
+
+    // A Clerk session token names the subject and, by default, nothing else —
+    // no address, no name. Both are available if somebody adds them to the
+    // session template, so they are read here first and the round trip below
+    // only happens when they are missing.
+    const claimed = readClaim(payload, 'email');
+    if (claimed) {
+      return { externalId, email: claimed.toLowerCase(), name: readClaim(payload, 'name') || claimed };
+    }
+    return this.lookup(externalId);
+  }
+
+  /**
+   * Ask Clerk who the subject is.
+   *
+   * This is the one thing the secret key is for, and the reason it is not
+   * optional after all: without it a sign-in resolves to an id and no address,
+   * and an address is what turns an invitation into somebody's account.
+   */
+  private async lookup(externalId: string): Promise<ExternalIdentity> {
+    if (!this.secretKey) {
+      throw new IdentityError(
+        'this sign-in carried no email address, and the server has no CLERK_SECRET_KEY to look one up with',
+        500,
+      );
+    }
+    const response = await fetch(`https://api.clerk.com/v1/users/${externalId}`, {
+      headers: { authorization: `Bearer ${this.secretKey}` },
+    });
+    if (!response.ok) {
+      throw new IdentityError(`could not read the account from Clerk (${response.status})`, 502);
+    }
+    const user = (await response.json()) as {
+      email_addresses?: { id: string; email_address: string }[];
+      primary_email_address_id?: string | null;
+      first_name?: string | null;
+      username?: string | null;
+    };
+    const addresses = user.email_addresses ?? [];
+    const primary =
+      addresses.find((a) => a.id === user.primary_email_address_id) ?? addresses[0];
+    if (!primary) {
+      throw new IdentityError('that account has no email address on it', 400);
+    }
+    const email = primary.email_address.toLowerCase();
+    return { externalId, email, name: user.first_name || user.username || email.split('@')[0]! };
   }
 }
 
@@ -129,11 +175,11 @@ export function issuerFromPublishableKey(publishableKey: string): string {
  * is an error, because a deployment that has both is one env var away from
  * accepting `dev:anyone@example.com` as an administrator.
  *
- * `CLERK_SECRET_KEY` is deliberately *not* required. Sign-ins are verified
- * against the instance's public JWKS, so the secret would sit in the
- * deployment unread — and a credential kept for no reason is a credential
- * that can only ever leak. It becomes necessary the day this listens to
- * Clerk's webhooks, and not before.
+ * `CLERK_SECRET_KEY` is optional only in the narrow case where the session
+ * template has been edited to carry an email claim. A Clerk session token
+ * names its subject and nothing else by default, so without the secret there
+ * is no address — and an address is what turns a pending invitation into
+ * somebody's account.
  */
 export function chooseProvider(env: NodeJS.ProcessEnv = process.env): IdentityProvider {
   const publishableKey = env.CLERK_PUBLISHABLE_KEY;
@@ -144,7 +190,7 @@ export function chooseProvider(env: NodeJS.ProcessEnv = process.env): IdentityPr
   }
   if (publishableKey) {
     const issuer = env.CLERK_ISSUER ?? issuerFromPublishableKey(publishableKey);
-    return new ClerkProvider(issuer.replace(/\/$/, ''), publishableKey);
+    return new ClerkProvider(issuer.replace(/\/$/, ''), publishableKey, env.CLERK_SECRET_KEY);
   }
   if (devAuth) return new DevProvider();
 
