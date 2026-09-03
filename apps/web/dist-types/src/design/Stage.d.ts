@@ -45,6 +45,25 @@ export interface StageProps {
      * the browser actually drew rather than from a constant.
      */
     onMeasure?(rects: ReadonlyMap<LayerId, Rect>): void;
+    /**
+     * Something was dragged in from outside the canvas and let go.
+     *
+     * The stage resolves *where* — it is the only thing that knows the camera and
+     * holds the measured rects — and the editor decides *what*, because the thing
+     * being dragged is a palette entry the canvas has never heard of. Omitted and
+     * the canvas simply refuses external drags.
+     */
+    onDropExternal?(blockId: string, parentId: LayerId, index: number): void;
 }
+/**
+ * The drag type a palette block travels as.
+ *
+ * A custom MIME rather than `text/plain`: the canvas must be able to tell a
+ * block being dragged from a selection of text being dragged out of another
+ * window, and `dataTransfer.types` is the only thing readable during `dragover`
+ * — the data itself is deliberately unreadable until `drop`, so a page cannot
+ * snoop what is being dragged over it.
+ */
+export declare const BLOCK_MIME = "application/x-galley-block";
 export declare function Stage(props: StageProps): JSX.Element;
 //# sourceMappingURL=Stage.d.ts.map

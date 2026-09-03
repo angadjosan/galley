@@ -326,11 +326,52 @@ kbd {
   color: var(--text-3);
 }
 
+/**
+ * A row is the document plus the one destructive thing you can do to it.
+ *
+ * The trash button is hidden until the row is hovered or something inside it
+ * has focus, so a list of documents reads as a list of documents rather than a
+ * list of delete buttons. `:focus-within` is what keeps it reachable by
+ * keyboard — `display: none` would take it out of the tab order entirely, so
+ * it stays laid out and merely invisible.
+ */
+.doc-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.doc-delete {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.doc-row:hover .doc-delete,
+.doc-row:focus-within .doc-delete {
+  opacity: 1;
+}
+
+.doc-delete:hover {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+
 .doc-item {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  width: 100%;
+  min-width: 0;
+  flex: 1;
   padding: 6px 9px;
   border: none;
   border-radius: var(--r-sm);
@@ -372,6 +413,66 @@ kbd {
   padding: 10px 14px;
   border-top: 1px solid var(--line);
   flex: none;
+}
+
+/**
+ * "New" opens a choice of two, rather than silently meaning "prose document".
+ *
+ * The menu opens *upward* because the button lives in the sidebar's footer;
+ * a downward menu would open off the bottom of the window.
+ */
+.new-doc-wrap {
+  position: relative;
+}
+
+.new-doc-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: 220px;
+  padding: 4px;
+  border-radius: var(--r-md, 8px);
+  border: 1px solid var(--line);
+  background: var(--page);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 12%);
+}
+
+.new-doc-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 9px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+.new-doc-choice:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.new-doc-choice span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.new-doc-choice strong {
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.new-doc-choice em {
+  font-style: normal;
+  font-size: var(--fs-small);
+  color: var(--text-3);
 }
 
 .new-doc {
@@ -2523,6 +2624,37 @@ kbd {
   font-weight: 600;
 }
 
+/**
+ * The name, which is a field that does not look like one until you go near it.
+ *
+ * Same bargain the document title makes: it reads as a heading, and the border
+ * only appears on hover and focus. A field with a permanent box around it says
+ * "fill this in", which is the wrong instruction for something that already has
+ * an answer.
+ */
+.design-editor-name {
+  min-width: 0;
+  width: 22ch;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-card);
+  font-weight: 600;
+}
+
+.design-editor-name:hover:not(:read-only) {
+  border-color: var(--line);
+}
+
+.design-editor-name:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--page);
+}
+
 .design-editor-actions {
   display: flex;
   gap: 6px;
@@ -2538,7 +2670,7 @@ kbd {
    is. The order is the order the questions arrive in. */
 .design-editor-body {
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr) 288px;
+  grid-template-columns: 264px minmax(0, 1fr) 288px;
   flex: 1;
   min-height: 0;
 }
@@ -2552,7 +2684,50 @@ kbd {
   }
 }
 
-.design-tree,
+/**
+ * The left pane: a switch, then whichever of its two jobs is showing.
+ *
+ * The pane scrolls, the switch does not — a palette you have scrolled halfway
+ * down should not hide the way back to the layer tree.
+ */
+.design-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+}
+
+.design-side-switch {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.design-side-switch button {
+  flex: 1;
+  padding: 5px 8px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.design-side-switch button:hover {
+  color: var(--text);
+}
+
+.design-side-switch button.is-on {
+  background: var(--page);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
 .design-inspector {
   overflow-y: auto;
   background: var(--surface);
@@ -2560,7 +2735,8 @@ kbd {
 }
 
 .design-tree {
-  border-right: 1px solid var(--line);
+  overflow-y: auto;
+  min-height: 0;
   padding: 8px 0;
 }
 
@@ -3388,4 +3564,240 @@ kbd {
   text-align: center;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------- the palette */
+
+/**
+ * What you can add, drawn as itself.
+ *
+ * Two columns of cards. One column would make the pane a long scroll for
+ * fourteen items; three would shrink each preview past the point where a button
+ * and a quiet button look different, which is the only reason to draw them at
+ * all.
+ */
+.design-palette {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 10px 8px 16px;
+}
+
+.design-palette-shelf + .design-palette-shelf {
+  margin-top: 14px;
+}
+
+.design-palette-heading {
+  margin: 0 0 6px 2px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.design-palette-items {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.design-palette-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--page);
+  cursor: grab;
+  text-align: left;
+}
+
+.design-palette-item:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+/* The hand closes on the way down, which is the whole feedback a drag gets
+   before the canvas has anything to say about it. */
+.design-palette-item:active:not(:disabled) {
+  cursor: grabbing;
+}
+
+.design-palette-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.design-palette-name {
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/**
+ * The preview: a real design, composed at 300px and shrunk to fit the card.
+ *
+ * `transform: scale` rather than smaller values in the design itself, because
+ * the point is that this is *the same block* the canvas will insert — scaling
+ * the picture keeps it honest, while re-authoring it at thumbnail sizes would
+ * make the palette a second design that can disagree with the first.
+ *
+ * The outer span is what takes up space in the grid; the inner one is 300px
+ * wide and transformed, which takes it out of layout entirely, so the card's
+ * height comes from the fixed height here rather than from the block.
+ */
+.design-palette-preview {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--r-xs);
+  /* No fill. The card behind it already has one, and a fill here shows as a
+     coloured strip wherever a short block is padded up to the minimum. */
+  pointer-events: none;
+}
+
+.design-palette-preview-scale {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+/* ------------------------------------------------------- delete and trash */
+
+/**
+ * The two buttons a confirmation offers.
+ *
+ * `quiet` is the safe one and `danger` is the destructive one, and the safe one
+ * is the one that looks like the default — it is what the dialog focuses, and
+ * the visual weight has to agree with the focus or the dialog is arguing with
+ * itself.
+ */
+.overlay-actions .quiet,
+.overlay-actions .danger,
+.trash-row .quiet,
+.trash-row .danger {
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: var(--fs-ui);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.overlay-actions .quiet,
+.trash-row .quiet {
+  background: var(--page);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.overlay-actions .quiet:hover,
+.trash-row .quiet:hover {
+  background: var(--surface-2);
+}
+
+.overlay-actions .danger,
+.trash-row .danger {
+  /* Ink is `--page` rather than white: in dark mode `--danger` is a pale pink,
+     and white on it is unreadable. */
+  background: var(--danger);
+  color: var(--page);
+}
+
+.overlay-error {
+  margin: 0 0 10px;
+  color: var(--danger);
+  font-size: var(--fs-small);
+}
+
+.trash-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.trash-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: var(--r-sm);
+}
+
+.trash-row:hover {
+  background: var(--surface);
+}
+
+.trash-name {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.trash-name strong {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-name em {
+  font-style: normal;
+  font-size: var(--fs-small);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-warn {
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.trash-purge {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.trash-purge:hover {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+
+/**
+ * Paging the timeline, not truncating it.
+ *
+ * Nothing on the server prunes a revision, so this is a "there is more below"
+ * control rather than a limit notice — and the count is shown so that "older"
+ * is a known quantity rather than a guess about whether anything is down there.
+ */
+.history-older {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.history-all {
+  margin: 10px 0 0;
+  font-size: var(--fs-small);
+  color: var(--text-3);
+  text-align: center;
 }

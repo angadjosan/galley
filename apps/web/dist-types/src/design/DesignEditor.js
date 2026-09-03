@@ -1,7 +1,8 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { STATES, VOCABULARY, applyOps, find, idAfter, lintDesign, parseDesign, serializeDesign, slotsOf, splitState, walk, } from '@galley/design';
+import { STATES, VOCABULARY, applyOps, find, idAfter, lintDesign, parseDesign, serializeDesign, slotsOf, splitState, walk, blockById, } from '@galley/design';
 import { Stage } from './Stage.js';
+import { Palette } from './Palette.js';
 import { NOTHING, addToSelection, focusFor, reconcile } from './selection.js';
 import { parentOf as holderOf, slotOf } from './tree.js';
 export function DesignEditor(props) {
@@ -45,6 +46,10 @@ export function DesignEditor(props) {
      * whole design flips.
      */
     const [mode, setMode] = useState('light');
+    /** Which of the left pane's two jobs is showing. Adding, by default. */
+    const [pane, setPane] = useState('add');
+    /** The name field's contents while it is being typed in. Null when it is not. */
+    const [typing, setTyping] = useState(null);
     /**
      * Which state the canvas is showing, and which one the inspector writes to.
      *
@@ -199,7 +204,15 @@ export function DesignEditor(props) {
     }, [props]);
     useEffect(() => {
         const onKey = (event) => {
-            if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z')
+            if (!(event.metaKey || event.ctrlKey))
+                return;
+            const key = event.key.toLowerCase();
+            // ⌘Y is redo everywhere Windows conventions reach, and the prose surface
+            // in this app has always bound it. The canvas had only ⌘Z and ⌘⇧Z, so
+            // the same keystroke worked in one half of the product and did nothing in
+            // the other.
+            const direction = key === 'z' ? (event.shiftKey ? 'redo' : 'undo') : key === 'y' ? 'redo' : null;
+            if (!direction)
                 return;
             // A field has its own undo and it is better than this one — it works on
             // words. Taking ⌘Z away from the Words box would be a regression from
@@ -208,7 +221,7 @@ export function DesignEditor(props) {
             if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA'))
                 return;
             event.preventDefault();
-            step(event.shiftKey ? 'redo' : 'undo');
+            step(direction);
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
@@ -252,13 +265,10 @@ export function DesignEditor(props) {
      * invisible zero-height rectangle, and an editor whose "add box" appears to
      * do nothing is worse than one with no button.
      */
-    const add = useCallback((kind) => {
+    const add = useCallback((made) => {
         if (!design)
             return;
-        const made = kind === 'text'
-            ? { kind: 'text', name: 'Text', classes: ['text-body', 'text-fg'], content: 'New text' }
-            : { kind: 'box', name: 'Box', classes: ['flex', 'flex-col', 'gap-2', 'p-4', 'bg-surface', 'rounded-md'] };
-        const where = placeFor(design, selected);
+        const where = placeFor(design, selected, selection.focus);
         const grown = run([{ op: 'insert', parent: where.parent, index: where.index, layer: made }]);
         if (grown) {
             // Select what was just made, so the next thing typed lands on it. Read
@@ -268,7 +278,7 @@ export function DesignEditor(props) {
             if (id)
                 setSelection({ focus: focusFor(grown, id), ids: [id] });
         }
-    }, [design, run, selected]);
+    }, [design, run, selected, selection.focus]);
     /**
      * Another one like this, right after it.
      *
@@ -298,6 +308,25 @@ export function DesignEditor(props) {
                 setSelection({ focus: focusFor(grown, made), ids: [made] });
         }
     }, [design, run]);
+    /**
+     * A block dragged out of the palette and dropped on the canvas.
+     *
+     * The same `insert` op the click path produces, at a slot the canvas resolved
+     * instead of one inferred from the selection. Two gestures, one op — which is
+     * the property that makes both of them reviewable, undoable and attributable
+     * without either knowing that it is.
+     */
+    const dropBlock = useCallback((blockId, parent, index) => {
+        const block = blockById(blockId);
+        if (!block)
+            return;
+        const grown = run([{ op: 'insert', parent, index, layer: block.layer }]);
+        if (grown) {
+            const id = idAfter(grown, parent, index);
+            if (id)
+                setSelection({ focus: focusFor(grown, id), ids: [id] });
+        }
+    }, [run]);
     const remove = useCallback(() => {
         if (!selected)
             return;
@@ -322,12 +351,27 @@ export function DesignEditor(props) {
             setSelection({ focus: focusFor(moved, landed), ids: [landed] });
         }
     }, [run]);
-    return (_jsxs("div", { className: "design-editor", "data-testid": "design-editor", children: [_jsxs("header", { className: "design-editor-head", children: [_jsx("h2", { children: design?.name ?? 'Design' }), _jsxs("div", { className: "design-editor-actions", children: [_jsxs("div", { className: "design-mode-switch", role: "group", "aria-label": "State", children: [_jsx("button", { type: "button", className: state === null ? 'is-on' : '', "aria-pressed": state === null, onClick: () => setState(null), children: "Default" }), STATES.map((name) => (_jsx("button", { type: "button", className: state === name ? 'is-on' : '', "aria-pressed": state === name, onClick: () => setState(name), children: name === 'press' ? 'Pressed' : name[0].toUpperCase() + name.slice(1) }, name)))] }), _jsx("div", { className: "design-mode-switch", role: "group", "aria-label": "Mode", children: MODES.map((name) => (_jsx("button", { type: "button", className: mode === name ? 'is-on' : '', "aria-pressed": mode === name, onClick: () => setMode(name), children: name === 'light' ? 'Light' : 'Dark' }, name))) }), _jsx("button", { type: "button", className: `chrome-button ${showSource ? 'is-on' : ''}`, "aria-pressed": showSource, onClick: () => setShowSource((on) => !on), children: "Source" })] })] }), !parsed.ok && (_jsxs("div", { className: "design-errors", role: "alert", children: [_jsx("p", { children: "This design could not be read." }), _jsx("ul", { children: parsed.errors.slice(0, 8).map((error, index) => (_jsxs("li", { children: [_jsxs("span", { className: "design-error-line", children: ["Line ", error.line] }), " ", error.message] }, index))) })] })), _jsxs("div", { className: "design-editor-body", children: [_jsxs("aside", { className: "design-tree", "aria-label": "Layers", children: [_jsxs("div", { className: "design-tree-tools", children: [_jsx("button", { type: "button", onClick: () => add('box'), disabled: props.readOnly, title: "Add a box", children: "+ Box" }), _jsx("button", { type: "button", onClick: () => add('text'), disabled: props.readOnly, title: "Add some text", children: "+ Text" }), _jsx("button", { type: "button", onClick: remove, 
-                                        // A frame cannot be deleted — a design needs one — so the button
-                                        // is disabled rather than enabled and inert. An affordance that
-                                        // appears and does nothing is the failure this codebase keeps
-                                        // finding in its own work.
-                                        disabled: props.readOnly || !selected || design?.frames.some((frame) => frame.id === selected) === true, title: "Delete the selected layer", className: "design-tree-delete", children: "Delete" })] }), (design?.components ?? []).length > 0 && (_jsx("p", { className: "design-tree-heading", children: "Components" })), (design?.components ?? []).flatMap((component) => componentRows(component).map(({ layer, depth }) => (_jsxs("button", { type: "button", className: `design-tree-row ${selection.ids.includes(layer.id) ? 'is-selected' : ''} ${selection.focus === layer.id ? 'is-focus' : ''}`, style: { paddingLeft: 10 + depth * 14 }, onClick: (event) => reveal(layer.id, event.shiftKey || event.metaKey || event.ctrlKey), children: [_jsx("span", { className: "design-tree-kind", "aria-hidden": "true", children: depth === 0 ? '◈' : KIND_GLYPH[layer.kind] }), _jsx("span", { className: "design-tree-name", children: depth === 0 ? component.name : layer.name })] }, layer.id)))), (design?.components ?? []).length > 0 && _jsx("p", { className: "design-tree-heading", children: "Layers" }), layers.map(({ layer, depth }) => (_jsxs("button", { type: "button", className: `design-tree-row ${selection.ids.includes(layer.id) ? 'is-selected' : ''} ${selection.focus === layer.id ? 'is-focus' : ''} ${findings.some((f) => f.layerId === layer.id) ? 'has-problem' : ''}`, style: { paddingLeft: 10 + depth * 14 }, onClick: (event) => reveal(layer.id, event.shiftKey || event.metaKey || event.ctrlKey), children: [_jsx("span", { className: "design-tree-kind", "aria-hidden": "true", children: 'kind' in layer ? KIND_GLYPH[layer.kind] : '▦' }), _jsx("span", { className: "design-tree-name", children: layer.name }), props.anchored?.has(layer.id) && (_jsx("span", { className: "design-tree-anchor", title: "Something is anchored here", children: "\u25CF" }))] }, layer.id)))] }), _jsxs("div", { className: "design-canvas", children: [design && selection.focus && (
+    return (_jsxs("div", { className: "design-editor", "data-testid": "design-editor", children: [_jsxs("header", { className: "design-editor-head", children: [_jsx("input", { className: "design-editor-name", 
+                        // The field holds a draft while it is being typed in, and the design
+                        // otherwise. Bound straight to `design.name` it could never be
+                        // cleared: the op refuses a blank name, so the first backspace that
+                        // emptied the field would be rejected and the old name would spring
+                        // back mid-word.
+                        value: typing ?? design?.name ?? 'Design', readOnly: props.readOnly, "aria-label": "What this design is called", "data-testid": "design-name", onChange: (event) => {
+                            const next = event.target.value;
+                            setTyping(next);
+                            if (next.trim())
+                                run([{ op: 'rename', name: next }]);
+                        }, 
+                        // Leaving an empty field is not a request to have no name; it is a
+                        // half-finished rename. The design keeps the name it had.
+                        onBlur: () => setTyping(null), 
+                        // A name is one line. Enter means "done", and the canvas is where the
+                        // hand was going next.
+                        onKeyDown: (event) => {
+                            if (event.key === 'Enter' || event.key === 'Escape')
+                                event.currentTarget.blur();
+                        } }), _jsxs("div", { className: "design-editor-actions", children: [_jsxs("div", { className: "design-mode-switch", role: "group", "aria-label": "State", children: [_jsx("button", { type: "button", className: state === null ? 'is-on' : '', "aria-pressed": state === null, onClick: () => setState(null), children: "Default" }), STATES.map((name) => (_jsx("button", { type: "button", className: state === name ? 'is-on' : '', "aria-pressed": state === name, onClick: () => setState(name), children: name === 'press' ? 'Pressed' : name[0].toUpperCase() + name.slice(1) }, name)))] }), _jsx("div", { className: "design-mode-switch", role: "group", "aria-label": "Mode", children: MODES.map((name) => (_jsx("button", { type: "button", className: mode === name ? 'is-on' : '', "aria-pressed": mode === name, onClick: () => setMode(name), children: name === 'light' ? 'Light' : 'Dark' }, name))) }), _jsx("button", { type: "button", className: `chrome-button ${showSource ? 'is-on' : ''}`, "aria-pressed": showSource, onClick: () => setShowSource((on) => !on), children: "Source" })] })] }), !parsed.ok && (_jsxs("div", { className: "design-errors", role: "alert", children: [_jsx("p", { children: "This design could not be read." }), _jsx("ul", { children: parsed.errors.slice(0, 8).map((error, index) => (_jsxs("li", { children: [_jsxs("span", { className: "design-error-line", children: ["Line ", error.line] }), " ", error.message] }, index))) })] })), _jsxs("div", { className: "design-editor-body", children: [_jsxs("aside", { className: "design-side", "aria-label": "Add and layers", children: [_jsxs("div", { className: "design-side-switch", role: "group", "aria-label": "Panel", children: [_jsx("button", { type: "button", className: pane === 'add' ? 'is-on' : '', "aria-pressed": pane === 'add', onClick: () => setPane('add'), "data-testid": "pane-add", children: "Add" }), _jsx("button", { type: "button", className: pane === 'layers' ? 'is-on' : '', "aria-pressed": pane === 'layers', onClick: () => setPane('layers'), "data-testid": "pane-layers", children: "Layers" })] }), pane === 'add' && (_jsx(Palette, { mode: mode, disabled: props.readOnly === true, onAdd: (block) => add(block.layer) })), pane === 'layers' && (_jsxs("div", { className: "design-tree", children: [(design?.components ?? []).length > 0 && (_jsx("p", { className: "design-tree-heading", children: "Components" })), (design?.components ?? []).flatMap((component) => componentRows(component).map(({ layer, depth }) => (_jsxs("button", { type: "button", className: `design-tree-row ${selection.ids.includes(layer.id) ? 'is-selected' : ''} ${selection.focus === layer.id ? 'is-focus' : ''}`, style: { paddingLeft: 10 + depth * 14 }, onClick: (event) => reveal(layer.id, event.shiftKey || event.metaKey || event.ctrlKey), children: [_jsx("span", { className: "design-tree-kind", "aria-hidden": "true", children: depth === 0 ? '◈' : KIND_GLYPH[layer.kind] }), _jsx("span", { className: "design-tree-name", children: depth === 0 ? component.name : layer.name })] }, layer.id)))), (design?.components ?? []).length > 0 && _jsx("p", { className: "design-tree-heading", children: "Layers" }), layers.map(({ layer, depth }) => (_jsxs("button", { type: "button", className: `design-tree-row ${selection.ids.includes(layer.id) ? 'is-selected' : ''} ${selection.focus === layer.id ? 'is-focus' : ''} ${findings.some((f) => f.layerId === layer.id) ? 'has-problem' : ''}`, style: { paddingLeft: 10 + depth * 14 }, onClick: (event) => reveal(layer.id, event.shiftKey || event.metaKey || event.ctrlKey), children: [_jsx("span", { className: "design-tree-kind", "aria-hidden": "true", children: 'kind' in layer ? KIND_GLYPH[layer.kind] : '▦' }), _jsx("span", { className: "design-tree-name", children: layer.name }), props.anchored?.has(layer.id) && (_jsx("span", { className: "design-tree-anchor", title: "Something is anchored here", children: "\u25CF" }))] }, layer.id)))] }))] }), _jsxs("div", { className: "design-canvas", children: [design && selection.focus && (
                             /**
                              * Where you are, and the way back out.
                              *
@@ -337,7 +381,7 @@ export function DesignEditor(props) {
                              * opacity was the entire cue, and at 100% zoom it is invisible.
                              * Webflow puts a breadcrumb under the canvas for the same reason.
                              */
-                            _jsxs("nav", { className: "design-crumbs", "aria-label": "Inside", children: [_jsx("button", { type: "button", onClick: () => setSelection(NOTHING), children: design.name }), trail(design, selection.focus).map((step) => (_jsxs("button", { type: "button", onClick: () => reveal(step.id), children: [_jsx("span", { "aria-hidden": "true", children: "\u203A" }), " ", step.name] }, step.id)))] })), design && (_jsx(Stage, { design: design, mode: mode, readOnly: props.readOnly ?? false, anchored: props.anchored, state: state, selection: selection, onSelection: setSelection, onEscape: props.onClose, onMeasure: setRects, onMove: moveLayer, onText: (id, content) => run([{ op: 'set-text', id, content }]), onEdit: edit, onDuplicate: duplicate, onDelete: (ids) => {
+                            _jsxs("nav", { className: "design-crumbs", "aria-label": "Inside", children: [_jsx("button", { type: "button", onClick: () => setSelection(NOTHING), children: design.name }), trail(design, selection.focus).map((step) => (_jsxs("button", { type: "button", onClick: () => reveal(step.id), children: [_jsx("span", { "aria-hidden": "true", children: "\u203A" }), " ", step.name] }, step.id)))] })), design && (_jsx(Stage, { design: design, mode: mode, readOnly: props.readOnly ?? false, anchored: props.anchored, state: state, selection: selection, onSelection: setSelection, onEscape: props.onClose, onMeasure: setRects, onMove: moveLayer, onDropExternal: dropBlock, onText: (id, content) => run([{ op: 'set-text', id, content }]), onEdit: edit, onDuplicate: duplicate, onDelete: (ids) => {
                                     // One batch, so a multiple delete is one undo step and one
                                     // save rather than three of each.
                                     if (run(ids.map((id) => ({ op: 'delete', id })))) {
@@ -364,10 +408,19 @@ const KIND_GLYPH = { box: '▢', text: 'T', image: '🖼' };
  */
 const UNDO_DEPTH = 100;
 /** Ops that a run of keystrokes produces, and that should collapse into one step. */
-const COALESCING = new Set(['set-text', 'set-name', 'set-image', 'set-classes']);
+const COALESCING = new Set(['set-text', 'set-name', 'set-image', 'set-classes', 'rename']);
 /** Long enough to cover typing, short enough that a pause is a new step. */
 const COALESCE_MS = 700;
+/**
+ * What an op is *about*, for the purpose of collapsing a run of them.
+ *
+ * `rename` is the one op with no target inside the design — it renames the
+ * design — so it answers with a constant. There is only one document, so every
+ * rename is about the same thing and a run of keystrokes collapses correctly.
+ */
 function idOf(op) {
+    if (op.op === 'rename')
+        return ':design';
     return 'id' in op ? op.id : `${op.parent}:${op.index}`;
 }
 /** The modes every theme has. Adding a third axis is refused — see the theme. */
@@ -635,44 +688,36 @@ function Toggle({ label, on, mixed = false, onChange, }) {
                 }, onChange: onChange }), _jsx("span", { children: label })] }));
 }
 /**
- * Where "add" means, given what is selected.
+ * Where "add" means, given what is selected and what we are inside.
  *
- * Inside a container when one is selected, and *after* the selection when a
- * leaf is — which is what "add" means to someone who has just clicked a label
- * and wants another one next to it.
+ * **Beside the selection, in the container we are already in.** Never inside
+ * the selection itself, and that is the correction: it used to place inside
+ * whenever the selected layer was a box, which read fine in the abstract and
+ * was a trap in practice. Every finished block from the palette is a box —
+ * a button *is* a box with a label — so it selected itself on arrival and the
+ * next click on the palette landed inside it. Clicking Button then Caption put
+ * the caption inside the button, where the linter correctly reported it as
+ * 1.33:1 grey-on-blue. Clicking Text field twice produced one field with
+ * another field inside it. Neither is a thing anyone has ever meant.
+ *
+ * The container comes from `selection.focus`, which is the editor's existing
+ * answer to "which level am I working at" — set by going into a box on the
+ * canvas and shown in the breadcrumb. So going inside a card and adding still
+ * adds to the card, and the frame is the answer when nothing has been entered.
+ *
+ * Landing *inside* a specific box is what dragging is for. It can say where.
  */
-function placeFor(design, selected) {
+function placeFor(design, selected, focus) {
     const first = design.frames[0];
-    if (!selected)
-        return { parent: first.id, index: first.children.length };
-    const layer = find(design, selected);
-    if (!layer)
-        return { parent: first.id, index: first.children.length };
-    if (!('kind' in layer) || layer.kind === 'box') {
-        return { parent: layer.id, index: 'children' in layer ? layer.children.length : 0 };
+    const holder = (focus && find(design, focus)) || first;
+    const container = 'children' in holder ? holder : first;
+    // After the selection, when the selection is one of this container's own
+    // children. A selection somewhere else entirely — or none — appends.
+    if (selected) {
+        const at = container.children.findIndex((child) => child.id === selected);
+        if (at !== -1)
+            return { parent: container.id, index: at + 1 };
     }
-    // A leaf: after it, inside whatever holds it.
-    const parentOf = (id) => {
-        const search = (holder) => {
-            const at = holder.children.findIndex((child) => child.id === id);
-            if (at !== -1)
-                return { parent: holder.id, index: at + 1 };
-            for (const child of holder.children) {
-                if ('children' in child) {
-                    const found = search(child);
-                    if (found)
-                        return found;
-                }
-            }
-            return null;
-        };
-        for (const frame of design.frames) {
-            const found = search(frame);
-            if (found)
-                return found;
-        }
-        return null;
-    };
-    return parentOf(selected) ?? { parent: first.id, index: first.children.length };
+    return { parent: container.id, index: container.children.length };
 }
 //# sourceMappingURL=DesignEditor.js.map

@@ -16,12 +16,14 @@ import {
   type Frame,
   type Layer,
   type LintFinding,
+  blockById,
   type Component,
   type NewLayer,
   type State,
   type UseLayer,
 } from '@galley/design';
 import { Stage } from './Stage.js';
+import { Palette } from './Palette.js';
 import { NOTHING, addToSelection, focusFor, reconcile, type Selection } from './selection.js';
 import { parentOf as holderOf, slotOf } from './tree.js';
 
@@ -101,6 +103,10 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
    * whole design flips.
    */
   const [mode, setMode] = useState('light');
+  /** Which of the left pane's two jobs is showing. Adding, by default. */
+  const [pane, setPane] = useState<'add' | 'layers'>('add');
+  /** The name field's contents while it is being typed in. Null when it is not. */
+  const [typing, setTyping] = useState<string | null>(null);
   /**
    * Which state the canvas is showing, and which one the inspector writes to.
    *
@@ -270,14 +276,21 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return;
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      // ⌘Y is redo everywhere Windows conventions reach, and the prose surface
+      // in this app has always bound it. The canvas had only ⌘Z and ⌘⇧Z, so
+      // the same keystroke worked in one half of the product and did nothing in
+      // the other.
+      const direction = key === 'z' ? (event.shiftKey ? 'redo' : 'undo') : key === 'y' ? 'redo' : null;
+      if (!direction) return;
       // A field has its own undo and it is better than this one — it works on
       // words. Taking ⌘Z away from the Words box would be a regression from
       // having no undo at all.
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
       event.preventDefault();
-      step(event.shiftKey ? 'redo' : 'undo');
+      step(direction);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -324,14 +337,9 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
    * do nothing is worse than one with no button.
    */
   const add = useCallback(
-    (kind: 'box' | 'text') => {
+    (made: NewLayer) => {
       if (!design) return;
-      const made: NewLayer =
-        kind === 'text'
-          ? { kind: 'text', name: 'Text', classes: ['text-body', 'text-fg'], content: 'New text' }
-          : { kind: 'box', name: 'Box', classes: ['flex', 'flex-col', 'gap-2', 'p-4', 'bg-surface', 'rounded-md'] };
-
-      const where = placeFor(design, selected);
+      const where = placeFor(design, selected, selection.focus);
       const grown = run([{ op: 'insert', parent: where.parent, index: where.index, layer: made }]);
       if (grown) {
         // Select what was just made, so the next thing typed lands on it. Read
@@ -341,7 +349,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
         if (id) setSelection({ focus: focusFor(grown, id), ids: [id] });
       }
     },
-    [design, run, selected],
+    [design, run, selected, selection.focus],
   );
 
   /**
@@ -371,6 +379,27 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
       }
     },
     [design, run],
+  );
+
+  /**
+   * A block dragged out of the palette and dropped on the canvas.
+   *
+   * The same `insert` op the click path produces, at a slot the canvas resolved
+   * instead of one inferred from the selection. Two gestures, one op — which is
+   * the property that makes both of them reviewable, undoable and attributable
+   * without either knowing that it is.
+   */
+  const dropBlock = useCallback(
+    (blockId: string, parent: string, index: number): void => {
+      const block = blockById(blockId);
+      if (!block) return;
+      const grown = run([{ op: 'insert', parent, index, layer: block.layer }]);
+      if (grown) {
+        const id = idAfter(grown, parent, index);
+        if (id) setSelection({ focus: focusFor(grown, id), ids: [id] });
+      }
+    },
+    [run],
   );
 
   const remove = useCallback(() => {
@@ -403,7 +432,38 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
   return (
     <div className="design-editor" data-testid="design-editor">
       <header className="design-editor-head">
-        <h2>{design?.name ?? 'Design'}</h2>
+        {/*
+          The name is typed over, not renamed through a dialog — the same
+          bargain the prose surface makes with its first heading, and the reason
+          neither has a rename command. It was the one thing about a design you
+          could not change from the canvas, so a workspace filled up with
+          documents all called "Untitled design".
+        */}
+        <input
+          className="design-editor-name"
+          // The field holds a draft while it is being typed in, and the design
+          // otherwise. Bound straight to `design.name` it could never be
+          // cleared: the op refuses a blank name, so the first backspace that
+          // emptied the field would be rejected and the old name would spring
+          // back mid-word.
+          value={typing ?? design?.name ?? 'Design'}
+          readOnly={props.readOnly}
+          aria-label="What this design is called"
+          data-testid="design-name"
+          onChange={(event) => {
+            const next = event.target.value;
+            setTyping(next);
+            if (next.trim()) run([{ op: 'rename', name: next }]);
+          }}
+          // Leaving an empty field is not a request to have no name; it is a
+          // half-finished rename. The design keeps the name it had.
+          onBlur={() => setTyping(null)}
+          // A name is one line. Enter means "done", and the canvas is where the
+          // hand was going next.
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === 'Escape') event.currentTarget.blur();
+          }}
+        />
         <div className="design-editor-actions">
           <div className="design-mode-switch" role="group" aria-label="State">
             <button
@@ -468,28 +528,41 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
       )}
 
       <div className="design-editor-body">
-        <aside className="design-tree" aria-label="Layers">
-          <div className="design-tree-tools">
-            <button type="button" onClick={() => add('box')} disabled={props.readOnly} title="Add a box">
-              + Box
-            </button>
-            <button type="button" onClick={() => add('text')} disabled={props.readOnly} title="Add some text">
-              + Text
+        <aside className="design-side" aria-label="Add and layers">
+          {/*
+            Two panes behind one switch, and `Add` is the one you land on.
+            The layer tree is what a design tool has always put here, and it is
+            the wrong first thing: it answers "what is already in this design",
+            which is a question you can also answer by looking at the canvas.
+            The question you cannot answer by looking is "what can I put in it".
+          */}
+          <div className="design-side-switch" role="group" aria-label="Panel">
+            <button
+              type="button"
+              className={pane === 'add' ? 'is-on' : ''}
+              aria-pressed={pane === 'add'}
+              onClick={() => setPane('add')}
+              data-testid="pane-add"
+            >
+              Add
             </button>
             <button
               type="button"
-              onClick={remove}
-              // A frame cannot be deleted — a design needs one — so the button
-              // is disabled rather than enabled and inert. An affordance that
-              // appears and does nothing is the failure this codebase keeps
-              // finding in its own work.
-              disabled={props.readOnly || !selected || design?.frames.some((frame) => frame.id === selected) === true}
-              title="Delete the selected layer"
-              className="design-tree-delete"
+              className={pane === 'layers' ? 'is-on' : ''}
+              aria-pressed={pane === 'layers'}
+              onClick={() => setPane('layers')}
+              data-testid="pane-layers"
             >
-              Delete
+              Layers
             </button>
           </div>
+
+          {pane === 'add' && (
+            <Palette mode={mode} disabled={props.readOnly === true} onAdd={(block) => add(block.layer)} />
+          )}
+
+          {pane === 'layers' && (
+            <div className="design-tree">
           {(design?.components ?? []).length > 0 && (
             <p className="design-tree-heading">Components</p>
           )}
@@ -537,6 +610,8 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
               )}
             </button>
           ))}
+            </div>
+          )}
         </aside>
 
         <div className="design-canvas">
@@ -573,6 +648,7 @@ export function DesignEditor(props: DesignEditorProps): JSX.Element {
               onEscape={props.onClose}
               onMeasure={setRects}
               onMove={moveLayer}
+              onDropExternal={dropBlock}
               onText={(id, content) => run([{ op: 'set-text', id, content }])}
               onEdit={edit}
               onDuplicate={duplicate}
@@ -662,12 +738,20 @@ const KIND_GLYPH: Record<string, string> = { box: '▢', text: 'T', image: '🖼
 const UNDO_DEPTH = 100;
 
 /** Ops that a run of keystrokes produces, and that should collapse into one step. */
-const COALESCING = new Set(['set-text', 'set-name', 'set-image', 'set-classes']);
+const COALESCING = new Set(['set-text', 'set-name', 'set-image', 'set-classes', 'rename']);
 
 /** Long enough to cover typing, short enough that a pause is a new step. */
 const COALESCE_MS = 700;
 
+/**
+ * What an op is *about*, for the purpose of collapsing a run of them.
+ *
+ * `rename` is the one op with no target inside the design — it renames the
+ * design — so it answers with a constant. There is only one document, so every
+ * rename is about the same thing and a run of keystrokes collapses correctly.
+ */
 function idOf(op: DesignOp): string {
+  if (op.op === 'rename') return ':design';
   return 'id' in op ? op.id : `${op.parent}:${op.index}`;
 }
 
@@ -1227,42 +1311,39 @@ function Toggle({
 }
 
 /**
- * Where "add" means, given what is selected.
+ * Where "add" means, given what is selected and what we are inside.
  *
- * Inside a container when one is selected, and *after* the selection when a
- * leaf is — which is what "add" means to someone who has just clicked a label
- * and wants another one next to it.
+ * **Beside the selection, in the container we are already in.** Never inside
+ * the selection itself, and that is the correction: it used to place inside
+ * whenever the selected layer was a box, which read fine in the abstract and
+ * was a trap in practice. Every finished block from the palette is a box —
+ * a button *is* a box with a label — so it selected itself on arrival and the
+ * next click on the palette landed inside it. Clicking Button then Caption put
+ * the caption inside the button, where the linter correctly reported it as
+ * 1.33:1 grey-on-blue. Clicking Text field twice produced one field with
+ * another field inside it. Neither is a thing anyone has ever meant.
+ *
+ * The container comes from `selection.focus`, which is the editor's existing
+ * answer to "which level am I working at" — set by going into a box on the
+ * canvas and shown in the breadcrumb. So going inside a card and adding still
+ * adds to the card, and the frame is the answer when nothing has been entered.
+ *
+ * Landing *inside* a specific box is what dragging is for. It can say where.
  */
-function placeFor(design: DesignDocument, selected: string | null): { parent: string; index: number } {
+function placeFor(
+  design: DesignDocument,
+  selected: string | null,
+  focus: string | null,
+): { parent: string; index: number } {
   const first = design.frames[0]!;
-  if (!selected) return { parent: first.id, index: first.children.length };
+  const holder = (focus && find(design, focus)) || first;
+  const container = 'children' in holder ? holder : first;
 
-  const layer = find(design, selected);
-  if (!layer) return { parent: first.id, index: first.children.length };
-  if (!('kind' in layer) || layer.kind === 'box') {
-    return { parent: layer.id, index: 'children' in layer ? layer.children.length : 0 };
+  // After the selection, when the selection is one of this container's own
+  // children. A selection somewhere else entirely — or none — appends.
+  if (selected) {
+    const at = container.children.findIndex((child) => child.id === selected);
+    if (at !== -1) return { parent: container.id, index: at + 1 };
   }
-
-  // A leaf: after it, inside whatever holds it.
-  const parentOf = (id: string): { parent: string; index: number } | null => {
-    const search = (
-      holder: { id: string; children: readonly { id: string }[] },
-    ): { parent: string; index: number } | null => {
-      const at = holder.children.findIndex((child) => child.id === id);
-      if (at !== -1) return { parent: holder.id, index: at + 1 };
-      for (const child of holder.children) {
-        if ('children' in child) {
-          const found = search(child as { id: string; children: readonly { id: string }[] });
-          if (found) return found;
-        }
-      }
-      return null;
-    };
-    for (const frame of design.frames) {
-      const found = search(frame);
-      if (found) return found;
-    }
-    return null;
-  };
-  return parentOf(selected) ?? { parent: first.id, index: first.children.length };
+  return { parent: container.id, index: container.children.length };
 }

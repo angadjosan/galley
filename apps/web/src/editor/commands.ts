@@ -343,10 +343,6 @@ export const INSERT_CODE: ActionSpec = {
   isActive: (state) => blockActive(state, 'code_block'),
 };
 
-export function insertDiagram(code: string): Command {
-  return insertBlock('diagram', { lang: 'mermaid', code });
-}
-
 /**
  * A reference to a design.
  *

@@ -251,42 +251,7 @@ export async function renderDiagram(lang, code) {
         sweep(id);
     }
 }
-export const DIAGRAM_TEMPLATES = [
-    {
-        id: 'flowchart',
-        label: 'Flowchart',
-        hint: 'Boxes and arrows',
-        code: ['flowchart TD', '  Start([Start]) --> Step[Do the thing]', '  Step --> Check{Worked?}', '  Check -- Yes --> Done([Done])', '  Check -- No --> Step'].join('\n'),
-    },
-    {
-        id: 'sequence',
-        label: 'Sequence',
-        hint: 'Who calls whom, in order',
-        code: ['sequenceDiagram', '  participant Person', '  participant Service', '  Person->>Service: Asks for something', '  Service-->>Person: Answers'].join('\n'),
-    },
-    {
-        id: 'timeline',
-        label: 'Timeline',
-        hint: 'Events along a line',
-        code: ['timeline', '  title Project timeline', '  Week 1 : Kickoff', '  Week 2 : Draft : Review', '  Week 3 : Ship'].join('\n'),
-    },
-    {
-        id: 'pie',
-        label: 'Pie chart',
-        hint: 'Parts of a whole',
-        code: ['pie title Where the time went', '  "Building" : 45', '  "Reviewing" : 30', '  "Meetings" : 25'].join('\n'),
-    },
-    {
-        id: 'state',
-        label: 'States',
-        hint: 'What can become what',
-        code: ['stateDiagram-v2', '  [*] --> Draft', '  Draft --> InReview: Submit', '  InReview --> Draft: Changes asked', '  InReview --> Published: Approve', '  Published --> [*]'].join('\n'),
-    },
-    {
-        id: 'gantt',
-        label: 'Schedule',
-        hint: 'Bars across dates',
-        code: ['gantt', '  title Schedule', '  dateFormat YYYY-MM-DD', '  section Phase one', '  Research :a1, 2026-01-06, 7d', '  Build :after a1, 14d'].join('\n'),
-    },
-];
+// ---------------------------------------------------------------------------
+// Starting points
+// ---------------------------------------------------------------------------
 //# sourceMappingURL=diagram.js.map

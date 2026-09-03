@@ -33,6 +33,16 @@ export interface DocumentSummary {
   updatedAt: string;
 }
 
+export interface TrashedDocument {
+  docId: string;
+  /** Where it will come back to, not where it is parked. */
+  path: string;
+  title: string;
+  deletedAt: string;
+  /** When it stops being recoverable. */
+  purgeAt: string;
+}
+
 /**
  * Someone who can appear as an author.
  *
@@ -172,6 +182,39 @@ export class GalleyClient {
 
   async create(path: string, content: string, title?: string): Promise<{ docId: string; content: string }> {
     return this.call('POST', '/v1/docs', { path, content, title });
+  }
+
+  /**
+   * Put a document in the trash. Recoverable for thirty days.
+   *
+   * Nothing is destroyed: the comments, suggestions and history stay with it,
+   * so `restore` brings back the document rather than a copy of its prose.
+   */
+  async remove(ref: string): Promise<{ docId: string; path: string }> {
+    return this.call('DELETE', `/v1/docs/${encodeURIComponent(ref)}`);
+  }
+
+  /** What is in the trash, and when each thing stops being recoverable. */
+  async trash(): Promise<TrashedDocument[]> {
+    const { documents } = await this.call<{ documents: TrashedDocument[] }>('GET', '/v1/trash');
+    return documents;
+  }
+
+  /**
+   * Take one back out of the trash. Answers with the path it landed at, which
+   * differs from where it was if something has taken that name since.
+   *
+   * Named apart from `restore`, which restores a document to an earlier
+   * *version*. Two different things called restore on one client is a mistake
+   * waiting for whoever reads the call site.
+   */
+  async untrash(docId: string): Promise<{ docId: string; path: string }> {
+    return this.call('POST', `/v1/trash/${encodeURIComponent(docId)}/restore`);
+  }
+
+  /** Empty one out of the trash, now. This one is not recoverable. */
+  async purge(docId: string): Promise<{ docId: string; path: string }> {
+    return this.call('DELETE', `/v1/trash/${encodeURIComponent(docId)}`);
   }
 
   async applyOps(
@@ -333,15 +376,28 @@ export class GalleyClient {
     return citation;
   }
 
+  /**
+   * A page of the timeline, newest first.
+   *
+   * `before` is a ticket cursor: pass the previous page's `more` to keep going.
+   * Nothing on the server prunes revisions, so paging reaches the first edit a
+   * document ever had.
+   */
   async history(
     ref: string,
     limit = 100,
+    before?: number,
   ): Promise<{
     revisions: RevisionSummary[];
     checkpoints: CheckpointSummary[];
     attribution: AttributionSummary[];
+    /** How many revisions exist in total, not how many came back. */
+    total: number;
+    /** Cursor for the next page back, or null at the beginning of time. */
+    more: number | null;
   }> {
-    return this.call('GET', `/v1/docs/${encodeURIComponent(ref)}/history?limit=${limit}`);
+    const cursor = before === undefined ? '' : `&before=${before}`;
+    return this.call('GET', `/v1/docs/${encodeURIComponent(ref)}/history?limit=${limit}${cursor}`);
   }
 
   async revisionAt(ref: string, ticket: number): Promise<{ revision: RevisionSummary & { content: string } }> {

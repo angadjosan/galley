@@ -271,7 +271,6 @@ function buildMenus(props) {
             label: 'Insert',
             entries: () => [
                 app('image', 'Image', props.onImage, { enabled: !readOnly && !!state }),
-                app('diagram', 'Diagram', props.onDiagram, { enabled: !readOnly && !!state }),
                 app('design', 'Design', props.onDesign, { enabled: !readOnly && !!state }),
                 app('table', 'Table', props.onTable, { enabled: !readOnly && !!state }),
                 separator('i1'),

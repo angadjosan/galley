@@ -17,13 +17,15 @@
  */
 import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
+import { STARTERS } from '@galley/design';
 
 const API = 'http://127.0.0.1:8788';
 
-function tokens(): { token: string; agentToken: string } {
+function tokens(): { token: string; agentToken: string; secondToken: string } {
   return JSON.parse(readFileSync('.galley-e2e-tokens.json', 'utf8')) as {
     token: string;
     agentToken: string;
+    secondToken: string;
   };
 }
 
@@ -92,6 +94,20 @@ async function openHistory(page: Page): Promise<void> {
   await expect(page.getByTestId('history-rail')).toBeVisible();
 }
 
+/**
+ * Select a layer from the tree.
+ *
+ * The design editor's left pane opens on `Add` — what you can put in the design
+ * is the question the canvas cannot answer by itself, so it is the default. The
+ * layer tree is the other half of the same pane, one click away, and these
+ * walkthroughs reach for it whenever they need a layer by name rather than by
+ * position on the canvas.
+ */
+async function pickLayer(page: Page, name: string, index = 0): Promise<void> {
+  await page.getByTestId('pane-layers').click();
+  await page.locator('.design-tree-row', { hasText: name }).nth(index).click();
+}
+
 async function closeOverlay(page: Page): Promise<void> {
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('history-rail')).toHaveCount(0);
@@ -106,24 +122,48 @@ async function readAsAgent(path: string): Promise<string> {
 }
 
 /**
- * Insert a design from a starter and return the path it landed at.
+ * Insert a design into the open document and return the path it landed at.
  *
  * By difference, not by position. These tests share one spec document, so it
  * may already hold a design — and a new one lands at the caret, which is not
  * necessarily after the old one. Neither `.first()` nor `.last()` is the one
  * this test just made.
  */
-async function insertDesign(page: Page, starter: string): Promise<string> {
+async function insertDesign(page: Page): Promise<string> {
   const chips = page.locator('.prose a[title="design"]');
   const before = new Set(await chips.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('href'))));
   await page.getByRole('button', { name: 'Insert design', exact: true }).click();
-  await page.getByTestId(starter).click();
   await expect(chips).not.toHaveCount(before.size);
   const after = await chips.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('href')));
   const made = after.find((href) => href && !before.has(href));
   expect(made, 'the design reference has no target').toBeTruthy();
   await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
   return made!;
+}
+
+/**
+ * Put a document straight into the workspace over HTTP.
+ *
+ * The design tests below need particular designs — one with components, one
+ * with a form — and the app deliberately no longer offers a gallery to pick
+ * them from. Seeding through the API keeps those tests about the thing they
+ * are testing (components, selection, drag) rather than about a picker.
+ */
+async function seed(path: string, content: string): Promise<string> {
+  const response = await fetch(`${API}/v1/docs`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${tokens().token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ path, content }),
+  });
+  expect(response.ok, `could not seed ${path}`).toBe(true);
+  return path;
+}
+
+/** A design document built from one of the package's worked examples. */
+async function seedDesign(id: string, path: string): Promise<string> {
+  const starter = STARTERS.find((one) => one.id === id);
+  expect(starter, `no starter ${id}`).toBeTruthy();
+  return seed(path, `# ${starter!.label}\n\n\`\`\`design\n${starter!.source}\n\`\`\`\n`);
 }
 
 test.describe('the writing surface', () => {
@@ -447,7 +487,7 @@ test.describe('accessibility and resilience', () => {
     // The whole bet: the controls are there before the writer has done
     // anything, so "what can this program do" is answered by looking.
     await expect(toolbar).toBeVisible();
-    for (const label of ['Bold', 'Italic', 'Underline', 'Insert link', 'Insert diagram', 'Bulleted list']) {
+    for (const label of ['Bold', 'Italic', 'Underline', 'Insert link', 'Insert design', 'Bulleted list']) {
       await expect(toolbar.getByRole('button', { name: label, exact: true })).toBeVisible();
     }
 
@@ -535,7 +575,7 @@ test.describe('accessibility and resilience', () => {
     await expect(page.getByRole('menu', { name: 'Insert' })).toBeVisible();
     // And this is the key one: the menu it arrived at still takes arrow keys.
     await page.keyboard.press('ArrowDown');
-    await expect(page.getByRole('menuitem', { name: /Diagram/ })).toBeFocused();
+    await expect(page.getByRole('menuitem', { name: /Design/ })).toBeFocused();
   });
 
   test('a menu opened with the mouse still takes the keyboard', async ({ page }) => {
@@ -586,21 +626,24 @@ test.describe('accessibility and resilience', () => {
     expect(asAgent, 'underline did not wrap the words it was applied to').toContain(words.slice(0, 20));
   });
 
-  test('inserts a diagram that leaves as a portable fence', async ({ page }) => {
-    await openSpec(page);
-    await caretAtEndOf(page, '.prose > p[data-block-id]');
+  test('draws a mermaid fence that was already in the document', async ({ page }) => {
+    // There is no longer a way to *insert* a diagram from the app — the gallery
+    // of shapes is gone, and with it the button. Drawing one is a different
+    // capability and it stays: a document can arrive with a fence in it from an
+    // agent, a paste, or a `galley push`, and it has to render rather than show
+    // its own syntax.
+    const path = await seed(
+      'specs/with-a-diagram',
+      ['# With a diagram', '', '```mermaid', 'flowchart TD', '  A[Start] --> B[Done]', '```', ''].join('\n'),
+    );
+    await openWorkspace(page);
+    await page.getByTestId(`doc-${path}`).click();
 
-    await page.getByRole('button', { name: 'Insert diagram', exact: true }).click();
-    await page.getByTestId('diagram-flowchart').click();
-
-    // It draws in the document — no fence, no monospace, no syntax on the page.
     await expect(page.locator('.prose figure.diagram svg')).toBeVisible({ timeout: 15_000 });
     expect(await page.locator('.prose').innerText()).not.toContain('```');
 
-    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
-
-    // And on disk it is the convention every other renderer already draws.
-    const asAgent = await readAsAgent('specs/checkout-v2');
+    // And it is still the same fence on disk — drawing it changed nothing.
+    const asAgent = await readAsAgent(path);
     expect(asAgent).toContain('```mermaid');
     expect(asAgent).toContain('flowchart TD');
   });
@@ -801,31 +844,27 @@ test.describe('designs', () => {
     await expect(page.getByTestId('doc-title')).toHaveText('Checkout v2');
     await caretAtEndOf(page, '.prose > p[data-block-id]');
 
-    await page.getByRole('button', { name: 'Insert design', exact: true }).click();
-    await page.getByTestId('design-form').click();
+    // No gallery in the way: one press and there is a design here.
+    const designPath = await insertDesign(page);
 
     // The prose gets a reference, not a copy: a design is its own document.
-    const chip = page.locator('.prose a[title="design"]');
-    await expect(chip).toBeVisible();
-    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
-    // Read where it points *now*, while the prose is still on screen — opening
-    // the design replaces this surface with the canvas.
-    const designPath = (await chip.first().getAttribute('href')) ?? '';
-    expect(designPath, 'the design reference has no target').not.toBe('');
+    await expect(page.locator('.prose a[title="design"]')).toHaveCount(1);
 
     // Open the design. It gets the canvas, decided by looking at the content.
     await page.reload();
-    await page.getByTestId('doc-list').getByText('Form', { exact: true }).click();
+    await page.getByTestId(`doc-${designPath}`).click();
     await expect(page.getByTestId('design-editor')).toBeVisible();
-    // It renders as a picture — real boxes with real text, no markup on screen.
-    await expect(page.locator('.design-surface')).toBeVisible();
-    await expect(page.locator('.design-layer', { hasText: 'Pay $42.00' }).first()).toBeVisible();
+    // It renders as a picture — a real frame, no markup on screen — and the
+    // palette is what is offered, rather than a question about starting points.
+    await expect(page.locator('.design-canvas .design-surface')).toBeVisible();
+    await expect(page.getByTestId('design-palette')).toBeVisible();
     expect(await page.locator('.design-canvas').innerText()).not.toContain('<box');
     // And it starts clean, which is what makes the findings bar meaningful.
     await expect(page.getByTestId('design-findings')).toHaveText('Nothing to fix.');
 
-    // Change a property with the mouse, the way anyone would.
-    await page.locator('.design-tree-row', { hasText: 'Pay button' }).click();
+    // Put something in it and change a property with the mouse.
+    await page.getByTestId('block-button').click();
+    await pickLayer(page, 'Button');
     await page.locator('.inspector-choice', { hasText: 'Background' }).locator('select').selectOption('bg-danger');
     await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
 
@@ -842,12 +881,8 @@ test.describe('designs', () => {
     // The whole argument for having components: twelve buttons that are the
     // *same* button. Without this, "our button" is a convention nobody can
     // enforce and every agent quietly reinvents it.
+    const designPath = await seedDesign('kit', 'design/kit-under-test');
     await openWorkspace(page);
-    await page.getByTestId('doc-specs/checkout-v2').click();
-    await caretAtEndOf(page, '.prose > p[data-block-id]');
-    const designPath = await insertDesign(page, 'design-kit');
-
-    await page.reload();
     await page.getByTestId(`doc-${designPath}`).click();
     await expect(page.getByTestId('design-stage')).toBeVisible();
     // It starts clean, which is what makes the findings bar mean anything.
@@ -871,12 +906,12 @@ test.describe('designs', () => {
 
     // One edit to the definition changes all three that use it — and leaves
     // the fourth, which uses a different one, alone.
-    await page.locator('.design-tree-row').filter({ hasText: 'Button' }).first().click();
+    await pickLayer(page, 'Button');
     await page.locator('.inspector-choice', { hasText: 'Corners' }).locator('select').selectOption('rounded-full');
     await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
 
     const radii = await page.evaluate(() =>
-      [...document.querySelectorAll('.design-surface [data-layer-id]')]
+      [...document.querySelectorAll('.design-canvas .design-surface [data-layer-id]')]
         .map((node) => getComputedStyle(node).borderRadius)
         .filter((radius) => radius !== '0px'),
     );
@@ -890,14 +925,8 @@ test.describe('designs', () => {
   });
 
   test('the canvas selects the way a design tool does, and a drag is a move', async ({ page }) => {
+    const designPath = await seedDesign('form', 'design/form-under-test');
     await openWorkspace(page);
-    await page.getByTestId('doc-specs/checkout-v2').click();
-    await caretAtEndOf(page, '.prose > p[data-block-id]');
-    const designPath = await insertDesign(page, 'design-form');
-
-    await page.reload();
-    // By path, not by name: this suite creates more than one design and they
-    // are all called the same thing.
     await page.getByTestId(`doc-${designPath}`).click();
     const stage = page.getByTestId('design-stage');
     await expect(stage).toBeVisible();
@@ -964,7 +993,7 @@ test.describe('designs', () => {
     expect(await readAsAgent(designPath)).toContain('Pay in full');
 
     // Arrangement is about the shape, so its controls are over the shape.
-    await page.locator('.design-tree-row', { hasText: 'Pay button' }).first().click();
+    await pickLayer(page, 'Pay button');
     await expect(page.locator('.design-bar')).toBeVisible();
     await page.locator('.design-bar [aria-label="More padding"]').click();
     await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
@@ -999,4 +1028,345 @@ test.describe('designs', () => {
     await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
     expect(await readAsAgent(designPath), 'redo did not reapply the move').toBe(after);
   });
+});
+
+test.describe('the library', () => {
+  test('makes a design without being inside another document first', async ({ page }) => {
+    // A design *is* a document, but for a while the only way to make one was
+    // "insert a design into the document you are already in" — so the app's
+    // second content type was reachable only as a footnote to its first.
+    await openWorkspace(page);
+    const rows = page.locator('.doc-row');
+    const before = await rows.count();
+
+    await page.getByTestId('new-button').click();
+    await page.getByTestId('new-design').click();
+
+    await expect(rows).toHaveCount(before + 1);
+    // It lands on the canvas, not the prose editor, decided by its content.
+    await expect(page.getByTestId('design-editor')).toBeVisible();
+    await expect(page.getByTestId('design-palette')).toBeVisible();
+  });
+
+  test('deletes a document behind a confirmation, and can put it back', async ({ page }) => {
+    await openWorkspace(page);
+    // Made here rather than reaching for a seeded document: this test deletes
+    // what it names, and a shared fixture the other tests depend on is not a
+    // thing to practise deleting on.
+    await page.getByTestId('new-button').click();
+    await page.getByRole('button', { name: 'Document Words, in a page' }).click();
+    await expect(page.getByTestId('doc-title')).toHaveText('Untitled');
+    await selectContentsOf(page, '.prose h1');
+    await page.keyboard.type('Doomed');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    const rows = page.locator('.doc-row');
+    const before = await rows.count();
+    const row = page.locator('.doc-row', { hasText: 'Doomed' }).first();
+
+    // The trash icon is invisible until the row is hovered, and reachable.
+    await row.hover();
+    await row.locator('.doc-delete').click();
+
+    // The dialog names the document and says what actually happens — it does
+    // not claim this cannot be undone, because it can.
+    await expect(page.getByTestId('confirm-delete-text')).toContainText('Doomed');
+    await expect(page.getByTestId('confirm-delete-text')).toContainText('30 days');
+
+    // Keeping it is the default answer, and it changes nothing.
+    await page.getByTestId('confirm-cancel').click();
+    await expect(rows).toHaveCount(before);
+
+    await row.hover();
+    await row.locator('.doc-delete').click();
+    await page.getByTestId('confirm-delete').click();
+    await expect(rows).toHaveCount(before - 1);
+
+    // Gone from the server, not just from this list.
+    await page.reload();
+    await expect(page.locator('.doc-row', { hasText: 'Doomed' })).toHaveCount(0);
+
+    // And recoverable, with the window shown in the only unit anyone acts on.
+    await page.getByTestId('open-trash').click();
+    const entry = page.locator('.trash-row', { hasText: 'Doomed' });
+    await expect(entry).toBeVisible();
+    await expect(entry).toContainText('days left');
+
+    await entry.getByRole('button', { name: 'Put back' }).click();
+    await expect(page.locator('.trash-row', { hasText: 'Doomed' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.doc-row', { hasText: 'Doomed' })).toHaveCount(1);
+  });
+
+  test('emptying the trash costs a second press and is final', async ({ page }) => {
+    await openWorkspace(page);
+    await page.getByTestId('new-button').click();
+    await page.getByRole('button', { name: 'Document Words, in a page' }).click();
+    await selectContentsOf(page, '.prose h1');
+    await page.keyboard.type('Really doomed');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    const row = page.locator('.doc-row', { hasText: 'Really doomed' }).first();
+    await row.hover();
+    await row.locator('.doc-delete').click();
+    await page.getByTestId('confirm-delete').click();
+    await expect(page.locator('.doc-row', { hasText: 'Really doomed' })).toHaveCount(0);
+
+    await page.getByTestId('open-trash').click();
+    await expect(page.getByTestId('trash-list')).toBeVisible();
+    const entry = page.locator('.trash-row', { hasText: 'Really doomed' });
+    await expect(entry).toBeVisible();
+
+    // There is no third chance after this one, so it still costs two presses.
+    await entry.locator('.trash-purge').click();
+    await expect(entry).toContainText('For good?');
+    await entry.getByRole('button', { name: 'Delete', exact: true }).click();
+
+    await expect(page.locator('.trash-row', { hasText: 'Really doomed' })).toHaveCount(0);
+    await page.reload();
+    await page.getByTestId('open-trash').click();
+    await expect(page.locator('.trash-row', { hasText: 'Really doomed' })).toHaveCount(0);
+  });
+
+  test('adds a finished thing from the palette, and the agent reads its parts', async ({ page }) => {
+    await openWorkspace(page);
+    await page.getByTestId('new-button').click();
+    await page.getByTestId('new-design').click();
+    await expect(page.getByTestId('design-palette')).toBeVisible();
+
+    // A button, not a box. The palette's whole argument: what arrives is the
+    // finished object, with its label, its fill and its states already right.
+    await page.getByTestId('block-button').click();
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    await expect(
+      page.locator('.design-canvas .design-layer', { hasText: 'Continue' }).first(),
+    ).toBeVisible();
+
+    // It lints clean on arrival. A palette that hands someone a contrast
+    // failure has given them a problem they did not make.
+    await expect(page.getByTestId('design-findings')).toHaveText('Nothing to fix.');
+
+    const path = (await page.locator('.doc-row .doc-item.is-selected').getAttribute('data-testid'))
+      ?.replace(/^doc-/, '');
+    expect(path, 'the new design has no path').toBeTruthy();
+    const source = await readAsAgent(path!);
+    expect(source, 'the button did not reach the stored markup').toContain('bg-accent');
+    expect(source).toContain('hover:bg-accent-hover');
+    expect(source).toContain('Continue');
+  });
+
+  test('a second block from the palette lands beside the first, not inside it', async ({ page }) => {
+    // Every finished block is a box -- a button *is* a box with a label -- and
+    // "add" used to mean "inside the selection when the selection is a box".
+    // So a block selected itself on arrival and the next one landed inside it:
+    // Button then Caption put grey text on a blue fill, which the linter
+    // correctly called out at 1.33:1. Two text fields became one field
+    // containing another.
+    await openWorkspace(page);
+    await page.getByTestId('new-button').click();
+    await page.getByTestId('new-design').click();
+    await expect(page.getByTestId('design-palette')).toBeVisible();
+
+    await page.getByTestId('block-field').click();
+    await page.getByTestId('block-field').click();
+    await page.getByTestId('block-button').click();
+    await page.getByTestId('block-caption').click();
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    // Nothing to fix is the assertion that matters: nesting these wrongly is
+    // exactly what produces a contrast failure.
+    await expect(page.getByTestId('design-findings')).toHaveText('Nothing to fix.');
+
+    // Two fields, both of them at the top level of the frame.
+    await page.getByTestId('pane-layers').click();
+    await expect(page.locator('.design-tree-row', { hasText: 'Field' })).toHaveCount(2);
+    const depths = await page.locator('.design-tree-row').evaluateAll((rows) =>
+      rows
+        .filter((row) => ['Field', 'Button', 'Caption'].includes(row.querySelector('.design-tree-name')?.textContent ?? ''))
+        .map((row) => (row as HTMLElement).style.paddingLeft),
+    );
+    expect(depths, 'the blocks are not siblings').toHaveLength(4);
+    expect(new Set(depths).size, 'the blocks are at different depths').toBe(1);
+  });
+
+  test('a design is renamed by typing over its name, and the list follows', async ({ page }) => {
+    // The one thing about a design you could not change from the canvas. A
+    // workspace filled up with documents all called "Untitled design".
+    await openWorkspace(page);
+    await page.getByTestId('new-button').click();
+    await page.getByTestId('new-design').click();
+    await expect(page.getByTestId('design-name')).toHaveValue('Untitled design');
+
+    await page.getByTestId('design-name').fill('Sign in');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    // The breadcrumb and the sidebar are the same fact seen twice, and both
+    // read the document's heading rather than the design's name attribute.
+    await expect(page.getByTestId('doc-title')).toHaveText('Sign in');
+    await expect(page.locator('.doc-title', { hasText: 'Sign in' }).first()).toBeVisible();
+
+    // The name moved in both places it is written: inside the fence for the
+    // format, and above it as the heading everything else reads.
+    const path = (await page.locator('.doc-row .doc-item.is-selected').getAttribute('data-testid'))
+      ?.replace(/^doc-/, '');
+    const source = await readAsAgent(path!);
+    expect(source).toContain('# Sign in');
+    expect(source).toContain('<design name="Sign in">');
+    expect(source).not.toContain('Untitled design');
+  });
+
+  test('typing a real heading renames a document in the list', async ({ page }) => {
+    // There is no rename command anywhere in this app on purpose: the title is
+    // right there to type over. That was a promise the list did not keep — a
+    // document created as Untitled stayed Untitled in the sidebar forever.
+    await openWorkspace(page);
+    await page.getByTestId('new-button').click();
+    await page.getByRole('button', { name: 'Document Words, in a page' }).click();
+    await expect(page.getByTestId('doc-title')).toHaveText('Untitled');
+
+    await selectContentsOf(page, '.prose h1');
+    await page.keyboard.type('Grocery list');
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+    await expect(page.locator('.doc-title', { hasText: 'Grocery list' }).first()).toBeVisible();
+    // And the id marker is plumbing, not part of the name.
+    await expect(page.locator('.doc-title', { hasText: '<!--' })).toHaveCount(0);
+  });
+});
+
+/**
+ * Two people, one document, at the same time.
+ *
+ * Everything else in this file is one browser. That left the product's central
+ * claim — that this is a *shared* writing surface — asserted only at the server,
+ * where `sync.test.ts` proves the frames converge. What nobody had checked is
+ * what the two writers *see*, and the thing that was broken is only visible
+ * from here: the editor used to rebuild itself whenever a new version arrived,
+ * which threw away the undo history of whoever was not typing.
+ */
+test.describe('undo on the canvas', () => {
+  test('takes back a block, and either redo key puts it back', async ({ page }) => {
+    // The canvas bound ⌘Z and ⌘⇧Z and not ⌘Y, so the same keystroke worked in
+    // the prose half of the product and did nothing in the design half.
+    await openWorkspace(page);
+    await page.getByTestId('new-button').click();
+    await page.getByTestId('new-design').click();
+    await expect(page.getByTestId('design-palette')).toBeVisible();
+
+    await page.getByTestId('block-button').click();
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    await page.getByTestId('pane-layers').click();
+    await expect(page.locator('.design-tree-row', { hasText: 'Button' })).toHaveCount(1);
+
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(page.locator('.design-tree-row', { hasText: 'Button' })).toHaveCount(0);
+
+    await page.keyboard.press('ControlOrMeta+y');
+    await expect(page.locator('.design-tree-row', { hasText: 'Button' })).toHaveCount(1);
+
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(page.locator('.design-tree-row', { hasText: 'Button' })).toHaveCount(0);
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    await expect(page.locator('.design-tree-row', { hasText: 'Button' })).toHaveCount(1);
+
+    // And what the canvas shows is what the document says.
+    await expect(page.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+    const path = (await page.locator('.doc-row .doc-item.is-selected').getAttribute('data-testid'))
+      ?.replace(/^doc-/, '');
+    expect(await readAsAgent(path!)).toContain('bg-accent');
+  });
+});
+
+test.describe('two people in one document', () => {
+  /** Open the spec as somebody, and wait until it is really on screen. */
+  async function openAs(page: Page, token: string): Promise<void> {
+    await page.goto(`/?token=${token}`);
+    await expect(page.getByTestId('doc-list')).toBeVisible();
+    await page.getByTestId('doc-specs/checkout-v2').click();
+    await expect(page.getByTestId('doc-title')).toHaveText('Checkout v2');
+    await expect(page.locator('.prose > p[data-block-id]').first()).toBeVisible();
+  }
+
+  test('each sees the other typing, and undo takes back only their own words', async ({
+    browser,
+  }) => {
+    const priya = await browser.newContext();
+    const sam = await browser.newContext();
+    try {
+      const one = await priya.newPage();
+      const two = await sam.newPage();
+      await openAs(one, tokens().token);
+      await openAs(two, tokens().secondToken);
+
+      // Priya writes into the first paragraph.
+      await caretAtEndOf(one, '.prose > p[data-block-id]');
+      await one.keyboard.type(' PRIYA-WAS-HERE.');
+      await expect(one.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+      // Sam sees it, without having reloaded anything.
+      await expect(two.locator('.prose')).toContainText('PRIYA-WAS-HERE.', { timeout: 15_000 });
+
+      // Sam writes into a different paragraph, and Priya sees that.
+      await caretAtEndOf(two, '.prose > p[data-block-id]', 1);
+      await two.keyboard.type(' SAM-WAS-HERE.');
+      await expect(two.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+      await expect(one.locator('.prose')).toContainText('SAM-WAS-HERE.', { timeout: 15_000 });
+
+      // Now the part that was broken. Priya presses undo. Her own words go;
+      // Sam's stay. Before this, the arrival of Sam's edit had rebuilt Priya's
+      // editor, so her history was empty and undo did nothing at all.
+      await one.locator('.prose').click();
+      await one.keyboard.press('ControlOrMeta+z');
+
+      await expect(one.locator('.prose')).not.toContainText('PRIYA-WAS-HERE.');
+      await expect(one.locator('.prose'), "undo reverted the other writer's edit").toContainText(
+        'SAM-WAS-HERE.',
+      );
+
+      // And that is what the document really says, for everyone.
+      await expect(one.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+      await expect(two.locator('.prose')).not.toContainText('PRIYA-WAS-HERE.', { timeout: 15_000 });
+      await expect(two.locator('.prose')).toContainText('SAM-WAS-HERE.');
+
+      const stored = await readAsAgent('specs/checkout-v2');
+      expect(stored).not.toContain('PRIYA-WAS-HERE.');
+      expect(stored).toContain('SAM-WAS-HERE.');
+    } finally {
+      await priya.close();
+      await sam.close();
+    }
+  });
+
+  test('redo puts back what undo took, with the other writer untouched', async ({ browser }) => {
+    const priya = await browser.newContext();
+    const sam = await browser.newContext();
+    try {
+      const one = await priya.newPage();
+      const two = await sam.newPage();
+      await openAs(one, tokens().token);
+      await openAs(two, tokens().secondToken);
+
+      await caretAtEndOf(one, '.prose > p[data-block-id]');
+      await one.keyboard.type(' REDO-ME.');
+      await expect(one.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+      await caretAtEndOf(two, '.prose > p[data-block-id]', 1);
+      await two.keyboard.type(' OTHER-WRITER.');
+      await expect(one.locator('.prose')).toContainText('OTHER-WRITER.', { timeout: 15_000 });
+
+      await one.locator('.prose').click();
+      await one.keyboard.press('ControlOrMeta+z');
+      await expect(one.locator('.prose')).not.toContainText('REDO-ME.');
+
+      // ⌘⇧Z and ⌘Y are the same command. Both are bound, because both are what
+      // somebody's fingers already know.
+      await one.keyboard.press('ControlOrMeta+y');
+      await expect(one.locator('.prose')).toContainText('REDO-ME.');
+      await expect(one.locator('.prose')).toContainText('OTHER-WRITER.');
+    } finally {
+      await priya.close();
+      await sam.close();
+    }
+  });
+
 });

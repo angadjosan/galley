@@ -25,4 +25,6 @@ export const ClearFormatIcon = () => (_jsxs(Svg, { children: [_jsx("path", { d: 
 export const QuoteIcon = () => (_jsxs(Svg, { children: [_jsx("path", { d: "M4 5.5v9", strokeWidth: "2.4" }), _jsx("path", { d: "M8 7h9M8 10h9M8 13h6" })] }));
 export const ChevronIcon = () => (_jsx("svg", { viewBox: "0 0 20 20", width: "14", height: "14", "aria-hidden": "true", className: "tb-chevron", children: _jsx("path", { d: "M6 8l4 4 4-4", fill: "none", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round", strokeLinejoin: "round" }) }));
 export const CheckIcon = () => (_jsx("svg", { viewBox: "0 0 20 20", width: "16", height: "16", "aria-hidden": "true", className: "tb-check", children: _jsx("path", { d: "M4 10.5 8 14.5 16 6", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }) }));
+export const TrashIcon = () => (_jsxs(Svg, { children: [_jsx("path", { d: "M4.5 6h11" }), _jsx("path", { d: "M8 6V4.5h4V6" }), _jsx("path", { d: "M6 6l.7 9a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9L14 6" }), _jsx("path", { d: "M8.8 8.8v4.4M11.2 8.8v4.4" })] }));
+export const DocumentIcon = () => (_jsxs(Svg, { children: [_jsx("path", { d: "M5.5 3.5h6L15 7v9.5H5.5z" }), _jsx("path", { d: "M11.5 3.5V7H15" }), _jsx("path", { d: "M7.8 10.5h4.4M7.8 13h3" })] }));
 //# sourceMappingURL=icons.js.map

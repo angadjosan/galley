@@ -637,3 +637,444 @@ describe('images', () => {
     expect((await h.request('/v1/assets/deadbeef')).status).toBe(404);
   });
 });
+
+describe('deleting a document puts it in the trash', () => {
+  it('takes it out of the listing and out of reach', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+
+    const deleted = await h.json<{ path: string }>(`/v1/docs/${docId}`, { method: 'DELETE' });
+    expect(deleted.path).toBe('specs/checkout-v2');
+
+    const { documents } = await h.json<{ documents: { path: string }[] }>('/v1/docs');
+    expect(documents.map((d) => d.path)).not.toContain('specs/checkout-v2');
+    // Not merely hidden from the list: every ordinary route refuses it, which
+    // is guarded once at `openDocument` rather than route by route.
+    expect((await h.request(`/v1/docs/${docId}`)).status).toBe(404);
+  });
+
+  it('keeps everything anchored to it, because a restore has to bring it back', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ blockId: blockIds[1], body: 'Optional or required?' }),
+    });
+
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    // The old behaviour cascaded here. A restore that returned the prose
+    // without the notes on it would be worse than no restore.
+    expect(h.server.store.listComments(docId)).toHaveLength(1);
+    expect(h.server.store.getDocument(docId)?.deletedAt).toBeTruthy();
+  });
+
+  it('frees the path, so the same name can be used again', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    const again = await h.json<{ docId: string }>('/v1/docs', {
+      method: 'POST',
+      body: JSON.stringify({ path: 'specs/checkout-v2', content: SPEC }),
+    });
+    expect(again.docId).not.toBe(docId);
+  });
+
+  it('refuses to create anything in the reserved tombstone namespace', async () => {
+    const h = await open();
+    await expect(
+      h.json('/v1/docs', {
+        method: 'POST',
+        body: JSON.stringify({ path: '.trash/sneaky', content: '# No\n' }),
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('is not written back by a debounced persist that was already scheduled', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ops: [{ kind: 'replace', target: blockIds[1], markdown: 'Rewritten.' }],
+      }),
+    });
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    // Still trashed, and still parked at its tombstone. A persist that landed
+    // after the delete would have written the row back at its old path.
+    const row = h.server.store.getDocument(docId);
+    expect(row?.deletedAt).toBeTruthy();
+    expect(row?.path.startsWith('.trash/')).toBe(true);
+  });
+
+  it('drops it from the open set rather than leaving a ghost actor', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await h.server.workspace.openDocument(docId);
+    expect(h.server.workspace.openDocumentIds()).toContain(docId);
+
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+    expect(h.server.workspace.openDocumentIds()).not.toContain(docId);
+  });
+
+  it('refuses a reader', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    const response = await h.request(`/v1/docs/${docId}`, {
+      method: 'DELETE',
+      token: h.tokens.reader,
+    });
+    expect(response.status).toBe(403);
+    expect(h.server.store.getDocument(docId)?.deletedAt).toBeFalsy();
+  });
+
+  it('records who did it', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    const { entries } = await h.json<{ entries: { action: string; detail: string }[] }>('/v1/audit');
+    expect(entries.find((e) => e.action === 'document.trash')?.detail).toBe('specs/checkout-v2');
+  });
+});
+
+describe('the trash', () => {
+  it('lists what is in it, where it came from and when it goes', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    const { documents } = await h.json<{
+      documents: { docId: string; path: string; title: string; deletedAt: string; purgeAt: string }[];
+    }>('/v1/trash');
+    expect(documents).toHaveLength(1);
+    const [entry] = documents;
+    // The path it will come back to, not the tombstone it is parked at.
+    expect(entry!.path).toBe('specs/checkout-v2');
+    expect(entry!.docId).toBe(docId);
+    // Thirty days later, to the day.
+    const window = Date.parse(entry!.purgeAt) - Date.parse(entry!.deletedAt);
+    expect(Math.round(window / (24 * 60 * 60 * 1000))).toBe(30);
+  });
+
+  it('restores a document to where it was, with its comments still on it', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ blockId: blockIds[1], body: 'Optional or required?' }),
+    });
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    const restored = await h.json<{ path: string }>(`/v1/trash/${docId}/restore`, { method: 'POST' });
+    expect(restored.path).toBe('specs/checkout-v2');
+
+    const { documents } = await h.json<{ documents: { path: string }[] }>('/v1/docs');
+    expect(documents.map((d) => d.path)).toContain('specs/checkout-v2');
+    // Readable again, and the thread that was anchored to it survived the trip.
+    const back = await h.json<{ content: string }>(`/v1/docs/${docId}`);
+    expect(back.content).toContain('currency field');
+    const { comments } = await h.json<{ comments: unknown[] }>(`/v1/docs/${docId}/comments`);
+    expect(comments).toHaveLength(1);
+  });
+
+  it('brings back the last thing typed, not the last thing snapshotted', async () => {
+    // Persistence is debounced, so a document deleted moments after an edit has
+    // a stale snapshot on disk. Trashing without flushing first put *that* in
+    // the trash: the restore lost the edits, and the entry sat under the old
+    // title where nobody would look for it.
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ops: [
+          { kind: 'replace', target: blockIds[0], markdown: '# Renamed just now' },
+          { kind: 'replace', target: blockIds[1], markdown: 'Typed just now.' },
+        ],
+      }),
+    });
+    // Deleted immediately — inside the debounce window, which is the case that
+    // was broken.
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    const { documents } = await h.json<{ documents: { title: string }[] }>('/v1/trash');
+    expect(documents[0]?.title, 'the trash shows a stale title').toBe('Renamed just now');
+
+    await h.json(`/v1/trash/${docId}/restore`, { method: 'POST' });
+    const back = await h.json<{ content: string }>(`/v1/docs/${docId}`);
+    expect(back.content, 'the restore lost the last edits').toContain('Typed just now.');
+  });
+
+  it('restores beside the name when something has taken it since', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+    // Someone made a new document at the old name while this was in the trash.
+    await h.json('/v1/docs', {
+      method: 'POST',
+      body: JSON.stringify({ path: 'specs/checkout-v2', content: '# Different\n' }),
+    });
+
+    const restored = await h.json<{ path: string }>(`/v1/trash/${docId}/restore`, { method: 'POST' });
+    // Refusing would be the other option, and it is a dead end from the trash.
+    expect(restored.path).toBe('specs/checkout-v2 2');
+    const { documents } = await h.json<{ documents: { path: string }[] }>('/v1/docs');
+    expect(documents.map((d) => d.path)).toContain('specs/checkout-v2');
+    expect(documents.map((d) => d.path)).toContain('specs/checkout-v2 2');
+  });
+
+  it('empties one thing for good, taking the sidecar with it', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ blockId: blockIds[1], body: 'Optional or required?' }),
+    });
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+    await h.json(`/v1/trash/${docId}`, { method: 'DELETE' });
+
+    expect(h.server.store.getDocument(docId)).toBeUndefined();
+    expect(h.server.store.listComments(docId)).toHaveLength(0);
+    const { documents } = await h.json<{ documents: unknown[] }>('/v1/trash');
+    expect(documents).toHaveLength(0);
+  });
+
+  it('will not purge a document that is not in the trash', async () => {
+    // Otherwise this route is a way to destroy live work in one call, skipping
+    // the trash and everything it exists to protect.
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    const response = await h.request(`/v1/trash/${docId}`, { method: 'DELETE' });
+    expect(response.status).toBe(404);
+    expect(h.server.store.getDocument(docId)).toBeDefined();
+  });
+
+  it('sweeps away whatever has run out of window, and nothing else', async () => {
+    // The clock is injected rather than the row being backdated behind the
+    // feature's back: a test that writes `deleted_at` itself passes even when
+    // the code that writes `deleted_at` is broken.
+    let now = Date.parse('2026-01-01T00:00:00.000Z');
+    const h = await open({ trashDays: 30, now: () => now });
+
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    // Thirty-one days pass, and something else is thrown away today.
+    now += 31 * 24 * 60 * 60 * 1000;
+    const fresh = await seedDocument(h, 'specs/other');
+    await h.json(`/v1/docs/${fresh.docId}`, { method: 'DELETE' });
+
+    expect(await h.server.workspace.sweepTrash()).toBe(0);
+    // Zero, because the delete route swept on its way out — which is the
+    // design: the sweep runs on the operations that can produce an expired
+    // row, not on a timer that a restart would silently stop.
+    expect(h.server.store.getDocument(docId), 'the expired one survived').toBeUndefined();
+    expect(h.server.store.getDocument(fresh.docId), 'the fresh one was taken too').toBeDefined();
+  });
+
+  it('sweeps on its own when nothing else prompts it', async () => {
+    let now = Date.parse('2026-01-01T00:00:00.000Z');
+    const h = await open({ trashDays: 30, now: () => now });
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    now += 31 * 24 * 60 * 60 * 1000;
+    expect(await h.server.workspace.sweepTrash()).toBe(1);
+    expect(h.server.store.getDocument(docId)).toBeUndefined();
+  });
+
+  it('keeps a document for the whole window, right up to the last day', async () => {
+    let now = Date.parse('2026-01-01T00:00:00.000Z');
+    const h = await open({ trashDays: 30, now: () => now });
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+
+    now += 29 * 24 * 60 * 60 * 1000;
+    expect(await h.server.workspace.sweepTrash()).toBe(0);
+    // And it is still restorable on day 29, which is the promise being made.
+    const restored = await h.json<{ path: string }>(`/v1/trash/${docId}/restore`, { method: 'POST' });
+    expect(restored.path).toBe('specs/checkout-v2');
+  });
+
+  it('refuses a reader everywhere', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await h.json(`/v1/docs/${docId}`, { method: 'DELETE' });
+    for (const [path, method] of [
+      ['/v1/trash', 'GET'],
+      [`/v1/trash/${docId}/restore`, 'POST'],
+      [`/v1/trash/${docId}`, 'DELETE'],
+    ] as const) {
+      const response = await h.request(path, { method, token: h.tokens.reader });
+      expect(response.status, `${method} ${path}`).toBe(403);
+    }
+  });
+});
+
+describe('what a document is called', () => {
+  it('follows the heading, so retitling is typing over the title', async () => {
+    const h = await open();
+    const created = await h.json<{ docId: string }>('/v1/docs', {
+      method: 'POST',
+      body: JSON.stringify({ path: 'notes/list', content: '# Untitled\n\nSomething.\n' }),
+    });
+    const actor = await h.server.workspace.openDocument(created.docId);
+    const headingId = actor.document.parsed().blocks[0]?.id ?? '@0';
+    await h.json(`/v1/docs/${created.docId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ops: [{ kind: 'replace', target: headingId, markdown: '# Grocery list' }],
+      }),
+    });
+    await h.server.workspace.persist(created.docId, true);
+
+    const { documents } = await h.json<{ documents: { path: string; title: string }[] }>('/v1/docs');
+    expect(documents.find((d) => d.path === 'notes/list')?.title).toBe('Grocery list');
+  });
+
+  it('keeps an explicitly given title for a document with no heading at all', async () => {
+    const h = await open();
+    const created = await h.json<{ docId: string }>('/v1/docs', {
+      method: 'POST',
+      body: JSON.stringify({ path: 'notes/bare', content: 'Just a line.\n', title: 'Imported' }),
+    });
+    await h.server.workspace.persist(created.docId, true);
+
+    const { documents } = await h.json<{ documents: { path: string; title: string }[] }>('/v1/docs');
+    expect(documents.find((d) => d.path === 'notes/bare')?.title).toBe('Imported');
+  });
+});
+
+describe('a title is not plumbing', () => {
+  it('keeps the block id marker out of the name', async () => {
+    // Titles are derived on every persist now, and by then the heading carries
+    // its block id. Before this was handled, a renamed document showed up in
+    // the list as `Grocery list <!-- ^notesli0 -->`.
+    const h = await open();
+    const created = await h.json<{ docId: string }>('/v1/docs', {
+      method: 'POST',
+      body: JSON.stringify({ path: 'notes/list', content: '# Shopping\n\nMilk.\n' }),
+    });
+    const actor = await h.server.workspace.openDocument(created.docId);
+    // Give the heading a durable id, which is what a comment on it would do.
+    const headingId = actor.document.parsed().blocks[0]?.id ?? '@0';
+    await h.json(`/v1/docs/${created.docId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ops: [{ kind: 'materialize', target: headingId, id: 'notesli0' }],
+      }),
+    });
+    await h.server.workspace.persist(created.docId, true);
+
+    const { documents } = await h.json<{ documents: { path: string; title: string }[] }>('/v1/docs');
+    const title = documents.find((d) => d.path === 'notes/list')?.title;
+    expect(title).toBe('Shopping');
+    expect(title).not.toContain('<!--');
+  });
+});
+
+describe('version history', () => {
+  /** Make `count` separate edits, so there is a real timeline to read. */
+  async function edits(h: Harness, docId: string, blockId: string, count: number): Promise<void> {
+    for (let i = 0; i < count; i++) {
+      await h.json(`/v1/docs/${docId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ ops: [{ kind: 'replace', target: blockId, markdown: `Take ${i}.` }] }),
+      });
+    }
+  }
+
+  it('keeps every revision, and says how many there are', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await edits(h, docId, blockIds[1]!, 40);
+
+    const { revisions, total } = await h.json<{ revisions: unknown[]; total: number }>(
+      `/v1/docs/${docId}/history?limit=10`,
+    );
+    expect(revisions).toHaveLength(10);
+    // Nothing prunes on disk. The page is a page, not the whole archive.
+    expect(total).toBeGreaterThanOrEqual(40);
+  });
+
+  it('pages all the way back to the first edit', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await edits(h, docId, blockIds[1]!, 30);
+
+    const seen = new Set<number>();
+    let before: number | null | undefined;
+    for (let page = 0; page < 20; page++) {
+      const query: string = before == null ? '?limit=5' : `?limit=5&before=${before}`;
+      const body = await h.json<{ revisions: { ticket: number }[]; more: number | null }>(
+        `/v1/docs/${docId}/history${query}`,
+      );
+      for (const revision of body.revisions) seen.add(revision.ticket);
+      before = body.more;
+      if (before == null) break;
+    }
+    // Every revision reachable, five at a time, with no gaps and no repeats.
+    expect(seen.size).toBeGreaterThanOrEqual(30);
+    expect(before).toBeNull();
+  });
+
+  it('opens a revision older than the window the actor holds in memory', async () => {
+    // This is the bug the paging fixes. The actor's History is a cache of the
+    // newest few hundred; asking for anything older used to 404, which made the
+    // older half of a long timeline unopenable even though it was all on disk.
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await edits(h, docId, blockIds[1]!, 12);
+
+    const { revisions } = await h.json<{ revisions: { ticket: number }[] }>(
+      `/v1/docs/${docId}/history?limit=500`,
+    );
+    const earliest = revisions[0]!.ticket;
+
+    // Evict it, so nothing is in memory at all, then read the oldest revision.
+    await h.server.workspace.close(docId);
+    const { revision } = await h.json<{ revision: { ticket: number; content: string } }>(
+      `/v1/docs/${docId}/history/${earliest}`,
+    );
+    expect(revision.ticket).toBeLessThanOrEqual(earliest);
+    expect(revision.content).toBeTruthy();
+  });
+
+  it('survives a cold reopen with its whole timeline still readable', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    await edits(h, docId, blockIds[1]!, 25);
+    await h.server.workspace.close(docId);
+
+    const { total, revisions } = await h.json<{ total: number; revisions: unknown[] }>(
+      `/v1/docs/${docId}/history?limit=500`,
+    );
+    expect(total).toBeGreaterThanOrEqual(25);
+    expect(revisions.length).toBe(total);
+  });
+});
+
+describe('the end of a timeline', () => {
+  it('stops offering older pages once there are none', async () => {
+    // `more` used to be "the oldest ticket is not 1", but tickets are sequencer
+    // cursors and a document's first revision is rarely numbered 1 — so the
+    // timeline offered "show older" for ever, with nothing behind it.
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    for (let i = 0; i < 3; i++) {
+      await h.json(`/v1/docs/${docId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ ops: [{ kind: 'replace', target: blockIds[1], markdown: `Take ${i}.` }] }),
+      });
+    }
+    const body = await h.json<{ revisions: unknown[]; more: number | null; total: number }>(
+      `/v1/docs/${docId}/history?limit=100`,
+    );
+    expect(body.revisions.length).toBe(body.total);
+    expect(body.more).toBeNull();
+  });
+});

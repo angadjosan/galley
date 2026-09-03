@@ -2,11 +2,11 @@ import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-run
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, } from 'react';
 import { diffToBlockOps } from '@galley/core/diff';
 import { parseDocument } from '@galley/markdown';
-import { STARTERS, embedDesign, extractDesign } from '@galley/design';
+import { embedDesign, extractDesign, parseDesign } from '@galley/design';
 import { Editor } from './editor/Editor.js';
-import { INSERT_TABLE, insertDesignLink, insertDiagram, insertImage } from './editor/commands.js';
-import { DIAGRAM_TEMPLATES } from './editor/diagram.js';
+import { INSERT_TABLE, insertDesignLink, insertImage } from './editor/commands.js';
 import { Boundary } from './chrome/Boundary.js';
+import { DesignIcon, DocumentIcon, TrashIcon } from './chrome/icons.js';
 import { DesignEditor } from './design/DesignEditor.js';
 import { MenuBar } from './chrome/MenuBar.js';
 import { Toolbar } from './chrome/Toolbar.js';
@@ -79,6 +79,27 @@ function parseInvite(value) {
     }
 }
 // ---------------------------------------------------------------------------
+/**
+ * A new design, as a document.
+ *
+ * One definition for both ways in — the library's `New → Design` and the
+ * `Insert design` button inside a document — so the two cannot drift into
+ * producing different things called the same name.
+ *
+ * An empty frame with nothing in it. The canvas's palette is where the choosing
+ * happens, with every piece drawn as itself; a gallery of starters in front of
+ * that asks the same question worse, before the writer has anything to say
+ * about the answer.
+ */
+function blankDesign(name) {
+    const source = [
+        `<design name="${name}">`,
+        '  <frame name="Screen" width="390" class="flex flex-col gap-4 p-6 bg-canvas">',
+        '  </frame>',
+        '</design>',
+    ].join('\n');
+    return `# ${name}\n\n\`\`\`design\n${source}\n\`\`\`\n`;
+}
 function Workspace({ credentials, onSignOut, }) {
     const client = useMemo(() => makeClient(credentials), [credentials]);
     const [documents, setDocuments] = useState([]);
@@ -88,6 +109,16 @@ function Workspace({ credentials, onSignOut, }) {
     const [query, setQuery] = useState('');
     const [hits, setHits] = useState(null);
     const [libraryOpen, setLibraryOpen] = useState(false);
+    /**
+     * The document the trash button was pressed on, waiting to be confirmed.
+     *
+     * The whole summary rather than an id: the dialog names the document, and a
+     * dialog that has to look its subject up in a list that is being edited
+     * underneath it is a dialog that can end up naming the wrong one.
+     */
+    const [confirming, setConfirming] = useState(null);
+    const [creatingOpen, setCreatingOpen] = useState(false);
+    const [trashOpen, setTrashOpen] = useState(false);
     const refreshList = useCallback(async () => {
         try {
             const list = await client.list();
@@ -124,30 +155,91 @@ function Workspace({ credentials, onSignOut, }) {
         return () => window.clearTimeout(handle);
     }, [client, query]);
     // Every other overlay in the app closes on Escape; the document drawer has
-    // to as well, and it covers its own toggle button at narrow widths.
+    // to as well, and it covers its own toggle button at narrow widths. The two
+    // transient things in the sidebar — a pending delete and the New menu — go
+    // with it, because Escape means "I didn't mean that" everywhere else.
     useEffect(() => {
-        if (!libraryOpen)
+        if (!libraryOpen && !creatingOpen)
             return;
         const onKey = (event) => {
-            if (event.key === 'Escape')
-                setLibraryOpen(false);
+            if (event.key !== 'Escape')
+                return;
+            setLibraryOpen(false);
+            setCreatingOpen(false);
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [libraryOpen]);
+    }, [libraryOpen, creatingOpen]);
+    // A menu that stays open after you look away is a menu you have to dismiss.
+    useEffect(() => {
+        if (!creatingOpen)
+            return;
+        const onDown = (event) => {
+            const target = event.target;
+            if (!target?.closest('.new-doc-wrap'))
+                setCreatingOpen(false);
+        };
+        window.addEventListener('mousedown', onDown);
+        return () => window.removeEventListener('mousedown', onDown);
+    }, [creatingOpen]);
     const grouped = useMemo(() => groupByFolder(documents), [documents]);
     const current = documents.find((doc) => doc.docId === selected) ?? null;
     // No dialog. A native `window.prompt` is the least finished-looking thing an
     // interface can show, and naming a document is not a decision worth blocking
     // on — the title is right there to type over.
-    const createDocument = async () => {
+    //
+    // A design is created the same way and lands in the same list, because a
+    // design *is* a document. Creating one used to require being inside another
+    // document first — the only entry point was "insert a design into this one" —
+    // which made the app's second content type reachable only as a footnote to
+    // the first.
+    const createDocument = async (kind) => {
         const stamp = new Date().toISOString().slice(0, 10);
-        const path = `untitled-${stamp}-${Math.random().toString(36).slice(2, 6)}`;
+        const suffix = Math.random().toString(36).slice(2, 6);
+        const seed = kind === 'design'
+            ? {
+                path: `design/untitled-${stamp}-${suffix}`,
+                content: blankDesign('Untitled design'),
+            }
+            : {
+                path: `untitled-${stamp}-${suffix}`,
+                content: '# Untitled\n\nStart writing…\n',
+            };
         try {
-            const created = await client.create(path, '# Untitled\n\nStart writing…\n');
+            const created = await client.create(seed.path, seed.content);
             await refreshList();
             setSelected(created.docId);
             setLibraryOpen(false);
+            setCreatingOpen(false);
+        }
+        catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
+        }
+    };
+    /**
+     * Delete a document, second press.
+     *
+     * Deliberately not `window.confirm`: it is the same finished-looking problem
+     * as `window.prompt`, and it puts the question somewhere other than the thing
+     * being asked about. The row itself becomes the question instead.
+     *
+     * It goes to the trash rather than being destroyed, and stays there for
+     * thirty days with its comments, suggestions and history intact — so this is
+     * reversible, and the dialog says so rather than warning about something that
+     * is not true.
+     */
+    const deleteDocument = async (doc) => {
+        setConfirming(null);
+        try {
+            await client.remove(doc.docId);
+            const remaining = documents.filter((d) => d.docId !== doc.docId);
+            setDocuments(remaining);
+            // Selecting a deleted document renders an editor over a 404. Move to a
+            // neighbour, and only then refresh — the list we just computed is right,
+            // and waiting for a round trip would leave the dead document on screen.
+            if (selected === doc.docId)
+                setSelected(remaining[0]?.docId ?? null);
+            await refreshList();
         }
         catch (err) {
             setError(err instanceof Error ? err.message : String(err));
@@ -159,10 +251,10 @@ function Workspace({ credentials, onSignOut, }) {
                                         setSelected(doc.docId);
                                     setQuery('');
                                     setLibraryOpen(false);
-                                }, children: [_jsx("span", { className: "doc-title", children: hit.heading || prettyName(hit.path) }), _jsx("span", { className: "hit-snippet", children: hit.snippet })] }, hit.ref)))] })) : (_jsx("nav", { className: "doc-list", "data-testid": "doc-list", children: grouped.map(([folder, docs]) => (_jsxs("div", { className: "folder", children: [_jsx("div", { className: "folder-label", children: folder ? prettyName(folder) : 'No folder' }), docs.map((doc) => (_jsx("button", { className: `doc-item ${doc.docId === selected ? 'is-selected' : ''}`, onClick: () => {
-                                        setSelected(doc.docId);
-                                        setLibraryOpen(false);
-                                    }, "data-testid": `doc-${doc.path}`, children: _jsx("span", { className: "doc-title", children: doc.title }) }, doc.docId)))] }, folder))) })), _jsxs("div", { className: "library-foot", children: [_jsxs("button", { className: "new-doc", onClick: () => void createDocument(), children: [_jsx("span", { "aria-hidden": "true", children: "+" }), " New document"] }), _jsx("button", { className: "link-quiet", onClick: onSignOut, children: "Sign out" })] })] }), _jsx("button", { className: "scrim", "aria-label": "Close the document list", tabIndex: libraryOpen ? 0 : -1, onClick: () => setLibraryOpen(false) }), _jsxs("div", { className: "main-column", children: [error && _jsx("div", { className: "banner error", children: error }), selected && current ? (_jsx(DocumentView, { client: client, credentials: credentials, docId: selected, path: current.path, people: people, onToggleLibrary: () => setLibraryOpen((open) => !open), onNewDocument: () => void createDocument(), onSignOut: onSignOut, onOpenPath: (path) => {
+                                }, children: [_jsx("span", { className: "doc-title", children: hit.heading || prettyName(hit.path) }), _jsx("span", { className: "hit-snippet", children: hit.snippet })] }, hit.ref)))] })) : (_jsx("nav", { className: "doc-list", "data-testid": "doc-list", children: grouped.map(([folder, docs]) => (_jsxs("div", { className: "folder", children: [_jsx("div", { className: "folder-label", children: folder ? prettyName(folder) : 'No folder' }), docs.map((doc) => (_jsxs("div", { className: "doc-row", children: [_jsx("button", { className: `doc-item ${doc.docId === selected ? 'is-selected' : ''}`, onClick: () => {
+                                                setSelected(doc.docId);
+                                                setLibraryOpen(false);
+                                            }, "data-testid": `doc-${doc.path}`, children: _jsx("span", { className: "doc-title", children: doc.title }) }), _jsx("button", { className: "doc-delete", onClick: () => setConfirming(doc), title: `Delete ${doc.title}`, "aria-label": `Delete ${doc.title}`, "data-testid": `delete-${doc.path}`, children: _jsx(TrashIcon, {}) })] }, doc.docId)))] }, folder))) })), _jsxs("div", { className: "library-foot", children: [_jsxs("div", { className: "new-doc-wrap", children: [creatingOpen && (_jsxs("div", { className: "new-doc-menu", "data-testid": "new-menu", children: [_jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('doc'), children: [_jsx(DocumentIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Document" }), _jsx("em", { children: "Words, in a page" })] })] }), _jsxs("button", { className: "new-doc-choice", onClick: () => void createDocument('design'), "data-testid": "new-design", children: [_jsx(DesignIcon, {}), _jsxs("span", { children: [_jsx("strong", { children: "Design" }), _jsx("em", { children: "A screen, on a canvas" })] })] })] })), _jsxs("button", { className: "new-doc", onClick: () => setCreatingOpen((open) => !open), "aria-expanded": creatingOpen, "data-testid": "new-button", children: [_jsx("span", { "aria-hidden": "true", children: "+" }), " New"] })] }), _jsx("button", { className: "link-quiet", onClick: () => setTrashOpen(true), "data-testid": "open-trash", children: "Trash" }), _jsx("button", { className: "link-quiet", onClick: onSignOut, children: "Sign out" })] })] }), confirming && (_jsx(ConfirmDelete, { doc: confirming, onCancel: () => setConfirming(null), onConfirm: () => void deleteDocument(confirming) })), trashOpen && (_jsx(Trash, { client: client, onClose: () => setTrashOpen(false), onChanged: () => void refreshList() })), _jsx("button", { className: "scrim", "aria-label": "Close the document list", tabIndex: libraryOpen ? 0 : -1, onClick: () => setLibraryOpen(false) }), _jsxs("div", { className: "main-column", children: [error && _jsx("div", { className: "banner error", children: error }), selected && current ? (_jsx(DocumentView, { client: client, credentials: credentials, docId: selected, path: current.path, people: people, onToggleLibrary: () => setLibraryOpen((open) => !open), onNewDocument: () => void createDocument('doc'), onSignOut: onSignOut, onRenamed: (title) => setDocuments((list) => list.map((doc) => (doc.docId === selected ? { ...doc, title } : doc))), onOpenPath: (path) => {
                             const target = documents.find((doc) => doc.path === path);
                             if (target) {
                                 setSelected(target.docId);
@@ -176,13 +268,13 @@ function Workspace({ credentials, onSignOut, }) {
                                 .then((list) => list.find((doc) => doc.path === path))
                                 .then((found) => found && setSelected(found.docId))
                                 .catch(() => undefined));
-                        } }, selected)) : (_jsx(FirstRun, { onCreate: () => void createDocument() }))] })] }));
+                        } }, selected)) : (_jsx(FirstRun, { onCreate: () => void createDocument('doc') }))] })] }));
 }
 function FirstRun({ onCreate }) {
     return (_jsx("div", { className: "desk", children: _jsx("div", { className: "spread", children: _jsxs("main", { className: "page page-empty", children: [_jsx("h1", { children: "Start a document" }), _jsx("p", { children: "Write the way you always do. Galley keeps it in a format your agents can read, cite, and suggest edits to." }), _jsx("button", { className: "primary", onClick: onCreate, children: "Blank document" })] }) }) }));
 }
 // ---------------------------------------------------------------------------
-function DocumentView({ client, credentials, docId, path, people, onToggleLibrary, onNewDocument, onSignOut, onOpenPath, }) {
+function DocumentView({ client, credentials, docId, path, people, onToggleLibrary, onNewDocument, onSignOut, onOpenPath, onRenamed, }) {
     const editor = useRef(null);
     const desk = useRef(null);
     const lane = useRef(null);
@@ -193,7 +285,7 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
     const [comments, setComments] = useState([]);
     const [suggestions, setSuggestions] = useState([]);
     const [orphans, setOrphans] = useState([]);
-    const [history, setHistory] = useState({ revisions: [], checkpoints: [], attribution: [] });
+    const [history, setHistory] = useState({ revisions: [], checkpoints: [], attribution: [], total: 0, more: null });
     const [peers, setPeers] = useState([]);
     const [activeBlock, setActiveBlock] = useState(null);
     const [notice, setNotice] = useState(null);
@@ -207,6 +299,12 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
      */
     const [editorState, setEditorState] = useState(null);
     /** Which insert picker is open, if any. */
+    /**
+     * Which insert overlay is open.
+     *
+     * Only images have one now. A design is created on the spot, and diagrams are
+     * no longer inserted from here at all — see the two decisions this replaced.
+     */
     const [inserting, setInserting] = useState(null);
     /**
      * The markup of every design this document links to, by path.
@@ -313,11 +411,23 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
         }
         saving.current = true;
         setSave('saving');
+        const titleBefore = titleOf(serverContent.current, path);
         try {
             const result = await client.applyOps(docId, ops);
             // The annotated form, not the clean one: the next diff has to be taken
             // against the same bytes this client holds.
             serverContent.current = result.source;
+            // A document is named by its first heading, so a save that changed that
+            // heading renamed the document, and the list in the sidebar is now wrong.
+            //
+            // The new name is handed up rather than the list being refetched. A
+            // refetch would race the server's *debounced* snapshot — the title in
+            // storage is written when the document is flushed, not when the op lands,
+            // so a list fetched immediately after a save reliably returns the old
+            // name. This client already knows the answer; it just wrote it.
+            const titleNow = titleOf(result.source, path);
+            if (titleNow !== titleBefore)
+                onRenamed(titleNow);
             const [threads, proposals] = await Promise.all([
                 client.comments(docId),
                 client.suggestions(docId),
@@ -333,7 +443,7 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
             setSave('error');
             setNotice(failure("That change couldn't be saved. It is still here — we'll keep trying.", err));
         }
-    }, [client, docId]);
+    }, [client, docId, path, onRenamed]);
     useEffect(() => {
         if (save !== 'dirty')
             return;
@@ -607,6 +717,31 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
     }, []);
     if (!loaded)
         return _jsx("main", { className: "desk", children: _jsx("div", { className: "spread", children: _jsx("div", { className: "page page-loading" }) }) });
+    /**
+     * Put a design in this document.
+     *
+     * **Blank, and immediately.** There used to be a gallery of starters in the
+     * way — "pick a shape to start from" — which is a question asked before the
+     * writer has anything to say about the answer. A starter is a guess at what
+     * you are making, and the cost of a wrong guess is higher than the cost of an
+     * empty frame: you have to recognise which parts are yours, then delete the
+     * rest. The palette on the canvas is where choosing what to add belongs, and
+     * it is one click away with every piece drawn as itself.
+     *
+     * A design is its own document, so this creates one and links to it. The link
+     * is ordinary CommonMark — Galley draws it live, everything else shows a
+     * link, and the design keeps its own history and its own comments.
+     */
+    const insertDesign = async () => {
+        const slug = `${loaded.path}-design-${Math.random().toString(36).slice(2, 6)}`;
+        try {
+            await client.create(slug, blankDesign('Untitled design'));
+            editor.current?.run(insertDesignLink(slug, 'Untitled design'));
+        }
+        catch (err) {
+            setNotice(failure('That design could not be created.', err));
+        }
+    };
     const title = titleOf(loaded.content, loaded.path);
     const folder = loaded.path.includes('/') ? loaded.path.slice(0, loaded.path.lastIndexOf('/')) : '';
     /**
@@ -635,7 +770,15 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
                             // a title above it, notes below — is copied rather than rewritten.
                             // Spliced into the newest draft, so consecutive edits compose
                             // rather than each one being applied to the last saved version.
-                            setDraft(embedDesign(latestDraft.current || loaded.content, source));
+                            const base = latestDraft.current || loaded.content;
+                            // The design's name and the document's heading are the same fact
+                            // written twice — one inside the fence for the format, one above it
+                            // for everything that reads Markdown, including the document list.
+                            // Renaming the design on the canvas has to move both, or the
+                            // sidebar goes on calling it "Untitled design" after it has one.
+                            const parsedDesign = parseDesign(source);
+                            const named = parsedDesign.ok ? parsedDesign.design.name : undefined;
+                            setDraft(retitle(embedDesign(base, source), named));
                             setSave('dirty');
                         }, 
                         // A design *is* a document, so there is nowhere to go "back" to.
@@ -643,7 +786,7 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
                         // what the document list is for.
                         onClose: onToggleLibrary }) }), shareOpen && _jsx(Share, { path: loaded.path, onClose: () => setShareOpen(false) })] }));
     }
-    return (_jsxs(_Fragment, { children: [_jsxs("header", { className: "chrome", children: [_jsxs("div", { className: "chrome-top", children: [_jsx("button", { className: "icon-button chrome-menu", onClick: onToggleLibrary, "aria-label": "Documents", children: _jsx("span", { "aria-hidden": "true", children: "\u2630" }) }), _jsxs("nav", { className: "breadcrumb", "aria-label": "Location", children: [folder && (_jsxs(_Fragment, { children: [_jsx("span", { className: "crumb", children: prettyName(folder) }), _jsx("span", { className: "crumb-sep", "aria-hidden": "true", children: "\u203A" })] })), _jsx("span", { className: "crumb is-current", "data-testid": "doc-title", children: title })] }), _jsxs("div", { className: "chrome-right", children: [_jsx(SaveBadge, { state: save }), _jsx(Presence, { peers: peers }), _jsx("button", { className: "chrome-button chrome-share", onClick: () => setShareOpen(true), children: "Share" })] })] }), _jsx(MenuBar, { state: editorState, readOnly: false, run: (command) => editor.current?.run(command), onLink: () => editor.current?.openLink(), onComment: () => editor.current?.openComment(), onImage: () => setInserting('image'), onDiagram: () => setInserting('diagram'), onDesign: () => setInserting('design'), onTable: () => editor.current?.run(INSERT_TABLE), onShare: () => setShareOpen(true), onHistory: () => setHistoryOpen(true), onNewDocument: onNewDocument, onToggleLibrary: onToggleLibrary, onCopyMarkdown: () => void navigator.clipboard?.writeText(editor.current?.markdown() ?? loaded.content), onDownload: () => downloadMarkdown(loaded.path, editor.current?.markdown() ?? loaded.content), onSignOut: onSignOut }), _jsx(Toolbar, { state: editorState, readOnly: false, run: (command) => editor.current?.run(command), onLink: () => editor.current?.openLink(), onComment: () => editor.current?.openComment(), onImage: () => setInserting('image'), onDiagram: () => setInserting('diagram'), onDesign: () => setInserting('design'), onTable: () => editor.current?.run(INSERT_TABLE) })] }), notice && (_jsxs("div", { className: `banner banner-${notice.tone}`, "data-testid": "notice", children: [_jsx("span", { children: notice.text }), notice.action && (_jsx("button", { className: "link-quiet", onClick: notice.action.run, children: notice.action.label })), _jsx("button", { className: "icon-button", onClick: () => setNotice(null), "aria-label": "Dismiss", children: _jsx("span", { "aria-hidden": "true", children: "\u2715" }) })] })), _jsx("div", { className: "desk", ref: desk, children: _jsxs("div", { className: "spread", children: [_jsx("main", { className: "page", children: _jsx(Editor, { ref: editor, markdown: loaded.content, revision: loaded.version, highlights: highlights, designs: designs, suggestions: inlineSuggestions, suggestionHandlers: suggestionHandlers, onChange: (markdown) => {
+    return (_jsxs(_Fragment, { children: [_jsxs("header", { className: "chrome", children: [_jsxs("div", { className: "chrome-top", children: [_jsx("button", { className: "icon-button chrome-menu", onClick: onToggleLibrary, "aria-label": "Documents", children: _jsx("span", { "aria-hidden": "true", children: "\u2630" }) }), _jsxs("nav", { className: "breadcrumb", "aria-label": "Location", children: [folder && (_jsxs(_Fragment, { children: [_jsx("span", { className: "crumb", children: prettyName(folder) }), _jsx("span", { className: "crumb-sep", "aria-hidden": "true", children: "\u203A" })] })), _jsx("span", { className: "crumb is-current", "data-testid": "doc-title", children: title })] }), _jsxs("div", { className: "chrome-right", children: [_jsx(SaveBadge, { state: save }), _jsx(Presence, { peers: peers }), _jsx("button", { className: "chrome-button chrome-share", onClick: () => setShareOpen(true), children: "Share" })] })] }), _jsx(MenuBar, { state: editorState, readOnly: false, run: (command) => editor.current?.run(command), onLink: () => editor.current?.openLink(), onComment: () => editor.current?.openComment(), onImage: () => setInserting('image'), onDesign: () => void insertDesign(), onTable: () => editor.current?.run(INSERT_TABLE), onShare: () => setShareOpen(true), onHistory: () => setHistoryOpen(true), onNewDocument: onNewDocument, onToggleLibrary: onToggleLibrary, onCopyMarkdown: () => void navigator.clipboard?.writeText(editor.current?.markdown() ?? loaded.content), onDownload: () => downloadMarkdown(loaded.path, editor.current?.markdown() ?? loaded.content), onSignOut: onSignOut }), _jsx(Toolbar, { state: editorState, readOnly: false, run: (command) => editor.current?.run(command), onLink: () => editor.current?.openLink(), onComment: () => editor.current?.openComment(), onImage: () => setInserting('image'), onDesign: () => void insertDesign(), onTable: () => editor.current?.run(INSERT_TABLE) })] }), notice && (_jsxs("div", { className: `banner banner-${notice.tone}`, "data-testid": "notice", children: [_jsx("span", { children: notice.text }), notice.action && (_jsx("button", { className: "link-quiet", onClick: notice.action.run, children: notice.action.label })), _jsx("button", { className: "icon-button", onClick: () => setNotice(null), "aria-label": "Dismiss", children: _jsx("span", { "aria-hidden": "true", children: "\u2715" }) })] })), _jsx("div", { className: "desk", ref: desk, children: _jsxs("div", { className: "spread", children: [_jsx("main", { className: "page", children: _jsx(Editor, { ref: editor, markdown: loaded.content, revision: loaded.version, highlights: highlights, designs: designs, suggestions: inlineSuggestions, suggestionHandlers: suggestionHandlers, onChange: (markdown) => {
                                     setDraft(markdown);
                                     setSave('dirty');
                                 }, onStateChange: setEditorState, imageUploader: imageUploader, onSelectBlock: (blockId) => {
@@ -688,30 +831,19 @@ function DocumentView({ client, credentials, docId, path, people, onToggleLibrar
                 }, onInsert: (src, alt) => {
                     setInserting(null);
                     editor.current?.run(insertImage(src, alt));
-                } })), inserting === 'diagram' && (_jsx(DiagramPicker, { onClose: () => {
-                    setInserting(null);
-                    editor.current?.focus();
-                }, onInsert: (code) => {
-                    setInserting(null);
-                    editor.current?.run(insertDiagram(code));
-                } })), inserting === 'design' && (_jsx(DesignPicker, { onClose: () => {
-                    setInserting(null);
-                    editor.current?.focus();
-                }, onInsert: async (starter) => {
-                    setInserting(null);
-                    try {
-                        // A design is its own document, so inserting one creates a
-                        // document and links to it. The link is ordinary CommonMark —
-                        // Galley draws it live, everything else shows a link, and the
-                        // design keeps its own history and its own comments.
-                        const slug = `${loaded.path}-design-${Math.random().toString(36).slice(2, 6)}`;
-                        await client.create(slug, `# ${starter.label}\n\n\`\`\`design\n${starter.source}\n\`\`\`\n`);
-                        editor.current?.run(insertDesignLink(slug, starter.label));
-                    }
-                    catch (err) {
-                        setNotice(failure('That design could not be created.', err));
-                    }
-                } })), shareOpen && (_jsx(Share, { path: loaded.path, onClose: () => setShareOpen(false) })), historyOpen && (_jsx(HistoryOverlay, { revisions: history.revisions, checkpoints: history.checkpoints, attribution: history.attribution, activeBlock: activeBlock, nameOf: nameOf, onClose: () => setHistoryOpen(false), onCheckpoint: async (name) => {
+                } })), shareOpen && (_jsx(Share, { path: loaded.path, onClose: () => setShareOpen(false) })), historyOpen && (_jsx(HistoryOverlay, { revisions: history.revisions, checkpoints: history.checkpoints, attribution: history.attribution, activeBlock: activeBlock, nameOf: nameOf, total: history.total, more: history.more, onClose: () => setHistoryOpen(false), onOlder: async () => {
+                    if (history.more == null)
+                        return;
+                    const page = await client.history(docId, 100, history.more);
+                    // Appended, not replaced, and deduped by ticket: the timeline is
+                    // one list that grows backwards, and a page boundary is not a
+                    // reason for the reader to lose their place.
+                    setHistory((current) => {
+                        const seen = new Set(current.revisions.map((revision) => revision.ticket));
+                        const older = page.revisions.filter((revision) => !seen.has(revision.ticket));
+                        return { ...current, revisions: [...older, ...current.revisions], more: page.more };
+                    });
+                }, onCheckpoint: async (name) => {
                     await client.checkpoint(docId, name);
                     setHistory(await client.history(docId));
                 }, onRestore: async (ticket) => {
@@ -768,8 +900,9 @@ function Share({ path, onClose }) {
  * It is an overlay rather than a permanent tab because it is visited monthly,
  * and a monthly destination should not charge rent on every screen.
  */
-function HistoryOverlay({ revisions, checkpoints, attribution, activeBlock, nameOf, onClose, onCheckpoint, onRestore, }) {
+function HistoryOverlay({ revisions, checkpoints, attribution, activeBlock, nameOf, total, more, onClose, onOlder, onCheckpoint, onRestore, }) {
     const [name, setName] = useState('');
+    const [loadingOlder, setLoadingOlder] = useState(false);
     const byTicket = useMemo(() => new Map(checkpoints.map((c) => [c.ticket, c])), [checkpoints]);
     const current = activeBlock ? attribution.find((a) => a.blockId === activeBlock) : undefined;
     return (_jsx(Overlay, { title: "Version history", onClose: onClose, children: _jsxs("div", { className: "history", "data-testid": "history-rail", children: [current && (_jsxs("div", { className: "attribution", "data-testid": "attribution", children: [_jsx("span", { className: "attribution-label", children: "This paragraph" }), _jsxs("span", { className: "who-name", children: [current.authorName, current.byAgent && _jsx("span", { className: "agent-chip", children: "Agent" })] }), _jsx("time", { dateTime: current.at, children: when(current.at) })] })), _jsxs("form", { className: "composer compact", onSubmit: async (event) => {
@@ -781,7 +914,79 @@ function HistoryOverlay({ revisions, checkpoints, attribution, activeBlock, name
                     }, children: [_jsx("input", { value: name, onChange: (event) => setName(event.target.value), placeholder: "Name this version", "data-testid": "checkpoint-input" }), _jsx("button", { type: "submit", className: "ghost", disabled: !name.trim(), "data-testid": "checkpoint-submit", children: "Save" })] }), revisions.length === 0 && _jsx("p", { className: "lane-empty", children: "Nothing has changed yet." }), _jsx("ol", { className: "timeline", children: revisions.map((revision) => {
                         const checkpoint = byTicket.get(revision.ticket);
                         return (_jsxs("li", { className: "revision", "data-testid": "revision", children: [_jsx("span", { className: `dot ${revision.byAgent ? 'agent' : ''}` }), _jsxs("div", { className: "revision-body", children: [checkpoint && _jsx("span", { className: "checkpoint-name", children: checkpoint.name }), _jsx("span", { className: "revision-summary", children: revision.summary }), _jsxs("span", { className: "revision-meta", children: [revision.authorName || nameOf(revision.authorId), revision.byAgent && _jsx("span", { className: "agent-chip", children: "Agent" }), " \u00B7 ", when(revision.at)] })] }), _jsx("button", { className: "ghost tiny", onClick: () => void onRestore(revision.ticket), "data-testid": `restore-${revision.ticket}`, title: "Bring this version back", children: "Restore" })] }, revision.ticket));
-                    }) })] }) }));
+                    }) }), more !== null && (_jsx("button", { className: "ghost history-older", "data-testid": "history-older", disabled: loadingOlder, onClick: () => {
+                        setLoadingOlder(true);
+                        void onOlder().finally(() => setLoadingOlder(false));
+                    }, children: loadingOlder ? 'Loading…' : `Show older — ${total - revisions.length} more` })), more === null && total > 0 && (_jsxs("p", { className: "history-all", "data-testid": "history-all", children: ["That is all ", total, " version", total === 1 ? '' : 's', ", back to the beginning."] }))] }) }));
+}
+/**
+ * "Are you sure?", asked properly.
+ *
+ * A dialog rather than something inline, because a delete is the one gesture in
+ * this app that removes work from everyone's view at once, and it should cost a
+ * deliberate second look. The Overlay it is built on already traps focus and
+ * returns it, so the keyboard path is the same as every other dialog here.
+ *
+ * **The copy states what actually happens.** It does not say "this cannot be
+ * undone", because it can: the document goes to the trash with its comments,
+ * its suggestions and its history, and stays there for thirty days. A warning
+ * that overstates the damage is a warning people learn to click through.
+ *
+ * Cancel is the default focus, not Delete. The dialog exists to make the
+ * destructive answer the deliberate one, and a focused Delete that Enter
+ * activates is the opposite of that.
+ */
+function ConfirmDelete({ doc, onCancel, onConfirm, }) {
+    return (_jsxs(Overlay, { title: "Delete this document?", onClose: onCancel, children: [_jsxs("p", { className: "overlay-lead", "data-testid": "confirm-delete-text", children: [_jsx("strong", { children: doc.title }), " will move to the trash, with its notes and its history. You can put it back for the next 30 days."] }), _jsxs("div", { className: "overlay-actions", children: [_jsx("button", { className: "quiet", onClick: onCancel, autoFocus: true, "data-testid": "confirm-cancel", children: "Keep it" }), _jsx("button", { className: "danger", onClick: onConfirm, "data-testid": "confirm-delete", children: "Delete" })] })] }));
+}
+/**
+ * The trash, and the way back out of it.
+ *
+ * Its own overlay rather than a section of the sidebar: the trash is a place
+ * you visit when something has gone wrong, not a thing to scroll past every
+ * time you pick a document. Google Docs, Notion and Figma all put it behind one
+ * click for the same reason.
+ *
+ * Each row says how long is left, in days, because that is the only number
+ * anyone acts on. A timestamp would be more precise and would make the reader
+ * do the arithmetic.
+ */
+function Trash({ client, onClose, onChanged, }) {
+    const [rows, setRows] = useState(null);
+    const [error, setError] = useState(null);
+    // Which row is asking "for good?", so a permanent delete inside the trash
+    // still costs two presses. There is no third chance after this one.
+    const [purging, setPurging] = useState(null);
+    const load = useCallback(async () => {
+        try {
+            setRows(await client.trash());
+            setError(null);
+        }
+        catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
+        }
+    }, [client]);
+    useEffect(() => {
+        void load();
+    }, [load]);
+    const act = async (run) => {
+        try {
+            await run();
+            await load();
+            onChanged();
+        }
+        catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
+        }
+    };
+    return (_jsxs(Overlay, { title: "Trash", onClose: onClose, children: [_jsx("p", { className: "overlay-lead", children: "Deleted documents stay here for 30 days, with everything that was on them." }), error && _jsx("p", { className: "overlay-error", children: error }), rows === null && _jsx("p", { className: "overlay-lead", children: "Looking\u2026" }), rows?.length === 0 && (_jsx("p", { className: "overlay-lead", "data-testid": "trash-empty", children: "Nothing in here." })), _jsx("div", { className: "trash-list", "data-testid": "trash-list", children: rows?.map((row) => (_jsxs("div", { className: "trash-row", children: [_jsxs("span", { className: "trash-name", children: [_jsx("strong", { children: row.title }), _jsxs("em", { children: [row.path, " \u00B7 ", daysLeft(row.purgeAt)] })] }), purging === row.docId ? (_jsxs(_Fragment, { children: [_jsx("span", { className: "trash-warn", children: "For good?" }), _jsx("button", { className: "danger", onClick: () => void act(() => client.purge(row.docId)), "data-testid": `purge-confirm-${row.docId}`, children: "Delete" }), _jsx("button", { className: "quiet", onClick: () => setPurging(null), children: "Cancel" })] })) : (_jsxs(_Fragment, { children: [_jsx("button", { className: "quiet", onClick: () => void act(() => client.untrash(row.docId)), "data-testid": `restore-${row.docId}`, children: "Put back" }), _jsx("button", { className: "trash-purge", onClick: () => setPurging(row.docId), "aria-label": `Delete ${row.title} for good`, "data-testid": `purge-${row.docId}`, children: _jsx(TrashIcon, {}) })] }))] }, row.docId))) })] }));
+}
+/** "29 days left", which is the only part of a purge date anyone acts on. */
+function daysLeft(purgeAt) {
+    const days = Math.max(0, Math.ceil((Date.parse(purgeAt) - Date.now()) / 86_400_000));
+    if (days === 0)
+        return 'gone today';
+    return `${days} day${days === 1 ? '' : 's'} left`;
 }
 function Overlay({ title, onClose, children, }) {
     const panel = useRef(null);
@@ -883,6 +1088,24 @@ function titleOf(content, fallback) {
     return heading[1].replace(/\s*<!--\s*\^[A-Za-z0-9_-]+\s*-->\s*$/, '').trim();
 }
 /**
+ * Rewrite a document's first heading, leaving everything else alone.
+ *
+ * Used when a design is renamed on the canvas: the name lives inside the fence
+ * for the format's benefit and the heading lives above it for everything that
+ * reads Markdown — the document list, `galley ls`, a pull to disk — so the two
+ * have to move together.
+ *
+ * Only the heading's *text* is replaced. The line may carry a block id marker,
+ * and that marker is the document's identity for this block: comments and
+ * citations anchor to it, so a rewrite that swallowed it would silently orphan
+ * every note on the title.
+ */
+function retitle(content, name) {
+    if (!name?.trim())
+        return content;
+    return content.replace(/^(#{1,6}[ \t]+)(.+?)([ \t]*<!--\s*\^[A-Za-z0-9_-]+\s*-->)?$/m, (_whole, hashes, _text, marker) => `${hashes}${name.trim()}${marker ?? ''}`);
+}
+/**
  * What a proposed block would *read* as.
  *
  * The stored proposal is Markdown, and diffing that against the rendered
@@ -940,25 +1163,6 @@ function downloadMarkdown(path, content) {
     // browser's own fetch of the blob and produces an empty file on some builds.
     setTimeout(() => URL.revokeObjectURL(url), 0);
 }
-/**
- * Choosing a diagram.
- *
- * A gallery of finished diagrams rather than an empty box, because "insert a
- * flowchart" and "learn a diagram syntax from nothing" are very different asks
- * and only the first one is what the writer wanted. Every card is a working
- * diagram with real placeholder labels, so the first edit is renaming a box.
- */
-function DiagramPicker({ onInsert, onClose, }) {
-    return (_jsxs(Overlay, { title: "Insert a diagram", onClose: onClose, children: [_jsx("p", { className: "overlay-lead", children: "Pick a shape to start from. You can change everything about it." }), _jsx("div", { className: "diagram-gallery", children: DIAGRAM_TEMPLATES.map((template) => (_jsxs("button", { type: "button", className: "diagram-card", "data-testid": `diagram-${template.id}`, onClick: () => onInsert(template.code), children: [_jsx("span", { className: "diagram-card-name", children: template.label }), _jsx("span", { className: "diagram-card-hint", children: template.hint })] }, template.id))) })] }));
-}
-/**
- * Choosing an image.
- *
- * By address only, for now. A paste-and-upload path needs somewhere to put the
- * bytes, and there is no asset route yet — offering a file picker that silently
- * embedded a multi-megabyte data URI into a document meant to be read by agents
- * would be worse than not offering one.
- */
 function ImagePicker({ onInsert, onClose, }) {
     const [src, setSrc] = useState('');
     const [alt, setAlt] = useState('');
@@ -967,16 +1171,5 @@ function ImagePicker({ onInsert, onClose, }) {
                 if (src.trim())
                     onInsert(src.trim(), alt.trim());
             }, children: [_jsxs("label", { children: [_jsx("span", { children: "Image address" }), _jsx("input", { autoFocus: true, value: src, placeholder: "https://\u2026 or ./images/diagram.png", onChange: (event) => setSrc(event.target.value) })] }), _jsxs("label", { children: [_jsx("span", { children: "Description" }), _jsx("input", { value: alt, placeholder: "What the image shows", onChange: (event) => setAlt(event.target.value) }), _jsx("small", { children: "Read aloud to anyone who cannot see it, and to every agent." })] }), _jsxs("div", { className: "overlay-actions", children: [_jsx("button", { type: "button", className: "ghost", onClick: onClose, children: "Cancel" }), _jsx("button", { type: "submit", className: "primary", disabled: !src.trim(), children: "Insert" })] })] }) }));
-}
-/**
- * Choosing a design to start from.
- *
- * Same reasoning as the diagram gallery, and the same evidence behind it: a
- * blank canvas is a churn surface. Every starter is a real design in the
- * closed vocabulary, so the first edit is renaming a label rather than
- * learning a layout language.
- */
-function DesignPicker({ onInsert, onClose, }) {
-    return (_jsxs(Overlay, { title: "Insert a design", onClose: onClose, children: [_jsx("p", { className: "overlay-lead", children: "A design is its own document, so it keeps its own history and its own notes \u2014 and any document can point at it." }), _jsx("div", { className: "diagram-gallery", children: STARTERS.map((starter) => (_jsxs("button", { type: "button", className: "diagram-card", "data-testid": `design-${starter.id}`, onClick: () => onInsert(starter), children: [_jsx("span", { className: "diagram-card-name", children: starter.label }), _jsx("span", { className: "diagram-card-hint", children: starter.hint })] }, starter.id))) })] }));
 }
 //# sourceMappingURL=App.js.map

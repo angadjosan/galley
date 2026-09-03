@@ -761,3 +761,67 @@ describe('an anchor survives the layer being moved', () => {
     expect(once).toEqual(twice);
   });
 });
+
+describe('renaming a design', () => {
+  const SOURCE = [
+    '<design name="Untitled design">',
+    '  <frame name="Screen" width="390" class="flex flex-col gap-4 p-6 bg-canvas">',
+    '    <text class="text-h2 text-fg">Title</text>',
+    '  </frame>',
+    '</design>',
+  ].join('\n');
+
+  function parsed() {
+    const result = parseDesign(SOURCE);
+    if (!result.ok) throw new Error(result.errors.map((e) => e.message).join('; '));
+    return result.design;
+  }
+
+  it('changes the name and nothing else', () => {
+    const result = applyOps(parsed(), [{ op: 'rename', name: 'Sign in' }]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.design.name).toBe('Sign in');
+    // The tree is untouched, which is what makes this safe to fire on every
+    // keystroke of a rename.
+    expect(serializeDesign(result.design).trim()).toBe(
+      SOURCE.replace('Untitled design', 'Sign in'),
+    );
+  });
+
+  it('refuses a blank name rather than writing one', () => {
+    // `name=""` parses and says nothing, which is worse than refusing.
+    for (const name of ['', '   ', '\t']) {
+      const result = applyOps(parsed(), [{ op: 'rename', name }]);
+      expect(result.ok, JSON.stringify(name)).toBe(false);
+    }
+  });
+
+  it('trims, so a trailing space does not become part of the name', () => {
+    const result = applyOps(parsed(), [{ op: 'rename', name: '  Sign in  ' }]);
+    expect(result.ok && result.design.name).toBe('Sign in');
+  });
+
+  it('composes with other ops in one batch', () => {
+    const design = parsed();
+    const frame = design.frames[0]!;
+    const result = applyOps(design, [
+      { op: 'rename', name: 'Sign in' },
+      { op: 'insert', parent: frame.id, index: 0, layer: { kind: 'text', content: 'Hello' } },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.design.name).toBe('Sign in');
+    expect(result.design.frames[0]!.children).toHaveLength(2);
+  });
+
+  it('survives a round trip through the parser', () => {
+    const renamed = applyOps(parsed(), [{ op: 'rename', name: 'A & B' }]);
+    expect(renamed.ok).toBe(true);
+    if (!renamed.ok) return;
+    const again = parseDesign(serializeDesign(renamed.design));
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(again.design.name).toBe('A & B');
+  });
+});

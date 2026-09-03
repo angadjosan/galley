@@ -14,6 +14,7 @@ import type {
   OrphanedAnchor,
   SearchHit,
   DocumentSummary,
+  TrashedDocument,
   RevisionSummary,
   CheckpointSummary,
   AttributionSummary,
@@ -21,11 +22,11 @@ import type {
 import type { EditorState } from 'prosemirror-state';
 import { diffToBlockOps } from '@galley/core/diff';
 import { parseDocument } from '@galley/markdown';
-import { STARTERS, embedDesign, extractDesign, type DesignStarter } from '@galley/design';
+import { embedDesign, extractDesign, parseDesign } from '@galley/design';
 import { Editor, type EditorHandle } from './editor/Editor.js';
-import { INSERT_TABLE, insertDesignLink, insertDiagram, insertImage } from './editor/commands.js';
-import { DIAGRAM_TEMPLATES } from './editor/diagram.js';
+import { INSERT_TABLE, insertDesignLink, insertImage } from './editor/commands.js';
 import { Boundary } from './chrome/Boundary.js';
+import { DesignIcon, DocumentIcon, TrashIcon } from './chrome/icons.js';
 import { DesignEditor } from './design/DesignEditor.js';
 import { MenuBar } from './chrome/MenuBar.js';
 import { Toolbar } from './chrome/Toolbar.js';
@@ -185,6 +186,28 @@ function parseInvite(value: string): { baseUrl: string; token: string } | null {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * A new design, as a document.
+ *
+ * One definition for both ways in — the library's `New → Design` and the
+ * `Insert design` button inside a document — so the two cannot drift into
+ * producing different things called the same name.
+ *
+ * An empty frame with nothing in it. The canvas's palette is where the choosing
+ * happens, with every piece drawn as itself; a gallery of starters in front of
+ * that asks the same question worse, before the writer has anything to say
+ * about the answer.
+ */
+function blankDesign(name: string): string {
+  const source = [
+    `<design name="${name}">`,
+    '  <frame name="Screen" width="390" class="flex flex-col gap-4 p-6 bg-canvas">',
+    '  </frame>',
+    '</design>',
+  ].join('\n');
+  return `# ${name}\n\n\`\`\`design\n${source}\n\`\`\`\n`;
+}
+
 function Workspace({
   credentials,
   onSignOut,
@@ -200,6 +223,16 @@ function Workspace({
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  /**
+   * The document the trash button was pressed on, waiting to be confirmed.
+   *
+   * The whole summary rather than an id: the dialog names the document, and a
+   * dialog that has to look its subject up in a list that is being edited
+   * underneath it is a dialog that can end up naming the wrong one.
+   */
+  const [confirming, setConfirming] = useState<DocumentSummary | null>(null);
+  const [creatingOpen, setCreatingOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
 
   const refreshList = useCallback(async () => {
     try {
@@ -240,15 +273,30 @@ function Workspace({
   }, [client, query]);
 
   // Every other overlay in the app closes on Escape; the document drawer has
-  // to as well, and it covers its own toggle button at narrow widths.
+  // to as well, and it covers its own toggle button at narrow widths. The two
+  // transient things in the sidebar — a pending delete and the New menu — go
+  // with it, because Escape means "I didn't mean that" everywhere else.
   useEffect(() => {
-    if (!libraryOpen) return;
+    if (!libraryOpen && !creatingOpen) return;
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setLibraryOpen(false);
+      if (event.key !== 'Escape') return;
+      setLibraryOpen(false);
+      setCreatingOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [libraryOpen]);
+  }, [libraryOpen, creatingOpen]);
+
+  // A menu that stays open after you look away is a menu you have to dismiss.
+  useEffect(() => {
+    if (!creatingOpen) return;
+    const onDown = (event: MouseEvent): void => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest('.new-doc-wrap')) setCreatingOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [creatingOpen]);
 
   const grouped = useMemo(() => groupByFolder(documents), [documents]);
   const current = documents.find((doc) => doc.docId === selected) ?? null;
@@ -256,14 +304,59 @@ function Workspace({
   // No dialog. A native `window.prompt` is the least finished-looking thing an
   // interface can show, and naming a document is not a decision worth blocking
   // on — the title is right there to type over.
-  const createDocument = async (): Promise<void> => {
+  //
+  // A design is created the same way and lands in the same list, because a
+  // design *is* a document. Creating one used to require being inside another
+  // document first — the only entry point was "insert a design into this one" —
+  // which made the app's second content type reachable only as a footnote to
+  // the first.
+  const createDocument = async (kind: 'doc' | 'design'): Promise<void> => {
     const stamp = new Date().toISOString().slice(0, 10);
-    const path = `untitled-${stamp}-${Math.random().toString(36).slice(2, 6)}`;
+    const suffix = Math.random().toString(36).slice(2, 6);
+    const seed =
+      kind === 'design'
+        ? {
+            path: `design/untitled-${stamp}-${suffix}`,
+            content: blankDesign('Untitled design'),
+          }
+        : {
+            path: `untitled-${stamp}-${suffix}`,
+            content: '# Untitled\n\nStart writing…\n',
+          };
     try {
-      const created = await client.create(path, '# Untitled\n\nStart writing…\n');
+      const created = await client.create(seed.path, seed.content);
       await refreshList();
       setSelected(created.docId);
       setLibraryOpen(false);
+      setCreatingOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  /**
+   * Delete a document, second press.
+   *
+   * Deliberately not `window.confirm`: it is the same finished-looking problem
+   * as `window.prompt`, and it puts the question somewhere other than the thing
+   * being asked about. The row itself becomes the question instead.
+   *
+   * It goes to the trash rather than being destroyed, and stays there for
+   * thirty days with its comments, suggestions and history intact — so this is
+   * reversible, and the dialog says so rather than warning about something that
+   * is not true.
+   */
+  const deleteDocument = async (doc: DocumentSummary): Promise<void> => {
+    setConfirming(null);
+    try {
+      await client.remove(doc.docId);
+      const remaining = documents.filter((d) => d.docId !== doc.docId);
+      setDocuments(remaining);
+      // Selecting a deleted document renders an editor over a 404. Move to a
+      // neighbour, and only then refresh — the list we just computed is right,
+      // and waiting for a round trip would leave the dead document on screen.
+      if (selected === doc.docId) setSelected(remaining[0]?.docId ?? null);
+      await refreshList();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -316,17 +409,27 @@ function Workspace({
               <div key={folder} className="folder">
                 <div className="folder-label">{folder ? prettyName(folder) : 'No folder'}</div>
                 {docs.map((doc) => (
-                  <button
-                    key={doc.docId}
-                    className={`doc-item ${doc.docId === selected ? 'is-selected' : ''}`}
-                    onClick={() => {
-                      setSelected(doc.docId);
-                      setLibraryOpen(false);
-                    }}
-                    data-testid={`doc-${doc.path}`}
-                  >
-                    <span className="doc-title">{doc.title}</span>
-                  </button>
+                  <div key={doc.docId} className="doc-row">
+                    <button
+                      className={`doc-item ${doc.docId === selected ? 'is-selected' : ''}`}
+                      onClick={() => {
+                        setSelected(doc.docId);
+                        setLibraryOpen(false);
+                      }}
+                      data-testid={`doc-${doc.path}`}
+                    >
+                      <span className="doc-title">{doc.title}</span>
+                    </button>
+                    <button
+                      className="doc-delete"
+                      onClick={() => setConfirming(doc)}
+                      title={`Delete ${doc.title}`}
+                      aria-label={`Delete ${doc.title}`}
+                      data-testid={`delete-${doc.path}`}
+                    >
+                      <TrashIcon />
+                    </button>
+                  </div>
                 ))}
               </div>
             ))}
@@ -334,14 +437,62 @@ function Workspace({
         )}
 
         <div className="library-foot">
-          <button className="new-doc" onClick={() => void createDocument()}>
-            <span aria-hidden="true">+</span> New document
+          <div className="new-doc-wrap">
+            {creatingOpen && (
+              <div className="new-doc-menu" data-testid="new-menu">
+                <button className="new-doc-choice" onClick={() => void createDocument('doc')}>
+                  <DocumentIcon />
+                  <span>
+                    <strong>Document</strong>
+                    <em>Words, in a page</em>
+                  </span>
+                </button>
+                <button
+                  className="new-doc-choice"
+                  onClick={() => void createDocument('design')}
+                  data-testid="new-design"
+                >
+                  <DesignIcon />
+                  <span>
+                    <strong>Design</strong>
+                    <em>A screen, on a canvas</em>
+                  </span>
+                </button>
+              </div>
+            )}
+            <button
+              className="new-doc"
+              onClick={() => setCreatingOpen((open) => !open)}
+              aria-expanded={creatingOpen}
+              data-testid="new-button"
+            >
+              <span aria-hidden="true">+</span> New
+            </button>
+          </div>
+          <button className="link-quiet" onClick={() => setTrashOpen(true)} data-testid="open-trash">
+            Trash
           </button>
           <button className="link-quiet" onClick={onSignOut}>
             Sign out
           </button>
         </div>
       </aside>
+
+      {confirming && (
+        <ConfirmDelete
+          doc={confirming}
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => void deleteDocument(confirming)}
+        />
+      )}
+
+      {trashOpen && (
+        <Trash
+          client={client}
+          onClose={() => setTrashOpen(false)}
+          onChanged={() => void refreshList()}
+        />
+      )}
 
       <button
         className="scrim"
@@ -361,8 +512,13 @@ function Workspace({
             path={current.path}
             people={people}
             onToggleLibrary={() => setLibraryOpen((open) => !open)}
-            onNewDocument={() => void createDocument()}
+            onNewDocument={() => void createDocument('doc')}
             onSignOut={onSignOut}
+            onRenamed={(title) =>
+              setDocuments((list) =>
+                list.map((doc) => (doc.docId === selected ? { ...doc, title } : doc)),
+              )
+            }
             onOpenPath={(path) => {
               const target = documents.find((doc) => doc.path === path);
               if (target) {
@@ -382,7 +538,7 @@ function Workspace({
             }}
           />
         ) : (
-          <FirstRun onCreate={() => void createDocument()} />
+          <FirstRun onCreate={() => void createDocument('doc')} />
         )}
       </div>
     </div>
@@ -420,6 +576,7 @@ function DocumentView({
   onNewDocument,
   onSignOut,
   onOpenPath,
+  onRenamed,
 }: {
   client: GalleyClient;
   credentials: Credentials;
@@ -431,6 +588,14 @@ function DocumentView({
   onSignOut(): void;
   /** Open another document by its path — how a design reference is followed. */
   onOpenPath(path: string): void;
+  /**
+   * A save changed the document's first heading, which is its name.
+   *
+   * The list in the sidebar is built once and refreshed on create and delete;
+   * without this it would go on showing "Untitled" after someone had typed a
+   * real title over it, until a reload.
+   */
+  onRenamed(title: string): void;
 }): JSX.Element {
   const editor = useRef<EditorHandle>(null);
   const desk = useRef<HTMLDivElement>(null);
@@ -447,7 +612,10 @@ function DocumentView({
     revisions: RevisionSummary[];
     checkpoints: CheckpointSummary[];
     attribution: AttributionSummary[];
-  }>({ revisions: [], checkpoints: [], attribution: [] });
+    total: number;
+    /** Cursor for the next page back, or null once the timeline is exhausted. */
+    more: number | null;
+  }>({ revisions: [], checkpoints: [], attribution: [], total: 0, more: null });
   const [peers, setPeers] = useState<PeerPresence[]>([]);
   const [activeBlock, setActiveBlock] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -461,7 +629,13 @@ function DocumentView({
    */
   const [editorState, setEditorState] = useState<EditorState | null>(null);
   /** Which insert picker is open, if any. */
-  const [inserting, setInserting] = useState<'image' | 'diagram' | 'design' | null>(null);
+  /**
+   * Which insert overlay is open.
+   *
+   * Only images have one now. A design is created on the spot, and diagrams are
+   * no longer inserted from here at all — see the two decisions this replaced.
+   */
+  const [inserting, setInserting] = useState<'image' | null>(null);
   /**
    * The markup of every design this document links to, by path.
    *
@@ -571,11 +745,22 @@ function DocumentView({
     }
     saving.current = true;
     setSave('saving');
+    const titleBefore = titleOf(serverContent.current, path);
     try {
       const result = await client.applyOps(docId, ops);
       // The annotated form, not the clean one: the next diff has to be taken
       // against the same bytes this client holds.
       serverContent.current = result.source;
+      // A document is named by its first heading, so a save that changed that
+      // heading renamed the document, and the list in the sidebar is now wrong.
+      //
+      // The new name is handed up rather than the list being refetched. A
+      // refetch would race the server's *debounced* snapshot — the title in
+      // storage is written when the document is flushed, not when the op lands,
+      // so a list fetched immediately after a save reliably returns the old
+      // name. This client already knows the answer; it just wrote it.
+      const titleNow = titleOf(result.source, path);
+      if (titleNow !== titleBefore) onRenamed(titleNow);
       const [threads, proposals] = await Promise.all([
         client.comments(docId),
         client.suggestions(docId),
@@ -590,7 +775,7 @@ function DocumentView({
       setSave('error');
       setNotice(failure("That change couldn't be saved. It is still here — we'll keep trying.", err));
     }
-  }, [client, docId]);
+  }, [client, docId, path, onRenamed]);
 
   useEffect(() => {
     if (save !== 'dirty') return;
@@ -901,6 +1086,31 @@ function DocumentView({
 
   if (!loaded) return <main className="desk"><div className="spread"><div className="page page-loading" /></div></main>;
 
+  /**
+   * Put a design in this document.
+   *
+   * **Blank, and immediately.** There used to be a gallery of starters in the
+   * way — "pick a shape to start from" — which is a question asked before the
+   * writer has anything to say about the answer. A starter is a guess at what
+   * you are making, and the cost of a wrong guess is higher than the cost of an
+   * empty frame: you have to recognise which parts are yours, then delete the
+   * rest. The palette on the canvas is where choosing what to add belongs, and
+   * it is one click away with every piece drawn as itself.
+   *
+   * A design is its own document, so this creates one and links to it. The link
+   * is ordinary CommonMark — Galley draws it live, everything else shows a
+   * link, and the design keeps its own history and its own comments.
+   */
+  const insertDesign = async (): Promise<void> => {
+    const slug = `${loaded.path}-design-${Math.random().toString(36).slice(2, 6)}`;
+    try {
+      await client.create(slug, blankDesign('Untitled design'));
+      editor.current?.run(insertDesignLink(slug, 'Untitled design'));
+    } catch (err) {
+      setNotice(failure('That design could not be created.', err));
+    }
+  };
+
   const title = titleOf(loaded.content, loaded.path);
   const folder = loaded.path.includes('/') ? loaded.path.slice(0, loaded.path.lastIndexOf('/')) : '';
 
@@ -974,7 +1184,15 @@ function DocumentView({
             // a title above it, notes below — is copied rather than rewritten.
             // Spliced into the newest draft, so consecutive edits compose
             // rather than each one being applied to the last saved version.
-            setDraft(embedDesign(latestDraft.current || loaded.content, source));
+            const base = latestDraft.current || loaded.content;
+            // The design's name and the document's heading are the same fact
+            // written twice — one inside the fence for the format, one above it
+            // for everything that reads Markdown, including the document list.
+            // Renaming the design on the canvas has to move both, or the
+            // sidebar goes on calling it "Untitled design" after it has one.
+            const parsedDesign = parseDesign(source);
+            const named = parsedDesign.ok ? parsedDesign.design.name : undefined;
+            setDraft(retitle(embedDesign(base, source), named));
             setSave('dirty');
           }}
           // A design *is* a document, so there is nowhere to go "back" to.
@@ -1034,8 +1252,7 @@ function DocumentView({
           onLink={() => editor.current?.openLink()}
           onComment={() => editor.current?.openComment()}
           onImage={() => setInserting('image')}
-          onDiagram={() => setInserting('diagram')}
-          onDesign={() => setInserting('design')}
+          onDesign={() => void insertDesign()}
           onTable={() => editor.current?.run(INSERT_TABLE)}
           onShare={() => setShareOpen(true)}
           onHistory={() => setHistoryOpen(true)}
@@ -1053,8 +1270,7 @@ function DocumentView({
           onLink={() => editor.current?.openLink()}
           onComment={() => editor.current?.openComment()}
           onImage={() => setInserting('image')}
-          onDiagram={() => setInserting('diagram')}
-          onDesign={() => setInserting('design')}
+          onDesign={() => void insertDesign()}
           onTable={() => editor.current?.run(INSERT_TABLE)}
         />
       </header>
@@ -1216,45 +1432,6 @@ function DocumentView({
         />
       )}
 
-      {inserting === 'diagram' && (
-        <DiagramPicker
-          onClose={() => {
-            setInserting(null);
-            editor.current?.focus();
-          }}
-          onInsert={(code) => {
-            setInserting(null);
-            editor.current?.run(insertDiagram(code));
-          }}
-        />
-      )}
-
-      {inserting === 'design' && (
-        <DesignPicker
-          onClose={() => {
-            setInserting(null);
-            editor.current?.focus();
-          }}
-          onInsert={async (starter) => {
-            setInserting(null);
-            try {
-              // A design is its own document, so inserting one creates a
-              // document and links to it. The link is ordinary CommonMark —
-              // Galley draws it live, everything else shows a link, and the
-              // design keeps its own history and its own comments.
-              const slug = `${loaded.path}-design-${Math.random().toString(36).slice(2, 6)}`;
-              await client.create(
-                slug,
-                `# ${starter.label}\n\n\`\`\`design\n${starter.source}\n\`\`\`\n`,
-              );
-              editor.current?.run(insertDesignLink(slug, starter.label));
-            } catch (err) {
-              setNotice(failure('That design could not be created.', err));
-            }
-          }}
-        />
-      )}
-
       {shareOpen && (
         <Share path={loaded.path} onClose={() => setShareOpen(false)} />
       )}
@@ -1266,7 +1443,21 @@ function DocumentView({
           attribution={history.attribution}
           activeBlock={activeBlock}
           nameOf={nameOf}
+          total={history.total}
+          more={history.more}
           onClose={() => setHistoryOpen(false)}
+          onOlder={async () => {
+            if (history.more == null) return;
+            const page = await client.history(docId, 100, history.more);
+            // Appended, not replaced, and deduped by ticket: the timeline is
+            // one list that grows backwards, and a page boundary is not a
+            // reason for the reader to lose their place.
+            setHistory((current) => {
+              const seen = new Set(current.revisions.map((revision) => revision.ticket));
+              const older = page.revisions.filter((revision) => !seen.has(revision.ticket));
+              return { ...current, revisions: [...older, ...current.revisions], more: page.more };
+            });
+          }}
           onCheckpoint={async (name) => {
             await client.checkpoint(docId, name);
             setHistory(await client.history(docId));
@@ -1455,7 +1646,10 @@ function HistoryOverlay({
   attribution,
   activeBlock,
   nameOf,
+  total,
+  more,
   onClose,
+  onOlder,
   onCheckpoint,
   onRestore,
 }: {
@@ -1464,11 +1658,16 @@ function HistoryOverlay({
   attribution: AttributionSummary[];
   activeBlock: string | null;
   nameOf(id: string): string;
+  /** Every revision this document has ever had. Nothing is ever pruned. */
+  total: number;
+  more: number | null;
   onClose(): void;
+  onOlder(): Promise<void>;
   onCheckpoint(name: string): Promise<void>;
   onRestore(ticket: number): Promise<void>;
 }): JSX.Element {
   const [name, setName] = useState('');
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const byTicket = useMemo(() => new Map(checkpoints.map((c) => [c.ticket, c])), [checkpoints]);
   const current = activeBlock ? attribution.find((a) => a.blockId === activeBlock) : undefined;
 
@@ -1533,9 +1732,194 @@ function HistoryOverlay({
             );
           })}
         </ol>
+
+        {/*
+          The timeline is kept in full — nothing on the server prunes a
+          revision — so this is paging, not a truncation notice. It says how
+          many there are so that "older" is a known quantity rather than a
+          guess about whether anything is down there.
+        */}
+        {more !== null && (
+          <button
+            className="ghost history-older"
+            data-testid="history-older"
+            disabled={loadingOlder}
+            onClick={() => {
+              setLoadingOlder(true);
+              void onOlder().finally(() => setLoadingOlder(false));
+            }}
+          >
+            {loadingOlder ? 'Loading…' : `Show older — ${total - revisions.length} more`}
+          </button>
+        )}
+        {more === null && total > 0 && (
+          <p className="history-all" data-testid="history-all">
+            That is all {total} version{total === 1 ? '' : 's'}, back to the beginning.
+          </p>
+        )}
       </div>
     </Overlay>
   );
+}
+
+/**
+ * "Are you sure?", asked properly.
+ *
+ * A dialog rather than something inline, because a delete is the one gesture in
+ * this app that removes work from everyone's view at once, and it should cost a
+ * deliberate second look. The Overlay it is built on already traps focus and
+ * returns it, so the keyboard path is the same as every other dialog here.
+ *
+ * **The copy states what actually happens.** It does not say "this cannot be
+ * undone", because it can: the document goes to the trash with its comments,
+ * its suggestions and its history, and stays there for thirty days. A warning
+ * that overstates the damage is a warning people learn to click through.
+ *
+ * Cancel is the default focus, not Delete. The dialog exists to make the
+ * destructive answer the deliberate one, and a focused Delete that Enter
+ * activates is the opposite of that.
+ */
+function ConfirmDelete({
+  doc,
+  onCancel,
+  onConfirm,
+}: {
+  doc: DocumentSummary;
+  onCancel(): void;
+  onConfirm(): void;
+}): JSX.Element {
+  return (
+    <Overlay title="Delete this document?" onClose={onCancel}>
+      <p className="overlay-lead" data-testid="confirm-delete-text">
+        <strong>{doc.title}</strong> will move to the trash, with its notes and its history. You
+        can put it back for the next 30 days.
+      </p>
+      <div className="overlay-actions">
+        <button className="quiet" onClick={onCancel} autoFocus data-testid="confirm-cancel">
+          Keep it
+        </button>
+        <button className="danger" onClick={onConfirm} data-testid="confirm-delete">
+          Delete
+        </button>
+      </div>
+    </Overlay>
+  );
+}
+
+/**
+ * The trash, and the way back out of it.
+ *
+ * Its own overlay rather than a section of the sidebar: the trash is a place
+ * you visit when something has gone wrong, not a thing to scroll past every
+ * time you pick a document. Google Docs, Notion and Figma all put it behind one
+ * click for the same reason.
+ *
+ * Each row says how long is left, in days, because that is the only number
+ * anyone acts on. A timestamp would be more precise and would make the reader
+ * do the arithmetic.
+ */
+function Trash({
+  client,
+  onClose,
+  onChanged,
+}: {
+  client: GalleyClient;
+  onClose(): void;
+  onChanged(): void;
+}): JSX.Element {
+  const [rows, setRows] = useState<TrashedDocument[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // Which row is asking "for good?", so a permanent delete inside the trash
+  // still costs two presses. There is no third chance after this one.
+  const [purging, setPurging] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setRows(await client.trash());
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [client]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const act = async (run: () => Promise<unknown>): Promise<void> => {
+    try {
+      await run();
+      await load();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  return (
+    <Overlay title="Trash" onClose={onClose}>
+      <p className="overlay-lead">
+        Deleted documents stay here for 30 days, with everything that was on them.
+      </p>
+      {error && <p className="overlay-error">{error}</p>}
+      {rows === null && <p className="overlay-lead">Looking…</p>}
+      {rows?.length === 0 && (
+        <p className="overlay-lead" data-testid="trash-empty">
+          Nothing in here.
+        </p>
+      )}
+      <div className="trash-list" data-testid="trash-list">
+        {rows?.map((row) => (
+          <div key={row.docId} className="trash-row">
+            <span className="trash-name">
+              <strong>{row.title}</strong>
+              <em>{row.path} · {daysLeft(row.purgeAt)}</em>
+            </span>
+            {purging === row.docId ? (
+              <>
+                <span className="trash-warn">For good?</span>
+                <button
+                  className="danger"
+                  onClick={() => void act(() => client.purge(row.docId))}
+                  data-testid={`purge-confirm-${row.docId}`}
+                >
+                  Delete
+                </button>
+                <button className="quiet" onClick={() => setPurging(null)}>
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className="quiet"
+                  onClick={() => void act(() => client.untrash(row.docId))}
+                  data-testid={`restore-${row.docId}`}
+                >
+                  Put back
+                </button>
+                <button
+                  className="trash-purge"
+                  onClick={() => setPurging(row.docId)}
+                  aria-label={`Delete ${row.title} for good`}
+                  data-testid={`purge-${row.docId}`}
+                >
+                  <TrashIcon />
+                </button>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+    </Overlay>
+  );
+}
+
+/** "29 days left", which is the only part of a purge date anyone acts on. */
+function daysLeft(purgeAt: string): string {
+  const days = Math.max(0, Math.ceil((Date.parse(purgeAt) - Date.now()) / 86_400_000));
+  if (days === 0) return 'gone today';
+  return `${days} day${days === 1 ? '' : 's'} left`;
 }
 
 function Overlay({
@@ -1685,6 +2069,27 @@ function titleOf(content: string, fallback: string): string {
 }
 
 /**
+ * Rewrite a document's first heading, leaving everything else alone.
+ *
+ * Used when a design is renamed on the canvas: the name lives inside the fence
+ * for the format's benefit and the heading lives above it for everything that
+ * reads Markdown — the document list, `galley ls`, a pull to disk — so the two
+ * have to move together.
+ *
+ * Only the heading's *text* is replaced. The line may carry a block id marker,
+ * and that marker is the document's identity for this block: comments and
+ * citations anchor to it, so a rewrite that swallowed it would silently orphan
+ * every note on the title.
+ */
+function retitle(content: string, name: string | undefined): string {
+  if (!name?.trim()) return content;
+  return content.replace(
+    /^(#{1,6}[ \t]+)(.+?)([ \t]*<!--\s*\^[A-Za-z0-9_-]+\s*-->)?$/m,
+    (_whole, hashes: string, _text: string, marker?: string) => `${hashes}${name.trim()}${marker ?? ''}`,
+  );
+}
+
+/**
  * What a proposed block would *read* as.
  *
  * The stored proposal is Markdown, and diffing that against the rendered
@@ -1744,50 +2149,6 @@ function downloadMarkdown(path: string, content: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-/**
- * Choosing a diagram.
- *
- * A gallery of finished diagrams rather than an empty box, because "insert a
- * flowchart" and "learn a diagram syntax from nothing" are very different asks
- * and only the first one is what the writer wanted. Every card is a working
- * diagram with real placeholder labels, so the first edit is renaming a box.
- */
-function DiagramPicker({
-  onInsert,
-  onClose,
-}: {
-  onInsert(code: string): void;
-  onClose(): void;
-}): JSX.Element {
-  return (
-    <Overlay title="Insert a diagram" onClose={onClose}>
-      <p className="overlay-lead">Pick a shape to start from. You can change everything about it.</p>
-      <div className="diagram-gallery">
-        {DIAGRAM_TEMPLATES.map((template) => (
-          <button
-            key={template.id}
-            type="button"
-            className="diagram-card"
-            data-testid={`diagram-${template.id}`}
-            onClick={() => onInsert(template.code)}
-          >
-            <span className="diagram-card-name">{template.label}</span>
-            <span className="diagram-card-hint">{template.hint}</span>
-          </button>
-        ))}
-      </div>
-    </Overlay>
-  );
-}
-
-/**
- * Choosing an image.
- *
- * By address only, for now. A paste-and-upload path needs somewhere to put the
- * bytes, and there is no asset route yet — offering a file picker that silently
- * embedded a multi-megabyte data URI into a document meant to be read by agents
- * would be worse than not offering one.
- */
 function ImagePicker({
   onInsert,
   onClose,
@@ -1835,45 +2196,6 @@ function ImagePicker({
           </button>
         </div>
       </form>
-    </Overlay>
-  );
-}
-
-/**
- * Choosing a design to start from.
- *
- * Same reasoning as the diagram gallery, and the same evidence behind it: a
- * blank canvas is a churn surface. Every starter is a real design in the
- * closed vocabulary, so the first edit is renaming a label rather than
- * learning a layout language.
- */
-function DesignPicker({
-  onInsert,
-  onClose,
-}: {
-  onInsert(starter: DesignStarter): void;
-  onClose(): void;
-}): JSX.Element {
-  return (
-    <Overlay title="Insert a design" onClose={onClose}>
-      <p className="overlay-lead">
-        A design is its own document, so it keeps its own history and its own notes — and any
-        document can point at it.
-      </p>
-      <div className="diagram-gallery">
-        {STARTERS.map((starter) => (
-          <button
-            key={starter.id}
-            type="button"
-            className="diagram-card"
-            data-testid={`design-${starter.id}`}
-            onClick={() => onInsert(starter)}
-          >
-            <span className="diagram-card-name">{starter.label}</span>
-            <span className="diagram-card-hint">{starter.hint}</span>
-          </button>
-        ))}
-      </div>
     </Overlay>
   );
 }

@@ -83,6 +83,7 @@ export {
   type Vetted,
 } from './proposal.js';
 export { designCss, hasStates } from './css.js';
+export { designToHtml, type HtmlOptions } from './html.js';
 export {
   EXPANDED,
   expandDesign,
@@ -92,4 +93,5 @@ export {
   usesOf,
 } from './expand.js';
 export { STARTERS, type DesignStarter } from './starters.js';
+export { BLOCKS, blockById, type DesignBlock } from './blocks.js';
 export { DESIGN_FENCE, extractDesign, embedDesign, isDesignDocument } from './embed.js';

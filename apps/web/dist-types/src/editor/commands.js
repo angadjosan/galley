@@ -280,9 +280,6 @@ export const INSERT_CODE = {
     command: setBlockType(schema.nodes.code_block),
     isActive: (state) => blockActive(state, 'code_block'),
 };
-export function insertDiagram(code) {
-    return insertBlock('diagram', { lang: 'mermaid', code });
-}
 /**
  * A reference to a design.
  *

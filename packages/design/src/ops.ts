@@ -63,7 +63,17 @@ export type DesignOp =
    * Sending `set-text` at a layer inside a definition changes every use of it,
    * which is right when that is what you meant and a disaster when it is not.
    */
-  | { readonly op: 'set-slot'; readonly id: LayerId; readonly slot: string; readonly value: string | null };
+  | { readonly op: 'set-slot'; readonly id: LayerId; readonly slot: string; readonly value: string | null }
+  /**
+   * What the design itself is called.
+   *
+   * The only op with no `id`, because its target is the document rather than
+   * anything in it. It earns a place in the vocabulary for the same reason
+   * every other one is here: the canvas and an agent have to speak one language,
+   * and a rename done outside the ops would be the one edit that is neither
+   * undoable nor attributable.
+   */
+  | { readonly op: 'rename'; readonly name: string };
 
 /**
  * Why the op was made.
@@ -239,12 +249,17 @@ export function applyOps(design: DesignDocument, ops: readonly DesignOp[]): Appl
     return node ?? null;
   };
 
+  let name = design.name;
+
   const plan = ops.map((op) => {
     switch (op.op) {
       case 'insert':
         return { op, target: null, parent: resolve(op.parent, `insert into \`${op.parent}\``) };
       case 'move':
         return { op, target: resolve(op.id, `move \`${op.id}\``), parent: resolve(op.parent, `move into \`${op.parent}\``) };
+      case 'rename':
+        // Nothing to resolve: the target is the document, which is right here.
+        return { op, target: null, parent: null };
       default:
         return { op, target: resolve(op.id, `${op.op} \`${op.id}\``), parent: null };
     }
@@ -259,6 +274,17 @@ export function applyOps(design: DesignDocument, ops: readonly DesignOp[]): Appl
       case 'set-name':
         target!.name = op.name;
         break;
+      case 'rename': {
+        // A design with a blank name has no name, and the serializer would
+        // write `name=""` — a file that parses and says nothing.
+        const next = op.name.trim();
+        if (!next) {
+          errors.push('A design needs a name.');
+          break;
+        }
+        name = next;
+        break;
+      }
       case 'set-text':
         if (target!.kind !== 'text') {
           errors.push(`\`${op.id}\` is not text.`);
@@ -347,7 +373,7 @@ export function applyOps(design: DesignDocument, ops: readonly DesignOp[]): Appl
   return {
     ok: true,
     design: fromWorking(
-      design.name,
+      name,
       roots,
       // Rebuilt from the working tree rather than copied from the input, so an
       // op that restyled a component's root actually lands.

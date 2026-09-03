@@ -24,7 +24,7 @@ Open the URL the API prints. It carries a token; the app moves it out of the
 address bar on first load.
 
 ```bash
-npm test                 # unit and integration — 617 tests, ~13s
+npm test                 # unit and integration — 880 tests, ~13s
 npm run test:stress      # concurrency, saturation, chaos, latency
 npm run test:e2e         # the walkthroughs, headless, real browser
 npm run typecheck
@@ -48,6 +48,8 @@ galley suggest <ref> --from patch.md   # propose an edit, as block-scoped ops
 galley design outline <ref>            # a design's structure, without its styling
 galley design lint <ref>               # what is wrong with a design, and the fix
 galley design classes                  # the design vocabulary, served by the tool
+galley design image <ref> --out a.png  # a picture of it, for anything that can see
+galley rm <path> --yes                 # delete a document and everything on it
 galley push                            # local edits back, as suggestions
 galley status                          # what changed, what is stale, what is pending
 galley skill                           # write the first-party agent skill

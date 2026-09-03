@@ -90,7 +90,6 @@ export declare const INSERT_DIVIDER: ActionSpec;
 export declare const INSERT_QUOTE: ActionSpec;
 export declare const INSERT_CALLOUT: ActionSpec;
 export declare const INSERT_CODE: ActionSpec;
-export declare function insertDiagram(code: string): Command;
 /**
  * A reference to a design.
  *

@@ -56,7 +56,6 @@ export interface MenuBarProps {
   onLink(): void;
   onComment(): void;
   onImage(): void;
-  onDiagram(): void;
   onDesign(): void;
   onTable(): void;
   onShare(): void;
@@ -412,7 +411,6 @@ function buildMenus(props: MenuBarProps): Menu[] {
       label: 'Insert',
       entries: () => [
         app('image', 'Image', props.onImage, { enabled: !readOnly && !!state }),
-        app('diagram', 'Diagram', props.onDiagram, { enabled: !readOnly && !!state }),
         app('design', 'Design', props.onDesign, { enabled: !readOnly && !!state }),
         app('table', 'Table', props.onTable, { enabled: !readOnly && !!state }),
         separator('i1'),

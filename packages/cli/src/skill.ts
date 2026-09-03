@@ -113,10 +113,25 @@ galley design outline designs/checkout      # structure only -- read this first
 galley design source  designs/checkout      # the markup
 galley design lint    designs/checkout      # what is wrong, and the fix
 galley design classes                       # the vocabulary itself
+galley design image   designs/checkout --out shot.png   # look at it
 \`\`\`
 
 Read the **outline** before the source. It is a fraction of the size and it is
 usually enough to find the layer you want.
+
+### Looking at it
+
+If you can see images, \`galley design image\` renders the design to a PNG and
+you should use it — before you change a design, and again after. Some questions
+about a screen have no answer in the markup: whether two things line up, whether
+a label is swallowed by its own button, whether the whole thing is the wrong
+shape. Those are answered by looking.
+
+\`--mode dark\` draws the other mode. \`galley design html\` gives the same
+picture as one self-contained file if you would rather open it yourself.
+
+It is the browser that lays the design out, so the picture cannot disagree with
+what a person sees in the editor.
 
 The format is a small tree of \`<box>\`, \`<text>\` and \`<image>\` inside a
 \`<frame>\`, laid out by flexbox, styled only with class names from a **closed**

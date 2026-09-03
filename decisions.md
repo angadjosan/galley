@@ -1714,3 +1714,587 @@ and a palette is a list that wants a column with room for names.
 The line, stated once so it settles future questions: *if a control changes how
 something looks, it goes on the right; if it changes what something is or where
 it sits, it goes on the canvas.*
+
+---
+
+## D58 — Delete is a real operation, and it rides on `write`
+
+**Context:** the workspace could create documents and never remove them. Not an
+oversight in the storage layer — `Store.deleteDocument` was written early and
+cascades correctly across comments, suggestions, orphans, the FTS index,
+revisions and checkpoints — but it had **zero callers**. Everything above it was
+missing: no workspace method, no route, no client method, no CLI command, no
+affordance in the app. A writing tool where the only way to get rid of a draft
+is to leave it in the list forever is not finished.
+
+**Decision:** wire the primitive all the way up, as `DELETE /v1/docs/:ref`.
+
+**It is authorized as `write`, not a capability of its own.** A separate
+`delete` verb sounds safer and isn't: the damage a writer can already do —
+replace every block with nothing — has the same shape and the same
+irreversibility, so the new verb would guard nothing while becoming a permission
+nobody remembers to grant. `Capability` stays a four-element union.
+
+**`Workspace.remove` deliberately does not flush.** `close` persists on the way
+out, which is right for eviction and exactly wrong here: it would rewrite the
+row the method is about to delete. Worse, a *debounced* persist scheduled by a
+recent edit would fire after the delete and resurrect the document a few hundred
+milliseconds later. The pending timer is cleared and the entry detached before
+the row goes. There is a test that edits, deletes, waits out the debounce and
+asserts the document is still gone.
+
+**Editors are told before the row disappears.** The route closes every sync
+connection for the document with `{ t: 'ended', reason: 'document deleted' }`
+first. Otherwise a client discovers its document is missing by way of a 404 on a
+background write, which is how you get a lost-work warning for work that was
+deliberately thrown away.
+
+**Consequence:** no undo, and none is pretended. Undo would have to be a soft
+delete all the way down — a `deleted_at` on the row, every list and search and
+resolve filtering on it, and a policy for when it becomes real. That is a
+feature, not a flag, and half of it is worse than none: an Undo button that
+restores the prose but not the comments anchored to it is a lie told at exactly
+the moment someone is relying on it.
+
+---
+
+## D59 — The question goes where the thing is
+
+**Context:** two destructive-or-branching moments needed an interface — deleting
+a document, and choosing what "New" means now that a design is also a document.
+The house style already rejects `window.prompt` for naming (D-earlier: "the
+least finished-looking thing an interface can show"), and the same argument
+disqualifies `window.confirm`.
+
+**Decision:** neither gets a modal.
+
+**Delete replaces the row it is asking about.** Press the trash icon and the
+document's row becomes `Delete "Title"? [Delete] [Cancel]` in place. A dialog
+would ask the question somewhere other than the thing being asked about, would
+need its own dismissal, and — the actual failure mode — would let the list
+scroll under it so the confirmation and the row it refers to are no longer the
+same object on screen. Only one row can be confirming at a time, held as state
+on the list rather than per row, because two rows both asking "delete?" is how
+the wrong one gets confirmed.
+
+**The trash icon is invisible until hover or focus-within, but never
+`display: none`.** Hidden rows keep it out of the tab order, which makes delete
+unreachable by keyboard. It is laid out and transparent instead.
+
+**"New document" became "New", with two choices.** A design *is* a document, but
+the only way to create one was "insert a design into the document you are
+already in" — so the app's second content type was reachable only as a footnote
+to its first, and a fresh workspace (which seeds no design at all) looked like
+the feature didn't exist. `New → Design` creates a standalone design at
+`design/untitled-…` from the `blank` starter and opens the canvas on it.
+
+**Consequence:** the insert-into-a-document path still exists and still means
+something different — it creates a design *and links to it from here*. Two
+entry points, two intents, same underlying create.
+
+---
+
+## D60 — The palette holds finished objects, not primitives
+
+**Context:** the left pane of the design editor was a layer tree with two
+buttons above it: `+ Box` and `+ Text`. That is the correct decomposition of
+the *format* — a design really is boxes and text — and the wrong decomposition
+of the *task*. Nobody sets out to add a box. They set out to add a **button**,
+and a button is a box with a height, horizontal padding, a radius, a fill, a
+centred label in a semibold weight on an on-accent colour, plus `hover:` and
+`press:` fills. Six or seven decisions, every one a chance to make something
+that looks nearly right. Offering the primitive hands the most design decisions
+to the person least equipped to make them.
+
+**Decision:** `BLOCKS` in `@galley/design` — fourteen ready-made pieces on four
+shelves (Text, Buttons, Fields, Layout), each a `NewLayer` tree that inserts as
+one op. This is the thing Canva actually does better than the professional
+tools, and it is not the drag-and-drop everyone credits it for: it is that the
+palette is full of finished objects, so you are never assembling a heading out
+of a rectangle.
+
+**It lives in the package, not the app.** The canvas drags these onto a frame; an
+agent can ask for one by name. Two catalogs would be two vocabularies that
+drift, and "add a primary button" would mean different things depending on who
+typed it.
+
+**Every block is valid and visible on arrival, and there are tests that say so.**
+Each one is inserted into a bare frame, serialized, re-parsed, checked for byte
+stability, run through `resolveClasses` for unknown names and through
+`lintDesign` for contrast — and a box with neither `flex` nor a size fails, on
+the grounds that an "add" which appears to do nothing is worse than no button.
+
+**Two ways to place one, because they answer different questions.** Clicking
+means "put it where I am" and needs no aim. Dragging means "put it *there*" and
+is the only way to reach a slot that is nowhere near the selection. A palette
+with only drag makes the common case a precision task; one with only click
+cannot express position at all.
+
+**The pane became a two-way switch, and `Add` is the default.** The layer tree
+answers "what is already in this design", which you can also answer by looking
+at the canvas. The question you *cannot* answer by looking is "what can I put in
+it". Figma opens on the first; Canva opens on the second; the beginner needs the
+second.
+
+---
+
+## D61 — A palette entry draws itself by rendering the real block
+
+**Context:** the palette needs a picture per entry. The cheap answer is a
+hand-drawn icon per block.
+
+**Decision:** render the actual block, through the same code the canvas uses,
+scaled down.
+
+An icon is a *second description* of the same object and is free to drift from
+it. The first time a button's fill changes, a drawn icon is quietly lying, and
+nothing fails — the palette just becomes wrong in a way no test can see.
+Composing each block into a one-frame design at 220px and scaling it to the card
+makes that impossible by construction.
+
+Three details that were each wrong once:
+
+- **The preview frame has no padding and no fill.** With `p-3 bg-canvas` every
+  block sat on a slab of empty canvas. The card is a picture of the block, not
+  of a screen containing it.
+- **The card's height is measured, not fixed.** The catalog runs from a divider
+  to a two-field row. A fixed height crops the tall ones and pads the short
+  ones. The scaled subtree is absolutely positioned and contributes no height,
+  so the number has to be measured after layout and put back.
+- **The preview has no background of its own.** It showed as a coloured strip
+  under every block short enough to be padded up to the minimum.
+
+**Consequence:** the scale lives in the component next to the measurement rather
+than in the stylesheet, because the two have to agree and CSS could be changed
+without the measurement noticing.
+
+---
+
+## D62 — Fitting shrinks by default and only magnifies on request
+
+**Context:** the canvas fits the design into the viewport on open. A new design
+is one heading and one line of text — which "fits" a wide viewport at over
+**325%**. The first thing anybody saw on creating a design was their own words
+blown up past their hinting, soft-edged and enormous.
+
+**Decision:** the initial fit is capped at 1:1. Pressing the zoom control's Fit
+button is still uncapped.
+
+Fitting is two operations wearing one name. Shrinking something that overflows
+is always what was meant. *Enlarging* something small is a choice — right when
+someone asked for it, wrong as the thing that happens on open.
+
+---
+
+## D63 — A design renders to HTML, and the browser turns that into pixels
+
+**Context:** an agent could already *read* a design — the outline and the markup
+are text, which is what a model handles best — but it could not *see* one. Some
+questions about a screen have no textual answer: whether two things line up,
+whether a label is swallowed by its own button, whether the whole thing is the
+wrong shape for a phone. Those are the questions a designer answers by looking,
+and nothing in the pipeline produced anything to look at.
+
+**Decision:** `designToHtml` in `@galley/design` emits one self-contained HTML
+document; `galley design image` screenshots it with headless Chromium;
+`galley design html` writes the file for anyone who would rather open it.
+
+**Why not SVG,** since "an image the code can make" is the obvious answer and it
+is wrong twice:
+
+- **Pure SVG means laying the design out ourselves**, which means *measuring
+  text* — the one thing this format is built never to do (`types.ts`, property
+  3: advance width is a function of the font file, and a model cannot know it).
+  A hand-rolled layout would disagree with the canvas, and every disagreement is
+  a picture that lies about the design.
+- **SVG with a `foreignObject`** dodges the layout problem and loses the
+  rasterizers. resvg and librsvg — most of what turns SVG into pixels outside a
+  browser — both ignore `foreignObject` and would produce a blank rectangle. An
+  image format that renders blank in the tools that consume images is not an
+  image format.
+
+HTML hands the arithmetic back to the engine that owns it, and every path that
+turns HTML into pixels is a browser. The picture cannot disagree with the
+canvas, because it is drawn by the same kind of thing.
+
+**Self-contained, with no network at all.** One file, styles inline or in one
+`<style>`, no fonts fetched, no scripts. A screenshot pipeline that has to be
+online renders differently on a bad day, and there is a test asserting no
+`http`, no `<script>`, no `<link>`, no `@import` for every starter.
+
+**Playwright is imported lazily and its absence is an error with the fix in it.**
+It is heavy and only this one command needs it. What it must not do is fail with
+a module-not-found stack — an agent that gets one has no way to know the command
+would have worked after a single install.
+
+**Two details that were each wrong once.** The body is `width: max-content`,
+because without it a 390px design arrived as a 1280px picture and spent two
+thirds of a model's attention on empty background. And frames are uncaptioned by
+default: a picture meant for a model should be the design and nothing else, and
+the frame's name is already in the markup it can read.
+
+**The string renderer is a sibling of `toDom.ts`, not an abstraction over it.**
+One builds strings for a package with no browser dependency; the other builds
+DOM for a ProseMirror decoration. A shared node-factory abstraction would be
+longer than either of them.
+
+---
+
+## D64 — A document is named by its heading, and that has to keep being true
+
+**Context:** the app has no rename command anywhere, on purpose — "the title is
+right there to type over" is the whole affordance, and it is why creating a
+document shows no naming dialog. Driving the app as a first-timer showed the
+promise was not kept: a document created as *Untitled*, given a real heading and
+saved, stayed **"Untitled" in the sidebar forever**.
+
+The cause was one `??`. `Workspace.create` stamps a title into the document's
+metadata — derived from the content when none is given — so
+`document.title ?? deriveTitle(markdown)` read behind a value that was always
+set. The fallback never ran. The title was frozen at creation for the life of
+the document.
+
+**Decision:** the heading wins whenever there is one. `deriveTitle` takes the
+stored title as a *fallback*, for a document with no heading at all — an
+importer's explicit title — and the path's last segment when there is neither.
+
+**Two consequences that were each a second bug.**
+
+- **The marker had to be stripped.** This used to run only at create time,
+  against the clean source an author sent. Running it on *persist* means running
+  it on the annotated form, and the first renamed document appeared in the list
+  as `Grocery list <!-- ^notesli0 -->`.
+- **The client cannot refetch the list to find out.** The title in storage is
+  written when the document is *flushed*, and flushing is debounced — so a list
+  fetched immediately after a save reliably returns the old name. The new title
+  is handed up from the save instead. The client already knows it; it just wrote
+  it. No request, no race.
+
+---
+
+## D65 — A design is renamed by typing over its name, in both places at once
+
+**Context:** the design canvas showed the design's name as an `<h2>`. It was the
+one thing about a design that could not be changed from the canvas at all, and
+with `New → Design` making creation easy, a workspace filled up with documents
+indistinguishably called "Untitled design".
+
+**Decision:** the name is a field that reads as a heading — no border until you
+go near it — and renaming moves the name in **both** places it is written.
+
+A design document says its name twice: `<design name="…">` inside the fence, for
+the format, and `# …` above it, for everything that reads Markdown — the
+document list, `galley ls`, a pull to disk. They are the same fact, so they move
+together. The heading rewrite replaces only the heading's *text* and preserves
+any block id marker on the line: that marker is the block's identity, and
+swallowing it would silently orphan every comment anchored to the title.
+
+**`rename` is an op, not a special case.** It is the only one with no `id` —
+its target is the document rather than anything in it — and it earns its place
+for the reason the whole vocabulary exists: the canvas and an agent speak one
+language, so a rename is undoable, attributable and reviewable for free. A
+rename done outside the ops would have been the one edit that is none of those.
+
+**The field holds a draft while it is being typed in.** Bound straight to
+`design.name` it could never be cleared: the op refuses a blank name, so the
+first backspace that emptied the field would be rejected and the old name would
+spring back mid-word. An empty field on blur is a half-finished rename, not a
+request to have no name, so the design keeps what it had.
+
+---
+
+## D66 — "Add" means beside the selection, never inside it
+
+**Context:** found by building a sign-in screen with the new palette, four
+clicks, the way a first-timer would. The result was wrong in two ways at once:
+two Text fields came out as one field *containing* another, and the Caption
+landed **inside** the Button, where the linter correctly reported it at 1.33:1 —
+grey text on a blue fill.
+
+The rule was: inside a container when a container is selected, after the
+selection when a leaf is. That reads fine and is a trap, because **every
+finished block is a box**. A button *is* a box with a label. So each block
+selected itself on arrival, and the next click on the palette landed inside the
+thing the last click made. The rule was written when the only two things you
+could add were a bare box and a bare text, where it was almost right; the
+palette made it almost always wrong.
+
+**Decision:** a palette insert goes into `selection.focus` — the container you
+are *in* — positioned after the selected layer.
+
+`focus` is the editor's existing answer to "which level am I working at": set by
+going into a box on the canvas, shown in the breadcrumb, already reconciled
+against a changing tree. So the frame is the answer until you have deliberately
+entered something, and going inside a card and adding still adds to the card.
+Both behaviours fall out of one lookup, with no special case for either.
+
+**Landing inside a specific box is what dragging is for.** The two gestures had
+already been given different jobs — click means "put it where I am", drag means
+"put it *there*" — and this is the same split. A click cannot say which
+container it meant, so it should not guess; a drag can, and does.
+
+**Consequence:** the contrast linter found this before any test did, which is
+the argument for D-earlier's "findings shown continuously rather than on save".
+It was reporting a real defect in the editor, not in the design.
+
+---
+
+## D67 — Delete asks first, and then keeps the document for thirty days
+
+**Context:** D58 shipped a delete that destroyed the document and everything
+anchored to it, and argued against a fake undo: "an Undo button that restores
+the prose but not the comments anchored to it is a lie told at exactly the
+moment someone is relying on it." That was right about the lie and wrong to stop
+there. The answer is to build the real thing.
+
+**Decision:** two independent safeguards, because they catch different mistakes.
+
+**A confirmation dialog**, for the press you did not mean. It names the document
+and says what actually happens — *"Refund policy will move to the trash, with
+its notes and its history. You can put it back for the next 30 days."* It does
+**not** say "this cannot be undone", because it can, and a warning that
+overstates the damage is one people learn to click through. `Keep it` takes the
+focus, not `Delete`: the dialog exists to make the destructive answer the
+deliberate one, and a focused `Delete` that Enter activates is the opposite of
+that. This replaces D59's in-row confirmation, which was right about not
+interrupting and wrong about how much a delete should cost.
+
+**A thirty-day trash**, for the press you did mean and later regretted. Nothing
+cascades: comments, suggestions, orphans, revisions, checkpoints and the search
+index all stay, so a restore returns *the document* rather than a copy of its
+prose. Thirty days because it is longer than a holiday, and longer than the gap
+between one person noticing something is missing and the person who deleted it
+being asked about it.
+
+**Four things this turned out to require.**
+
+- **The path moves to `.trash/<docId>`.** `UNIQUE (workspace_id, path)` is a
+  table constraint, so a trashed row that kept its path would go on reserving it
+  — and "delete Untitled, make a new Untitled" would fail with a conflict about
+  a document that is not on screen anywhere. A partial unique index says this
+  more directly and would mean rebuilding the table on every existing database.
+  `normalizePath` refuses the prefix, so the namespace cannot collide.
+- **`openDocument` refuses a trashed row.** Guarded at the one door every route
+  comes through rather than route by route, because reading, writing,
+  commenting and syncing would each have to remember, and one of them would not.
+- **A restore lands beside the name if something has taken it since.** Refusing
+  was the other option and it is a dead end: the person asking has already lost
+  this document once, and cannot act on "something else is called that" from
+  inside the trash.
+- **A migration, because there was no migration system.** `CREATE TABLE IF NOT
+  EXISTS` does nothing to a table that already exists, so a new column reaches
+  new databases and nobody's existing one. `PRAGMA table_info` drives it —
+  additive, and reading what is actually there rather than trusting a stored
+  version number that a restored backup would make a lie.
+
+**The sweep runs on the operations that can create an expired row** — a delete,
+and server startup — rather than on a timer. A timer in a process that may be
+restarted hourly is a job that never fires; this costs one indexed query when
+there is nothing to do.
+
+---
+
+## D68 — Trashing flushes first, or a restore loses the last thing you typed
+
+**Context:** D58's delete deliberately skipped the flush that `close` performs,
+because a persist landing *after* the row moved would undo the move. Carried
+into the trash, that reasoning produced a data-loss bug rather than a
+correctness one: persistence is debounced, so a document deleted moments after
+an edit has a **stale snapshot** on disk. Trashing without flushing put that
+stale snapshot in the trash. The restore silently lost the edits, and — how it
+was actually found, in a browser — the entry sat in the trash under the
+document's *previous title*, where nobody would think to look for it.
+
+**Decision:** flush, then detach, then move the path. In that order.
+
+The ordering is the whole answer, and it makes both requirements true at once.
+The flush writes what is in memory to the row while the row is still at its old
+path. Detaching then clears the debounce timer and drops the entry, so nothing
+is left holding a write. Only then does the path move. Nothing can be written
+after the move, because by then nothing is attached.
+
+`detach` and `close` are now explicitly different operations: `close` flushes on
+the way out, `detach` does not, and callers that need the snapshot current
+persist first and then detach. `purge` still uses the bare form — flushing a
+row that is about to be destroyed is work for nobody.
+
+---
+
+## D69 — History was already permanent; only the read path was short
+
+**Context:** "how long is version history, and can it be infinite?" The answer
+turned out to be that **nothing has ever pruned a revision on disk.**
+`putRevision` upserts and the only `DELETE FROM revisions` is document deletion.
+A document's whole timeline has been sitting in SQLite the entire time.
+
+What made it look otherwise was three bounds on the *read* path, none of them
+retention:
+
+| Where | Bound | What it is |
+|---|---|---|
+| Actor memory | 500 revisions / 4 MiB / floor 20 | a cache |
+| Cold reopen | newest 200 rehydrated | a latency choice |
+| HTTP | 100 default, 500 ceiling | a page size |
+
+The memory bound is the only one that cannot simply be raised, and the reason is
+in `history.ts`: **a `Revision` carries the entire document.** Retention in
+memory is O(revisions × document size), measured there at a 493–498× blowup and
+about a gigabyte at 256 open documents. Holding every revision of every open
+document is not a configuration change, it is a different design.
+
+**Decision:** keep the memory window as a cache and make the archive readable.
+
+- `GET /history` takes a `before` ticket cursor and reads from **storage**, not
+  from the actor. Paging reaches the first edit a document ever had.
+- `GET /history/:ticket` falls back to storage when the ticket is older than the
+  window. It used to 404, which made the older half of a long timeline visible
+  but unopenable — the worst of both.
+- The response carries `total`, so the UI can say *"Show older — 30 more"* and
+  then *"That is all 130 versions, back to the beginning."* A timeline that
+  stops without saying whether anything is below it reads as a limit.
+
+**A short page is the end of the timeline.** The first attempt used "the oldest
+ticket is 1", which is wrong: tickets are sequencer cursors, so a document's
+first revision is whatever number the sequencer had reached, almost never 1. It
+left the UI offering "show older" for ever with nothing behind it — visible
+immediately in a browser, and now pinned by a test.
+
+**So: history is unbounded, and the honest statement is that it always was.**
+What is bounded is how much of it is in memory at once, and that is a cache
+whose size is a latency decision rather than a promise about what is kept.
+
+---
+
+## D70 — A collaborator's edit is a transaction, not a new editor
+
+**Context:** ⌘Z worked, in the sense that it worked alone. On a shared document
+it mostly did nothing, and the reason was two rooms away from the keymap.
+
+When a new version arrived from the server, the editor **rebuilt itself** —
+`props.revision` changed, the `EditorView` was destroyed and a new one
+constructed. That is correct about the text and catastrophic about everything
+attached to it. A fresh `EditorState` has a fresh `history` plugin, so *every
+keystroke by anyone else wiped your undo stack*. On a document with two people
+in it, that is most of the time. The selection went with it, guessed back
+afterwards from a saved offset.
+
+**Decision:** apply the incoming version as a transaction against the live
+state. `reconcile` (`editor/reconcile.ts`) aligns the two documents block by
+block and returns the splices that turn one into the other.
+
+Three properties make it correct rather than merely cheaper:
+
+- **`addToHistory: false`.** Undo steps back over your own last edit and never
+  over someone else's. Undoing a collaborator's work is not undo, it is a silent
+  overwrite — the exact thing D58 refused to ship a fake version of.
+- **The splices must be minimal.** `prosemirror-history` rebases the stack it is
+  holding through the mapping of every transaction that arrives. One replace
+  spanning the document maps every stored position to the same place, which
+  preserves the stack in name and ruins it in fact. This is not an optimisation;
+  a coarse diff produces an undo that silently does nothing.
+- **Alignment is by block identity where it exists.** A block whose every word
+  was rewritten is still the same block — the thesis the product rests on — so
+  it is replaced in place rather than deleted and reinserted, and the comments
+  anchored to it stay anchored.
+
+**The bug inside the fix, because it is the instructive part.** Alignment
+compared nodes with `PmNode.eq`, which compares *every* attribute — including
+`source`, the block's original Markdown, kept so an untouched block can be
+written back byte for byte. A locally edited paragraph carries its **old**
+`source` until the document is reparsed, while the same paragraph arriving from
+the server carries the new one. Two nodes with identical text compared unequal,
+the aligner paired nothing, and a one-word change came back as a splice across
+the whole tail of the document — the exact coarse splice this design exists to
+avoid. Comparison now strips provenance (`source`, `sep`) at every depth.
+
+**`reconcile` returns null for a wholesale replacement**, and the caller
+rebuilds. A restore that brings back a different document has nothing worth
+rebasing a stack onto, and saying so is better than pretending.
+
+---
+
+## D71 — ⌘Y is redo on the canvas too
+
+The prose surface has bound `Mod-y` since it had a keymap, with a comment
+explaining that no menu shows it because nobody looks for it. The design canvas
+bound only ⌘Z and ⌘⇧Z, so the same keystroke worked in one half of the product
+and did nothing in the other — which is worse than not having it, because the
+half that works teaches the hand to expect it.
+
+---
+
+## D72 — Two people, one document, in a real browser
+
+**Context:** every end-to-end test in this repo drove one browser. The product's
+central claim is that this is a *shared* writing surface, and that claim was
+asserted only at the server, where `sync.test.ts` proves the frames converge.
+What nobody had ever checked is what the two writers **see** — and the defect in
+D70 is invisible from anywhere else. It is not a sync bug. The bytes converged
+perfectly; it was the undo history that quietly emptied.
+
+**Decision:** the e2e suite opens two browser contexts as two different people,
+which required issuing a token for the second one. Sam had existed as a
+principal in the dev server since the beginning and had no way to sign in, so
+"two people in the same document" could not be exercised at all — not by a test,
+and not by hand either.
+
+The tests assert the thing that was broken: Priya types, Sam types, Priya
+presses ⌘Z, and **her words go while his stay** — then ⌘Y puts hers back with
+his still in place. Both then check the stored document, because agreeing on
+screen and disagreeing in storage is the failure mode a CRDT is supposed to make
+impossible and worth pinning anyway.
+
+**One test was deleted rather than fixed.** A third case asserted the caret
+survives a remote edit by comparing selection offsets, and it depended on a
+document the earlier tests in the file had been editing. The claim is real and
+worth keeping; the deterministic place to make it is a unit test on the
+reconciler, where the selection is mapped through known splices and no shared
+fixture can drift underneath it. A brittle test of a true property teaches
+people to re-run the suite until it goes green.
+
+---
+
+## D73 — No gallery in front of a design, and no diagram insert at all
+
+**Context:** both insert flows opened a gallery first. "Pick a shape to start
+from" for a diagram, six templates; "Insert a design", five starters. Each was
+justified the same way when it was built — a blank canvas is a churn surface,
+and a writer who has never seen Mermaid cannot start from an empty box.
+
+That argument was better before the canvas had a palette. It is a question asked
+*before the writer has anything to say about the answer*, and a starter is a
+guess at what they are making. The cost of a wrong guess is not zero: you have
+to work out which parts of it were meant for you, then delete the rest. Deleting
+somebody else's placeholder text is a worse first interaction than typing into
+an empty frame.
+
+**Decision, in two parts.**
+
+**A design is created blank, immediately.** One press of `Insert design` makes
+the document and links to it. The choosing has a better home — the palette on
+the canvas, one click away, with every piece drawn as itself (D60, D61). Two
+places now make a new design and they share one `blankDesign` helper, so the
+library's `New → Design` and the in-document button cannot drift into producing
+different things under the same name.
+
+**Diagram insertion is removed outright** — the button, the Insert-menu entry,
+the picker and its six templates. Not narrowed to "blank diagram", because a
+blank Mermaid fence is not a thing anyone can start from: unlike a design,
+whose canvas is direct manipulation, a diagram is *syntax*, and an empty one
+offers a writer who does not know that syntax nothing at all. The honest
+position is that this app has no diagram authoring surface.
+
+**Diagram *rendering* stays, and that is not an inconsistency.** A document can
+arrive with a fence in it from an agent, a paste, or a `galley push`, and it
+must draw rather than show its own syntax — that is Principle IV holding for a
+picture, and it is the same reason a design keeps drawing inside prose. The e2e
+test that covered inserting a diagram was rewritten to cover exactly this: a
+document seeded with a fence renders, and the fence on disk is untouched.
+
+**Two tests moved rather than died.** The component and selection walkthroughs
+genuinely need particular designs — one with definitions, one with a form — and
+were getting them by clicking a starter. They now seed the document over HTTP
+from the same `STARTERS` the package exports. The starters are still worth
+having: they are worked examples an agent can read to learn the format, which is
+what `starters.ts` said they were for. What they are no longer is a question
+put to a person who just wanted to draw something.

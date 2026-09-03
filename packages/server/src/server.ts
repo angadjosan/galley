@@ -11,6 +11,7 @@ import {
   renderCleanMarkdown,
   type DocumentActor,
   type Principal,
+  type Revision,
 } from '@galley/core';
 import type { BlockOp } from '@galley/markdown';
 import { Auth, AuthError, type Session } from './auth.js';
@@ -274,6 +275,72 @@ export function build(options: ServerOptions = {}): GalleyServer {
     };
   });
 
+  app.delete('/v1/docs/:ref', async (request, reply) => {
+    const session = sessionOf(request);
+    const { ref } = request.params as { ref: string };
+    const actor = await resolve(ref);
+    // `write` and not a capability of its own. Delete is destructive, but the
+    // damage a writer can already do — replace every block with nothing — is
+    // the same shape, and a separate `delete` verb would be a permission
+    // nobody grants separately and everybody has to remember to grant.
+    await authorizeDoc(session, actor, 'write');
+
+    // Tell the editors first. Once the row is gone their next sync frame would
+    // resolve to nothing, and a client discovering its document is missing by
+    // way of a 404 on a background write is how you get a lost-work dialog for
+    // work that was deliberately thrown away.
+    for (const connection of hub.connectionsFor(actor.docId)) {
+      connection.closeWith({ t: 'ended', reason: 'document deleted' }, 'document deleted');
+    }
+
+    const path = await workspace.trash(actor.docId, principalOf(session));
+    if (!path) return reply.code(404).send({ error: `no document ${ref}` });
+    // Sweeping here rather than on a timer: this is the operation that can put
+    // a row past its window, so it is the moment the sweep can matter.
+    void workspace.sweepTrash();
+    return { docId: actor.docId, path };
+  });
+
+  /**
+   * What is in the trash.
+   *
+   * Not filtered by capability the way `/v1/docs` is. A trashed document has no
+   * live path to match a grant against — its path is a tombstone — and the
+   * honest reading is that the trash belongs to the workspace rather than to a
+   * subtree of it. So it takes `admin` on the root instead.
+   */
+  app.get('/v1/trash', async (request) => {
+    const session = sessionOf(request);
+    auth.authorize(session, '/', 'admin');
+    return { documents: workspace.trashed() };
+  });
+
+  app.post('/v1/trash/:docId/restore', async (request, reply) => {
+    const session = sessionOf(request);
+    const { docId } = request.params as { docId: string };
+    auth.authorize(session, '/', 'admin');
+    const path = await workspace.restore(docId, principalOf(session));
+    if (!path) return reply.code(404).send({ error: `nothing in the trash with id ${docId}` });
+    return { docId, path };
+  });
+
+  /** Empty one thing out of the trash, now, for good. */
+  app.delete('/v1/trash/:docId', async (request, reply) => {
+    const session = sessionOf(request);
+    const { docId } = request.params as { docId: string };
+    auth.authorize(session, '/', 'admin');
+    const stored = workspace.store.getDocument(docId);
+    if (!stored?.deletedAt) {
+      // Only a *trashed* document can be purged. Without this the route is a
+      // way to destroy a live document in one call, bypassing the trash and
+      // everything it exists to protect.
+      return reply.code(404).send({ error: `nothing in the trash with id ${docId}` });
+    }
+    const path = await workspace.purge(docId, principalOf(session));
+    if (!path) return reply.code(404).send({ error: `nothing in the trash with id ${docId}` });
+    return { docId, path };
+  });
+
   app.post('/v1/docs/:ref/ingest', async (request) => {
     const session = sessionOf(request);
     const { ref } = request.params as { ref: string };
@@ -460,18 +527,50 @@ export function build(options: ServerOptions = {}): GalleyServer {
     return { suggestion };
   });
 
+  /**
+   * The timeline, read from storage rather than from memory.
+   *
+   * **Nothing prunes revisions on disk — history is kept for as long as the
+   * document exists.** What used to make it look otherwise was the read path:
+   * the actor's `History` is a *window* of the newest few hundred, held in
+   * memory because each revision carries the whole document, and a cold open
+   * rehydrated only the newest 200 of them. Everything older was still in
+   * SQLite and unreachable through any API.
+   *
+   * `before` is a ticket cursor, so a client can page all the way back to the
+   * first edit a document ever had. The window in memory stays exactly as it
+   * was: it is a cache for the recent past, not the archive.
+   */
   app.get('/v1/docs/:ref/history', async (request) => {
     const session = sessionOf(request);
+    const query = request.query as { limit?: string; before?: string };
     const actor = await resolve((request.params as { ref: string }).ref);
     await authorizeDoc(session, actor, 'read');
-    const limit = Math.min(500, Number((request.query as { limit?: string }).limit) || 100);
+    const limit = Math.min(500, Number(query.limit) || 100);
+    const before = query.before === undefined ? undefined : Number(query.before);
+
+    const revisions = await store.read(() =>
+      store.listRevisions<Revision>(actor.docId, limit, Number.isFinite(before) ? before : undefined),
+    );
+    const oldest = revisions[0]?.ticket;
     return {
       // The content of each revision is deliberately omitted from the list: a
       // timeline is a list of moments, and shipping every version of the
       // document to render one is a megabyte to draw a scrollbar.
-      revisions: actor.listRevisions(limit).map(({ content: _content, ...rest }) => rest),
+      revisions: revisions.map(({ content: _content, ...rest }) => rest),
       checkpoints: actor.listCheckpoints(),
       attribution: actor.allAttribution(),
+      total: await store.read(() => store.countRevisions(actor.docId)),
+      /**
+       * The cursor for the next page back, or null at the beginning of time.
+       *
+       * A short page is the end. Not "the oldest ticket is 1": tickets are
+       * sequencer cursors, so a document's first revision is whatever number
+       * the sequencer had reached — usually not 1 — and testing for that left
+       * the timeline offering "show older" for ever with nothing behind it.
+       * An exact multiple of the limit costs one empty page, which then ends.
+       */
+      more: revisions.length === limit ? (oldest ?? null) : null,
     };
   });
 
@@ -480,7 +579,12 @@ export function build(options: ServerOptions = {}): GalleyServer {
     const { ref, ticket } = request.params as { ref: string; ticket: string };
     const actor = await resolve(ref);
     await authorizeDoc(session, actor, 'read');
-    const revision = actor.history.at(Number(ticket));
+    // Memory first, storage second. The window holds the recent past and
+    // answers instantly; anything older is still on disk, and 404ing on it
+    // would make the older half of a timeline unopenable.
+    const revision =
+      actor.history.at(Number(ticket)) ??
+      (await store.read(() => store.revisionAt<Revision>(actor.docId, Number(ticket))));
     if (!revision) return reply.code(404).send({ error: `no revision at or before ${ticket}` });
     return { revision: { ...revision, content: renderCleanMarkdown(revision.content) } };
   });
@@ -785,7 +889,13 @@ export function build(options: ServerOptions = {}): GalleyServer {
     workspace,
     hub,
     async listen(port = 0): Promise<string> {
-      return app.listen({ port, host: '127.0.0.1' });
+      const url = await app.listen({ port, host: '127.0.0.1' });
+      // Anything whose recovery window ran out while the server was down goes
+      // now. Not awaited: the sweep is bounded by what is already expired, and
+      // nothing about accepting the first request depends on it having
+      // finished.
+      void workspace.sweepTrash();
+      return url;
     },
     async close(): Promise<void> {
       // Order matters: stop accepting connections, then flush documents, then
