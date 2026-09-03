@@ -11,6 +11,10 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { build } from '@galley/server';
+// Not re-exported from the package's entry point, so it is reached by path.
+// Worth the ugliness: without a provider the dev server has no sign-in at all,
+// and every flow that starts with somebody typing an address is untestable.
+import { DevProvider } from '../packages/server/src/identity.js';
 import type { Grant, Principal } from '@galley/core';
 
 const PORT = Number(process.env.PORT ?? argValue('--port') ?? 8787);
@@ -21,6 +25,30 @@ export const DEV_TOKEN_LABEL = 'dev';
 
 const ADMIN: Grant[] = [{ path: '/', capability: 'admin' }];
 const PRIYA: Principal = { id: 'u-priya', kind: 'human', name: 'priya' };
+
+/**
+ * The seeded people, as accounts somebody could actually sign in to.
+ *
+ * An address, not just a name: sharing is done by email, and a principal with
+ * no address cannot be shared with, invited, or signed in as — which made every
+ * sharing flow unreachable from the browser even though the routes were there.
+ *
+ * Sam holds one document rather than the whole workspace on purpose. Two people
+ * who are both workspace administrators cannot demonstrate sharing: everything
+ * is already visible to both, so "share this with Sam" changes nothing you can
+ * see. Sam keeps write access to the spec (the collaboration walkthroughs need
+ * it) and arrives at everything else the way a colleague really does — because
+ * somebody shared it.
+ */
+const PEOPLE = [
+  { id: 'u-priya', name: 'priya', email: 'priya@acme.test', grants: ADMIN },
+  {
+    id: 'u-sam',
+    name: 'sam',
+    email: 'sam@acme.test',
+    grants: [{ path: '/specs/checkout-v2', capability: 'write' }] as Grant[],
+  },
+] as const;
 
 const ROOT = join(import.meta.dirname, '..');
 
@@ -73,16 +101,30 @@ investigate afterwards.
 `;
 
 async function main(): Promise<void> {
-  const server = build({ file: DB, logger: false });
+  /**
+   * A sign-in, when the environment asks for one.
+   *
+   * `GALLEY_DEV_AUTH=1` puts the development provider in front of
+   * `/v1/auth/session`, which accepts `dev:<email>` and nothing else. Left
+   * unset the server behaves exactly as it did before: issued tokens only.
+   */
+  const identity = process.env.GALLEY_DEV_AUTH === '1' ? new DevProvider() : undefined;
+  const server = build({ file: DB, logger: false, identity });
   const url = await server.listen(PORT);
 
   server.store.createWorkspace('default', 'Acme');
-  for (const [id, name] of [
-    ['u-priya', 'priya'],
-    ['u-sam', 'sam'],
-  ] as const) {
-    server.store.upsertPrincipal({ id, workspaceId: 'default', kind: 'human', name });
-    server.store.setGrants(id, ADMIN);
+  for (const person of PEOPLE) {
+    server.store.upsertPrincipal({
+      id: person.id,
+      workspaceId: 'default',
+      kind: 'human',
+      name: person.name,
+      // The shape the development provider mints, so signing in as this address
+      // lands on the seeded account rather than making a second one beside it.
+      externalId: `dev|${person.email}`,
+      email: person.email,
+    });
+    server.store.setGrants(person.id, person.grants as Grant[]);
   }
 
   const token = server.auth.issueForHuman('u-priya', { label: DEV_TOKEN_LABEL, scope: ADMIN });
@@ -93,7 +135,18 @@ async function main(): Promise<void> {
    * in, so "two people in the same document" — presence, live sync, undo across
    * somebody else's edit — could not be exercised at all, by hand or by a test.
    */
-  const secondToken = server.auth.issueForHuman('u-sam', { label: `${DEV_TOKEN_LABEL} (sam)`, scope: ADMIN });
+  /*
+   * Sam's token is scoped to what Sam actually holds, not to the workspace.
+   *
+   * A token's scope is intersected with its holder's grants *by scope entry*:
+   * a scope of `/` against a grant on `/specs/checkout-v2` intersects to
+   * nothing at all, and the token silently opens no documents. Handing over
+   * exactly his own grants is the honest version and the working one.
+   */
+  const secondToken = server.auth.issueForHuman('u-sam', {
+    label: `${DEV_TOKEN_LABEL} (sam)`,
+    scope: PEOPLE[1].grants as Grant[],
+  });
   const agentToken = server.auth.issueForAgent(
     { agentId: 'a-bot', agentName: 'galley-bot/ci', sponsorId: 'u-priya', workspaceId: 'default' },
     { label: 'ci', scope: [{ path: '/', capability: 'suggest' }] },
@@ -164,6 +217,7 @@ async function main(): Promise<void> {
       `  human token: ${token}`,
       `  agent token: ${agentToken}`,
       `  sam's token: ${secondToken}`,
+      `  sign-in:     ${identity ? 'dev (any email)' : 'off'}`,
       `  open:        http://127.0.0.1:5173/?token=${token}&server=${url}`,
       '',
     ].join('\n'),
