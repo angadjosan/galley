@@ -3801,3 +3801,515 @@ kbd {
   color: var(--text-3);
   text-align: center;
 }
+
+/* ------------------------------------------------------------ sharing */
+
+/**
+ * Sharing, and the two things it has to say clearly.
+ *
+ * **Who has it** is a list, so it is built like every other list in this app —
+ * an avatar, a name, a quiet second line, and the control on the right where
+ * "Remove" lives everywhere else.
+ *
+ * **What a link allows** is a decision, so it looks like one: a select and a
+ * button on a row of their own, and the agents toggle underneath with its
+ * explanation attached rather than hidden behind a tooltip. The toggle is not
+ * tinted red and is not tucked under "advanced" — sending an agent a document
+ * to read is the ordinary case this product exists for, and the honest thing
+ * to do is say what it means in one line and default it off.
+ */
+
+.share-section {
+  width: 100%;
+  padding-top: 16px;
+  margin-top: 4px;
+  border-top: 1px solid var(--line-2);
+}
+
+.share-section:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.share-section h3 {
+  font-size: var(--fs-small);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 8px;
+}
+
+.share-add {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.share-add input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--page);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-ui);
+}
+
+.share-add input:focus,
+.cap-select:focus-visible {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: var(--focus);
+}
+
+.cap-select {
+  flex: none;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--page);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-ui);
+  cursor: pointer;
+}
+
+/**
+ * "Shared" and "Invited" are different facts.
+ *
+ * The first is green because a colleague can open the document now. The second
+ * is the attention colour because nothing has happened yet and will not until
+ * someone signs up — quietly promoting that to "done" is how a document fails
+ * to reach the person it was meant for.
+ */
+.share-outcome {
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-small);
+  line-height: 1.55;
+}
+
+.share-outcome-good {
+  background: var(--accent-tint);
+  border: 1px solid var(--accent-line);
+  color: var(--accent-text);
+}
+
+.share-outcome-warn {
+  background: var(--warn-tint);
+  border: 1px solid var(--warn-line);
+  color: var(--warn);
+}
+
+.share-rows {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+
+.share-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: var(--r-sm);
+}
+
+.share-row:hover {
+  background: var(--surface);
+}
+
+.share-who {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.share-who strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: var(--fs-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-who em {
+  font-style: normal;
+  font-size: var(--fs-small);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-url {
+  font-family: var(--mono);
+  font-size: var(--fs-small);
+  font-weight: 400;
+}
+
+.share-cap {
+  flex: none;
+  font-size: var(--fs-small);
+  color: var(--text-3);
+}
+
+.share-row.is-invited .share-who em {
+  color: var(--warn);
+}
+
+.avatar-pending {
+  background: var(--surface-2);
+  color: var(--text-3);
+  border: 1px dashed var(--line-strong);
+}
+
+.link-new {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.agent-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.agent-toggle input {
+  margin-top: 2px;
+  accent-color: var(--agent);
+  flex: none;
+}
+
+.agent-toggle input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+  border-radius: var(--r-xs);
+}
+
+.agent-toggle span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-toggle strong {
+  font-weight: 600;
+  font-size: var(--fs-ui);
+}
+
+.agent-toggle em {
+  font-style: normal;
+  font-size: var(--fs-small);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.agent-toggle:has(input:checked) {
+  border-color: var(--agent-line);
+  background: var(--agent-tint);
+}
+
+.share-agent-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* -------------------------------------------------------------- agents */
+
+/**
+ * The agent admin surface.
+ *
+ * Violet, because violet already means "not a person" everywhere else here and
+ * this is the screen where that association is load-bearing. The token panel
+ * is the one thing on it that gets emphasis, and it earns it: the secret is
+ * shown once, and the sentence saying so has to be read before it is gone.
+ */
+.agents {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.agent-new {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.agent-new label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-small);
+  color: var(--text-2);
+}
+
+.agent-new input {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--page);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-ui);
+}
+
+.agent-new input:focus {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: var(--focus);
+}
+
+.agent-new small {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.agent-new .primary {
+  align-self: flex-start;
+}
+
+.agent-token {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--agent-line);
+  border-left: 3px solid var(--agent);
+  border-radius: var(--r-md);
+  background: var(--agent-tint);
+}
+
+.agent-token strong {
+  font-weight: 600;
+  color: var(--agent-text);
+}
+
+.agent-token p {
+  font-size: var(--fs-small);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.agent-token code {
+  display: block;
+  font-family: var(--mono);
+  font-size: var(--fs-small);
+  padding: 9px 10px;
+  background: var(--page);
+  border: 1px solid var(--agent-line);
+  border-radius: var(--r-sm);
+  word-break: break-all;
+  user-select: all;
+}
+
+.agent-token-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-row .avatar-agent {
+  flex: none;
+}
+
+/* --------------------------------------------------------------- guests */
+
+/**
+ * A guest, said quietly.
+ *
+ * Deliberately neutral rather than violet: violet is the one hue that means an
+ * agent did something, and a guest is a person — just one nobody has vouched
+ * for. Borrowing the agent colour to mean "unverified human" would break the
+ * only colour rule this interface asks anyone to learn.
+ */
+.guest-chip {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--text-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  white-space: nowrap;
+}
+
+.revision .dot.guest {
+  background: var(--page);
+  box-shadow: inset 0 0 0 2px var(--line-strong);
+}
+
+.guest-badge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 4px 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  max-width: min(46vw, 340px);
+}
+
+.guest-name {
+  font-size: var(--fs-small);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guest-badge .link-quiet {
+  flex: none;
+  color: var(--accent-text);
+}
+
+.library-guest {
+  font-size: var(--fs-small);
+  line-height: 1.55;
+  color: var(--text-3);
+  padding: 2px 4px;
+}
+
+@media (max-width: 720px) {
+  /* The name is the part that can go; the fact that you are a guest, and the
+     way to stop being one, are the parts that cannot. */
+  .guest-name {
+    display: none;
+  }
+}
+
+/* ------------------------------------------------------------- sign-in */
+
+.signin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.signin-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: var(--fs-small);
+  color: var(--text-2);
+}
+
+.signin-form input {
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--page);
+  color: var(--text);
+  font: inherit;
+}
+
+.signin-form input:focus {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: var(--focus);
+}
+
+.signin-hint,
+.signin-notice {
+  font-size: var(--fs-small);
+  line-height: 1.55;
+  color: var(--text-3);
+}
+
+.signin-notice {
+  padding: 9px 11px;
+  border-radius: var(--r-sm);
+  background: var(--warn-tint);
+  border: 1px solid var(--warn-line);
+  color: var(--warn);
+}
+
+/* The one control on the screen, so it is the width of the screen. */
+.signin-form .primary {
+  padding: 10px 14px;
+}
+
+.primary.sso {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  background: var(--page);
+  color: var(--text);
+  border-color: var(--line-strong);
+  font-weight: 600;
+}
+
+.primary.sso:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.sso-mark {
+  width: 17px;
+  height: 17px;
+  flex: none;
+}
+
+.signin-waiting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-size: var(--fs-ui);
+  color: var(--text-2);
+}
+
+.signin-opening .signin-lede {
+  margin-bottom: 0;
+  color: var(--text-3);
+}
+
+/**
+ * The quiet destinations at the foot of the document list.
+ *
+ * They wrap rather than shrink. The list is fluid — 208px at the narrow end —
+ * and three links squeezed onto one line there would be three unreadable
+ * links; a second line costs nothing anyone will miss.
+ */
+.library-foot {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.foot-links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-left: auto;
+}

@@ -59,6 +59,9 @@ export interface MenuBarProps {
   onDesign(): void;
   onTable(): void;
   onShare(): void;
+  /** False for a guest, who may edit through a link but not share or create. */
+  canShare?: boolean;
+  canCreate?: boolean;
   onHistory(): void;
   onNewDocument(): void;
   onToggleLibrary(): void;
@@ -383,10 +386,10 @@ function buildMenus(props: MenuBarProps): Menu[] {
       id: 'file',
       label: 'File',
       entries: () => [
-        app('new', 'New document', props.onNewDocument),
+        ...(props.canCreate === false ? [] : [app('new', 'New document', props.onNewDocument)]),
         app('open', 'Open a document', props.onToggleLibrary, { shortcut: '⌘K' }),
         separator('f1'),
-        app('share', 'Share', props.onShare),
+        ...(props.canShare === false ? [] : [app('share', 'Share', props.onShare)]),
         app('history', 'Version history', props.onHistory),
         separator('f2'),
         // The two places the format is allowed to be named, and the only two.

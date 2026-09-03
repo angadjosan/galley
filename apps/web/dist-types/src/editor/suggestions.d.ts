@@ -22,6 +22,7 @@ export interface PendingSuggestion {
     readonly authorName: string;
     readonly sponsorName: string | null;
     readonly byAgent: boolean;
+    readonly byGuest?: boolean;
     readonly state: 'pending' | 'stale' | 'accepted' | 'rejected';
     readonly at: string;
 }

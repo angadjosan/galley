@@ -34,12 +34,21 @@ import { emptyHighlights, type CommentAnchor, type CommentHighlightState } from 
 import type { PendingSuggestion } from './editor/suggestions.js';
 import {
   LiveConnection,
-  clearCredentials,
+  bootstrap,
+  currentToken,
   makeClient,
-  readCredentials,
+  onSessionLost,
+  serverBaseUrl,
+  signOut as endSession,
+  type Boot,
   type Credentials,
   type PeerPresence,
+  type Viewer,
 } from './api.js';
+import { SignIn, SignInForm } from './share/SignIn.js';
+import { ShareDialog } from './share/ShareDialog.js';
+import { AgentsPanel } from './share/AgentsPanel.js';
+import { GuestBadge } from './share/GuestBadge.js';
 
 type SaveState = 'saved' | 'saving' | 'dirty' | 'error';
 
@@ -69,119 +78,103 @@ interface Draft {
   spanEnd: number | null;
 }
 
+/**
+ * The app, and the question it has to answer before it can draw anything:
+ * who is holding this tab?
+ *
+ * Three answers, and they are genuinely different products for a moment —
+ * a signed-in person, a guest who followed a link, and nobody. Deciding once,
+ * up front, is what keeps every surface below from having to ask again.
+ */
 export function App(): JSX.Element {
-  const [credentials, setCredentials] = useState<Credentials | null>(() => readCredentials());
-  if (!credentials) return <SignIn onSignIn={setCredentials} />;
+  const [boot, setBoot] = useState<Boot | null>(null);
+  /**
+   * The document a guest was reading when they signed in.
+   *
+   * Signing in from a share link claims the guest's work on the server. Landing
+   * that person back in an empty workspace, having just been told their work
+   * was kept, would be a lie told by a router.
+   */
+  const [claimed, setClaimed] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void bootstrap().then((result) => {
+      if (live) setBoot(result);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // A token that could not be re-minted is a session that is over. Saying so
+  // beats every screen in the app quietly failing one request at a time.
+  useEffect(() => {
+    onSessionLost(() =>
+      setBoot({ kind: 'signedOut', message: 'Your session ended. Sign in again to carry on.' }),
+    );
+    return () => onSessionLost(null);
+  }, []);
+
+  // The token is read during render rather than held in state because it is
+  // re-minted without anybody re-rendering; what this has to be stable across
+  // is renders, so that the client below is not rebuilt on every one of them.
+  const token = currentToken() ?? '';
+  const credentials = useMemo<Credentials>(
+    () => ({ baseUrl: serverBaseUrl(), token }),
+    [token],
+  );
+
+  if (!boot) {
+    return (
+      <div className="signin">
+        <div className="signin-card signin-opening" aria-busy="true">
+          <div className="brand brand-lg">
+            <Mark />
+            <span>Galley</span>
+          </div>
+          <p className="signin-lede">Opening…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (boot.kind === 'signedOut') {
+    return (
+      <SignIn
+        brand={
+          <>
+            <Mark />
+            <span>Galley</span>
+          </>
+        }
+        notice={boot.message}
+        onSignedIn={(viewer) => setBoot({ kind: 'user', viewer })}
+      />
+    );
+  }
+
+  const guest = boot.kind === 'guest';
   return (
     <Workspace
+      // Remounted when the identity changes: a claimed guest session and the
+      // person it became share no state worth keeping.
+      key={guest ? `guest:${boot.linkId}` : `user:${boot.viewer.id}`}
       credentials={credentials}
+      viewer={boot.viewer}
+      guest={guest}
+      initialDocId={guest ? boot.docId : claimed}
+      onSignedIn={(viewer) => {
+        if (guest) setClaimed(boot.docId);
+        setBoot({ kind: 'user', viewer });
+      }}
       onSignOut={() => {
-        clearCredentials();
-        setCredentials(null);
+        void endSession();
+        setClaimed(null);
+        setBoot({ kind: 'signedOut' });
       }}
     />
   );
-}
-
-// ---------------------------------------------------------------------------
-
-function SignIn({ onSignIn }: { onSignIn(c: Credentials): void }): JSX.Element {
-  const [link, setLink] = useState('');
-  const [advanced, setAdvanced] = useState(false);
-  const [server, setServer] = useState(window.location.origin);
-  const [token, setToken] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  const enter = (baseUrl: string, value: string): void => {
-    sessionStorage.setItem('galley.session', JSON.stringify({ baseUrl, token: value }));
-    onSignIn({ baseUrl, token: value });
-  };
-
-  return (
-    <div className="signin">
-      <form
-        className="signin-card"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (advanced) {
-            enter(server, token);
-            return;
-          }
-          // One field, because two labelled credential fields is a login screen
-          // for engineers. The link people are sent already carries both.
-          const parsed = parseInvite(link.trim());
-          if (!parsed) {
-            setError("That doesn't look like a Galley link. Paste the whole thing, or open Advanced.");
-            return;
-          }
-          enter(parsed.baseUrl, parsed.token);
-        }}
-      >
-        <div className="brand brand-lg">
-          <Mark />
-          <span>Galley</span>
-        </div>
-        <p className="signin-lede">Write like normal. Your agents get something they can actually read.</p>
-
-        {advanced ? (
-          <>
-            <label>
-              Server
-              <input value={server} onChange={(e) => setServer(e.target.value)} spellCheck={false} />
-            </label>
-            <label>
-              Token
-              <input
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="glly_…"
-                spellCheck={false}
-                data-testid="token-input"
-              />
-            </label>
-          </>
-        ) : (
-          <label>
-            Your invite link
-            <input
-              value={link}
-              onChange={(event) => {
-                setLink(event.target.value);
-                setError(null);
-              }}
-              placeholder="https://…"
-              spellCheck={false}
-              autoFocus
-              data-testid="invite-input"
-            />
-          </label>
-        )}
-
-        {error && <p className="signin-error">{error}</p>}
-
-        <button type="submit" className="primary" data-testid="sign-in">
-          Open Galley
-        </button>
-        <button type="button" className="link-quiet" onClick={() => setAdvanced((on) => !on)}>
-          {advanced ? 'Use an invite link instead' : 'Advanced'}
-        </button>
-      </form>
-    </div>
-  );
-}
-
-/** Pull a server and token out of whatever someone pasted. */
-function parseInvite(value: string): { baseUrl: string; token: string } | null {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    const token = url.searchParams.get('token');
-    if (!token) return null;
-    const server = url.searchParams.get('server');
-    return { baseUrl: server ?? url.origin, token };
-  } catch {
-    return value.startsWith('glly_') ? { baseUrl: window.location.origin, token: value } : null;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -210,9 +203,25 @@ function blankDesign(name: string): string {
 
 function Workspace({
   credentials,
+  viewer,
+  guest,
+  initialDocId,
+  onSignedIn,
   onSignOut,
 }: {
   credentials: Credentials;
+  viewer: Viewer;
+  /**
+   * This tab arrived on a share link and has no account.
+   *
+   * Every control a guest cannot use is *absent*, not disabled and not present
+   * until it errors: a workspace that offers to create a document and then
+   * refuses is worse than one that never offered.
+   */
+  guest: boolean;
+  /** The document to open first — a guest's link, or the one they just claimed. */
+  initialDocId: string | null;
+  onSignedIn(viewer: Viewer): void;
   onSignOut(): void;
 }): JSX.Element {
   const client = useMemo(() => makeClient(credentials), [credentials]);
@@ -233,17 +242,41 @@ function Workspace({
   const [confirming, setConfirming] = useState<DocumentSummary | null>(null);
   const [creatingOpen, setCreatingOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
+  const [agentsOpen, setAgentsOpen] = useState(false);
+  /** A guest who has asked to sign in, without losing the document behind it. */
+  const [claiming, setClaiming] = useState(false);
 
   const refreshList = useCallback(async () => {
     try {
+      // A guest can see exactly one document — the one the link points at.
+      // Asking for the library would be asking a question they are not allowed
+      // to ask, and answering it with an error banner would be theatre.
+      if (guest) {
+        if (!initialDocId) {
+          setDocuments([]);
+          return;
+        }
+        const doc = await client.read(initialDocId);
+        setDocuments([
+          {
+            docId: initialDocId,
+            path: doc.path,
+            title: titleOf(doc.content, doc.path),
+            updatedAt: new Date().toISOString(),
+          },
+        ]);
+        setSelected(initialDocId);
+        setError(null);
+        return;
+      }
       const list = await client.list();
       setDocuments(list);
-      setSelected((current) => current ?? list[0]?.docId ?? null);
+      setSelected((current) => current ?? initialDocId ?? list[0]?.docId ?? null);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [client]);
+  }, [client, guest, initialDocId]);
 
   useEffect(() => {
     void refreshList();
@@ -370,15 +403,18 @@ function Workspace({
           <span>Galley</span>
         </div>
 
-        <div className="search">
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search everything"
-            aria-label="Search"
-            data-testid="search-input"
-          />
-        </div>
+        {/* One document, so nothing to search across. */}
+        {!guest && (
+          <div className="search">
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search everything"
+              aria-label="Search"
+              data-testid="search-input"
+            />
+          </div>
+        )}
 
         {hits ? (
           <nav className="doc-list" data-testid="search-results">
@@ -420,15 +456,17 @@ function Workspace({
                     >
                       <span className="doc-title">{doc.title}</span>
                     </button>
-                    <button
-                      className="doc-delete"
-                      onClick={() => setConfirming(doc)}
-                      title={`Delete ${doc.title}`}
-                      aria-label={`Delete ${doc.title}`}
-                      data-testid={`delete-${doc.path}`}
-                    >
-                      <TrashIcon />
-                    </button>
+                    {!guest && (
+                      <button
+                        className="doc-delete"
+                        onClick={() => setConfirming(doc)}
+                        title={`Delete ${doc.title}`}
+                        aria-label={`Delete ${doc.title}`}
+                        data-testid={`delete-${doc.path}`}
+                      >
+                        <TrashIcon />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -437,45 +475,73 @@ function Workspace({
         )}
 
         <div className="library-foot">
-          <div className="new-doc-wrap">
-            {creatingOpen && (
-              <div className="new-doc-menu" data-testid="new-menu">
-                <button className="new-doc-choice" onClick={() => void createDocument('doc')}>
-                  <DocumentIcon />
-                  <span>
-                    <strong>Document</strong>
-                    <em>Words, in a page</em>
-                  </span>
-                </button>
+          {guest ? (
+            <p className="library-guest" data-testid="library-guest">
+              You are reading this as a guest. Signing in keeps your notes under your own name.
+            </p>
+          ) : (
+            <>
+              <div className="new-doc-wrap">
+                {creatingOpen && (
+                  <div className="new-doc-menu" data-testid="new-menu">
+                    <button className="new-doc-choice" onClick={() => void createDocument('doc')}>
+                      <DocumentIcon />
+                      <span>
+                        <strong>Document</strong>
+                        <em>Words, in a page</em>
+                      </span>
+                    </button>
+                    <button
+                      className="new-doc-choice"
+                      onClick={() => void createDocument('design')}
+                      data-testid="new-design"
+                    >
+                      <DesignIcon />
+                      <span>
+                        <strong>Design</strong>
+                        <em>A screen, on a canvas</em>
+                      </span>
+                    </button>
+                  </div>
+                )}
                 <button
-                  className="new-doc-choice"
-                  onClick={() => void createDocument('design')}
-                  data-testid="new-design"
+                  className="new-doc"
+                  onClick={() => setCreatingOpen((open) => !open)}
+                  aria-expanded={creatingOpen}
+                  data-testid="new-button"
                 >
-                  <DesignIcon />
-                  <span>
-                    <strong>Design</strong>
-                    <em>A screen, on a canvas</em>
-                  </span>
+                  <span aria-hidden="true">+</span> New
                 </button>
               </div>
-            )}
-            <button
-              className="new-doc"
-              onClick={() => setCreatingOpen((open) => !open)}
-              aria-expanded={creatingOpen}
-              data-testid="new-button"
-            >
-              <span aria-hidden="true">+</span> New
-            </button>
-          </div>
-          <button className="link-quiet" onClick={() => setTrashOpen(true)} data-testid="open-trash">
-            Trash
-          </button>
-          <button className="link-quiet" onClick={onSignOut}>
-            Sign out
-          </button>
+              {/*
+                Three destinations that are visited rarely and cost nothing to
+                keep visible. They wrap rather than shrink: the document list is
+                fluid, and a row of controls that squeezes into unreadability at
+                the narrow end is worse than one that takes a second line.
+              */}
+              <div className="foot-links">
+                <button
+                  className="link-quiet"
+                  onClick={() => setTrashOpen(true)}
+                  data-testid="open-trash"
+                >
+                  Trash
+                </button>
+                <button
+                  className="link-quiet"
+                  onClick={() => setAgentsOpen(true)}
+                  data-testid="open-agents"
+                >
+                  Agents
+                </button>
+                <button className="link-quiet" onClick={onSignOut}>
+                  Sign out
+                </button>
+              </div>
+            </>
+          )}
         </div>
+
       </aside>
 
       {confirming && (
@@ -492,6 +558,28 @@ function Workspace({
           onClose={() => setTrashOpen(false)}
           onChanged={() => void refreshList()}
         />
+      )}
+
+      {agentsOpen && (
+        <Overlay title="Agents" onClose={() => setAgentsOpen(false)}>
+          <AgentsPanel sponsorName={viewer.name} />
+        </Overlay>
+      )}
+
+      {claiming && (
+        <Overlay title="Keep your work" onClose={() => setClaiming(false)}>
+          <p className="overlay-lead">
+            Sign in and everything you have written here — your notes, your suggestions — comes
+            with you, under your own name.
+          </p>
+          <SignInForm
+            submitLabel="Sign in and keep my work"
+            onSignedIn={(person) => {
+              setClaiming(false);
+              onSignedIn(person);
+            }}
+          />
+        </Overlay>
       )}
 
       <button
@@ -511,6 +599,9 @@ function Workspace({
             docId={selected}
             path={current.path}
             people={people}
+            guest={guest}
+            viewer={viewer}
+            onClaim={() => setClaiming(true)}
             onToggleLibrary={() => setLibraryOpen((open) => !open)}
             onNewDocument={() => void createDocument('doc')}
             onSignOut={onSignOut}
@@ -537,6 +628,15 @@ function Workspace({
               );
             }}
           />
+        ) : guest ? (
+          <div className="desk">
+            <div className="spread">
+              <main className="page page-empty">
+                <h1>This link has nothing behind it</h1>
+                <p>The document it pointed at is gone, or the link was turned off.</p>
+              </main>
+            </div>
+          </div>
         ) : (
           <FirstRun onCreate={() => void createDocument('doc')} />
         )}
@@ -572,6 +672,9 @@ function DocumentView({
   docId,
   path,
   people,
+  guest,
+  viewer,
+  onClaim,
   onToggleLibrary,
   onNewDocument,
   onSignOut,
@@ -583,6 +686,11 @@ function DocumentView({
   docId: string;
   path: string;
   people: Map<string, Person>;
+  /** Reading this through a share link, without an account. */
+  guest: boolean;
+  viewer: Viewer;
+  /** "Sign in to keep your work." */
+  onClaim(): void;
   onToggleLibrary(): void;
   onNewDocument(): void;
   onSignOut(): void;
@@ -1153,9 +1261,13 @@ function DocumentView({
             <div className="chrome-right">
               <SaveBadge state={save} />
               <Presence peers={peers} />
-              <button className="chrome-button chrome-share" onClick={() => setShareOpen(true)}>
-                Share
-              </button>
+              {guest ? (
+                <GuestBadge name={viewer.name} onSignIn={onClaim} />
+              ) : (
+                <button className="chrome-button chrome-share" onClick={() => setShareOpen(true)}>
+                  Share
+                </button>
+              )}
             </div>
           </div>
         </header>
@@ -1201,7 +1313,15 @@ function DocumentView({
           onClose={onToggleLibrary}
         />
         </Boundary>
-        {shareOpen && <Share path={loaded.path} onClose={() => setShareOpen(false)} />}
+        {shareOpen && !guest && (
+          <Overlay title="Share" onClose={() => setShareOpen(false)}>
+            <ShareDialog
+              docRef={docId}
+              path={loaded.path}
+              onCopyForAgent={() => void navigator.clipboard?.writeText(loaded.path)}
+            />
+          </Overlay>
+        )}
       </>
     );
   }
@@ -1239,12 +1359,25 @@ function DocumentView({
           <div className="chrome-right">
             <SaveBadge state={save} />
             <Presence peers={peers} />
-            <button className="chrome-button chrome-share" onClick={() => setShareOpen(true)}>
-              Share
-            </button>
+            {guest ? (
+              <GuestBadge name={viewer.name} onSignIn={onClaim} />
+            ) : (
+              <button className="chrome-button chrome-share" onClick={() => setShareOpen(true)}>
+                Share
+              </button>
+            )}
           </div>
         </div>
 
+        {/*
+          A guest gets the formatting toolbar and not the menu bar.
+
+          The menu bar is where the *document* is administered — share it,
+          start another one, sign out — and none of that is a guest's to do.
+          The toolbar underneath is purely "what can I do to this word", which
+          is exactly the surface a guest with write access still needs.
+        */}
+        {!guest && (
         <MenuBar
           state={editorState}
           readOnly={false}
@@ -1262,6 +1395,7 @@ function DocumentView({
           onDownload={() => downloadMarkdown(loaded.path, editor.current?.markdown() ?? loaded.content)}
           onSignOut={onSignOut}
         />
+        )}
 
         <Toolbar
           state={editorState}
@@ -1355,6 +1489,7 @@ function DocumentView({
                 register={registerCard}
                 author={nameOf(comment.authorId)}
                 isAgent={people.get(comment.authorId)?.kind === 'agent'}
+                isGuest={people.get(comment.authorId)?.kind === 'guest'}
                 sponsor={
                   people.get(comment.authorId)?.sponsorId
                     ? nameOf(people.get(comment.authorId)!.sponsorId!)
@@ -1432,8 +1567,14 @@ function DocumentView({
         />
       )}
 
-      {shareOpen && (
-        <Share path={loaded.path} onClose={() => setShareOpen(false)} />
+      {shareOpen && !guest && (
+        <Overlay title="Share" onClose={() => setShareOpen(false)}>
+          <ShareDialog
+            docRef={docId}
+            path={loaded.path}
+            onCopyForAgent={() => void navigator.clipboard?.writeText(loaded.path)}
+          />
+        </Overlay>
       )}
 
       {historyOpen && (
@@ -1489,6 +1630,7 @@ function NoteCard({
   register,
   author,
   isAgent,
+  isGuest,
   sponsor,
   active,
   hovered,
@@ -1500,6 +1642,14 @@ function NoteCard({
   register(key: string, node: HTMLElement | null): void;
   author: string;
   isAgent: boolean;
+  /**
+   * Someone who came in on a share link and has no account.
+   *
+   * Worth saying, because on a public link a reader otherwise cannot tell a
+   * colleague from a passer-by. Said quietly — a guest is a legitimate
+   * participant — and never in violet, which means agent and only agent.
+   */
+  isGuest: boolean;
   sponsor: string | null;
   active: boolean;
   hovered: boolean;
@@ -1524,7 +1674,10 @@ function NoteCard({
           {isAgent ? '' : author.slice(0, 1).toUpperCase()}
         </span>
         <div className="card-who">
-          <span className="who-name">{author}</span>
+          <span className="who-name">
+            {author}
+            {isGuest && <span className="guest-chip">Guest</span>}
+          </span>
           <span className="who-sub">
             {isAgent && sponsor ? `set up by ${sponsor} · ` : ''}
             {when(comment.createdAt)}
@@ -1600,34 +1753,6 @@ function NoteComposer({
 
 // ---------------------------------------------------------------------------
 
-function Share({ path, onClose }: { path: string; onClose(): void }): JSX.Element {
-  const [copied, setCopied] = useState(false);
-  return (
-    <Overlay title="Share" onClose={onClose}>
-      <div className="share">
-        <p className="share-lede">
-          {path.includes('/') ? `${prettyName(path.slice(0, path.lastIndexOf('/')))} › ` : ''}
-          {prettyName(path)}
-        </p>
-        <p className="share-note">
-          Paste this into your assistant. It can read the document and suggest changes — only you
-          can accept them.
-        </p>
-        <code className="share-ref">{path}</code>
-        <button
-          className="primary"
-          onClick={() => {
-            void navigator.clipboard?.writeText(path);
-            setCopied(true);
-          }}
-        >
-          {copied ? 'Copied' : 'Copy for an agent'}
-        </button>
-      </div>
-    </Overlay>
-  );
-}
-
 /**
  * The timeline.
  *
@@ -1680,6 +1805,7 @@ function HistoryOverlay({
             <span className="who-name">
               {current.authorName}
               {current.byAgent && <span className="agent-chip">Agent</span>}
+              {current.byGuest && <span className="guest-chip">Guest</span>}
             </span>
             <time dateTime={current.at}>{when(current.at)}</time>
           </div>
@@ -1711,13 +1837,16 @@ function HistoryOverlay({
             const checkpoint = byTicket.get(revision.ticket);
             return (
               <li key={revision.ticket} className="revision" data-testid="revision">
-                <span className={`dot ${revision.byAgent ? 'agent' : ''}`} />
+                <span
+                  className={`dot ${revision.byAgent ? 'agent' : ''} ${revision.byGuest ? 'guest' : ''}`}
+                />
                 <div className="revision-body">
                   {checkpoint && <span className="checkpoint-name">{checkpoint.name}</span>}
                   <span className="revision-summary">{revision.summary}</span>
                   <span className="revision-meta">
                     {revision.authorName || nameOf(revision.authorId)}
-                    {revision.byAgent && <span className="agent-chip">Agent</span>} · {when(revision.at)}
+                    {revision.byAgent && <span className="agent-chip">Agent</span>}
+                    {revision.byGuest && <span className="guest-chip">Guest</span>} · {when(revision.at)}
                   </span>
                 </div>
                 <button
@@ -1948,7 +2077,10 @@ function Overlay({
       // `aria-modal` is a promise to assistive technology that the rest of the
       // page is inert. Tab has to honour it or the promise is a lie.
       const focusable = panel.current.querySelectorAll<HTMLElement>(
-        'a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        // `select` is in the list because the share dialog has two of them. A
+        // control the trap does not know about is a control Tab can escape the
+        // dialog through, which is exactly the promise `aria-modal` makes.
+        'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
       );
       if (focusable.length === 0) return;
       const first = focusable[0]!;

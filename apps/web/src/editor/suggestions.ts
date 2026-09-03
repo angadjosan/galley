@@ -25,6 +25,7 @@ export interface PendingSuggestion {
   readonly authorName: string;
   readonly sponsorName: string | null;
   readonly byAgent: boolean;
+  readonly byGuest?: boolean;
   readonly state: 'pending' | 'stale' | 'accepted' | 'rejected';
   readonly at: string;
 }
@@ -120,6 +121,15 @@ function renderCard(
   name.className = 'who-name';
   name.textContent = suggestion.authorName;
   who.append(name);
+  if (suggestion.byGuest) {
+    // Grey, never violet. A guest is an unverified participant, not an agent,
+    // and the violet is the one colour this interface asks people to learn.
+    const chip = document.createElement('span');
+    chip.className = 'guest-chip';
+    chip.textContent = 'Guest';
+    who.append(chip);
+  }
+
   const sub = document.createElement('span');
   sub.className = 'who-sub';
   // The single most reassuring string in the product: it turns an

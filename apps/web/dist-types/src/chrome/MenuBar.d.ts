@@ -34,6 +34,9 @@ export interface MenuBarProps {
     onDesign(): void;
     onTable(): void;
     onShare(): void;
+    /** False for a guest, who may edit through a link but not share or create. */
+    canShare?: boolean;
+    canCreate?: boolean;
     onHistory(): void;
     onNewDocument(): void;
     onToggleLibrary(): void;
