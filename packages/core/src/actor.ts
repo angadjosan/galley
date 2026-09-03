@@ -373,6 +373,11 @@ export class DocumentActor {
           ops: input.ops,
           targets,
           authorId: principal.id,
+          // Captured here, not reconstructed at accept time: this is the only
+          // moment the proposer's own principal is in hand.
+          authorKind: principal.kind,
+          authorName: principal.name,
+          authorSponsorId: principal.sponsorId ?? null,
           rationale: input.rationale,
           createdAt: this.now(),
           baseTicket: this.sequencer.watermark.cursor,
@@ -396,6 +401,12 @@ export class DocumentActor {
    * Refused for a stale proposal, and refused for a human trying to accept
    * their own agent's work automatically — acceptance is a deliberate act by a
    * principal who is not the author.
+   *
+   * Refused for a guest too. Acceptance is the moment a proposal becomes the
+   * document, and the thing that makes it safe is that someone accountable
+   * chose it. A guest arrived through a link and is answerable to nobody, so
+   * letting one accept would mean anyone holding the URL can write the
+   * document while the audit trail names an anonymous otter.
    */
   acceptSuggestion(suggestionId: string, principal: Principal, requestId?: string): Promise<Suggestion> {
     return this.command(requestId, () =>
@@ -411,6 +422,12 @@ export class DocumentActor {
             `agent ${principal.id} cannot accept a suggestion; acceptance is a human act by design`,
           );
         }
+        if (principal.kind === 'guest') {
+          throw new Error(
+            `guest ${principal.id} cannot accept a suggestion; acceptance needs a signed-in person ` +
+              `who is accountable for the change landing`,
+          );
+        }
 
         const applied = await this.lock.withWrite(() => this.doc.applyOps(suggestion.ops));
         // Attributed to the *proposer*, not the accepter. `idea.md`: "becomes
@@ -418,7 +435,7 @@ export class DocumentActor {
         // acceptance, which the audit trail records separately.
         this.recordRevision({
           ops: suggestion.ops,
-          principal: { id: suggestion.authorId, kind: 'agent', name: suggestion.authorId, sponsorId: principal.id },
+          principal: proposerOf(suggestion, principal),
           ticket: this.sequencer.watermark.cursor,
           kind: 'suggestion-accepted',
           content: applied.source,
@@ -867,6 +884,37 @@ export function diffMagnitude(before: string, after: string): DiffMagnitude {
   const total = Math.max(beforeBlocks.size, afterBlocks.length, 1);
   const changed = total - survived;
   return { changed, total, fraction: changed / total };
+}
+
+/**
+ * The proposer, as a principal, for attributing an accepted suggestion.
+ *
+ * Attribution is read as a claim about *who wrote this sentence*, and the UI
+ * teaches one colour — violet — to mean "an agent did this". So a wrong `kind`
+ * is not a cosmetic slip: it tells a reader a person's paragraph was machine
+ * written. The kind and name are therefore recorded when the proposal is made
+ * and simply read back here.
+ *
+ * Suggestions written before those fields existed are durable JSON blobs that
+ * lack them. They fall back to the old assumption rather than throwing: a
+ * legacy row is nearly always an agent's proposal — agent edits are suggestions
+ * by default — and a wrong avatar on an old row is a far smaller harm than an
+ * accept path that crashes on it.
+ */
+function proposerOf(suggestion: Suggestion, accepter: Principal): Principal {
+  const kind = suggestion.authorKind ?? 'agent';
+  const name = suggestion.authorName ?? suggestion.authorId;
+  // Only an agent carries a sponsor — `assertValidDelegation` rejects a human
+  // or a guest that has one, so this must not be filled in unconditionally.
+  // The accepter is the legacy fallback, not the truth: it is who vouched for
+  // the change landing, which is the closest thing an old row records.
+  if (kind !== 'agent') return { id: suggestion.authorId, kind, name };
+  return {
+    id: suggestion.authorId,
+    kind,
+    name,
+    sponsorId: suggestion.authorSponsorId ?? accepter.id,
+  };
 }
 
 function targetsOf(ops: readonly BlockOp[]): string[] {

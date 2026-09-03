@@ -168,6 +168,14 @@ export class Workspace {
     );
     if (existing) throw new Error(`a document already exists at ${normalized}`);
 
+    // A guest arrives through a share link scoped to one document, so there is
+    // no document they could be creating and no owner to record if they did.
+    // Refused here rather than at the route, because an unowned document is
+    // invisible to the staleness nudge and would simply rot unnoticed.
+    if (principal.kind === 'guest') {
+      throw new InvalidPathError('a guest cannot create a document');
+    }
+
     const doc = GalleyDocument.create(source, {
       owner: principal.kind === 'human' ? principal.id : undefined,
       title: title ?? deriveTitle(source, normalized),

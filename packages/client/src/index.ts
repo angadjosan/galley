@@ -52,7 +52,7 @@ export interface TrashedDocument {
  */
 export interface Person {
   id: string;
-  kind: 'human' | 'agent' | 'system';
+  kind: 'human' | 'agent' | 'system' | 'guest';
   name: string;
   sponsorId: string | null;
 }

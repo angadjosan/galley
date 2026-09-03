@@ -40,6 +40,39 @@ export interface AuditEntry {
   readonly detail: string;
 }
 
+export interface DocGrant {
+  readonly docId: string;
+  readonly principalId: string;
+  readonly capability: string;
+  readonly grantedBy: string;
+  readonly grantedAt: string;
+}
+
+export interface DocInvite {
+  readonly docId: string;
+  readonly email: string;
+  readonly capability: string;
+  readonly invitedBy: string;
+  readonly createdAt: string;
+}
+
+export interface ShareLink {
+  readonly id: string;
+  readonly docId: string;
+  readonly capability: string;
+  readonly createdBy: string;
+  readonly allowAgents: boolean;
+  readonly expiresAt: string | null;
+  readonly revokedAt: string | null;
+}
+
+export interface GuestSession {
+  readonly guestId: string;
+  readonly linkId: string;
+  readonly createdAt: string;
+  readonly lastSeenAt: string;
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS workspaces (
   id          TEXT PRIMARY KEY,
@@ -50,10 +83,14 @@ CREATE TABLE IF NOT EXISTS workspaces (
 CREATE TABLE IF NOT EXISTS principals (
   id          TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
-  kind        TEXT NOT NULL CHECK (kind IN ('human', 'agent', 'system')),
+  kind        TEXT NOT NULL CHECK (kind IN ('human', 'agent', 'system', 'guest')),
   name        TEXT NOT NULL,
   sponsor_id  TEXT REFERENCES principals(id) ON DELETE CASCADE,
-  revoked_at  TEXT
+  revoked_at  TEXT,
+  /* Who this is at the identity provider, and the address an invite was sent
+     to. Both null for agents and guests, who have no account behind them. */
+  external_id TEXT,
+  email       TEXT
 );
 CREATE INDEX IF NOT EXISTS principals_sponsor ON principals(sponsor_id);
 
@@ -162,6 +199,81 @@ CREATE TABLE IF NOT EXISTS assets (
   created_at   TEXT NOT NULL
 );
 
+/**
+ * Sharing.
+ *
+ * doc_grants is deliberately a separate table from grants rather than a
+ * path grant on the same one. A path grant is a statement about a *tree* and is
+ * rewritten wholesale whenever a principal's authority is re-issued; a share is
+ * a statement about a single document that must survive that rewrite. Keeping
+ * them apart is what stops "re-issue this agent's scope" from silently
+ * unsharing every document someone sent them.
+ *
+ * Nothing here can demote: capability resolution takes the strongest of the
+ * path grant, the doc grant and the link, so a share only ever adds.
+ */
+CREATE TABLE IF NOT EXISTS doc_grants (
+  doc_id       TEXT NOT NULL,
+  principal_id TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+  capability   TEXT NOT NULL,
+  granted_by   TEXT NOT NULL,
+  granted_at   TEXT NOT NULL,
+  PRIMARY KEY (doc_id, principal_id)
+);
+CREATE INDEX IF NOT EXISTS doc_grants_principal ON doc_grants(principal_id);
+
+/**
+ * A share addressed to someone who does not have an account yet.
+ *
+ * Keyed by email rather than by principal because there is no principal to key
+ * it to; takeInvitesForEmail converts the pile into real doc grants at
+ * signup and deletes it in the same breath, so an address can never be
+ * redeemed twice.
+ */
+CREATE TABLE IF NOT EXISTS doc_invites (
+  doc_id     TEXT NOT NULL,
+  email      TEXT NOT NULL,
+  capability TEXT NOT NULL,
+  invited_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (doc_id, email)
+);
+CREATE INDEX IF NOT EXISTS doc_invites_email ON doc_invites(email);
+
+/**
+ * A link that grants a capability to whoever holds it.
+ *
+ * Revoked rather than deleted: a link that stops working needs to be
+ * distinguishable from a link that never existed, both for the audit trail and
+ * so an expired-link page can say which it was. allow_agents defaults to 0 —
+ * a link pasted into a chat should not silently become an agent's credential.
+ */
+CREATE TABLE IF NOT EXISTS share_links (
+  id           TEXT PRIMARY KEY,
+  doc_id       TEXT NOT NULL,
+  capability   TEXT NOT NULL,
+  created_by   TEXT NOT NULL,
+  allow_agents INTEGER NOT NULL DEFAULT 0,
+  expires_at   TEXT,
+  revoked_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS share_links_doc ON share_links(doc_id);
+
+/**
+ * The tie between a guest principal and the link it came in through.
+ *
+ * last_seen_at is what makes garbage collection possible at all: guest
+ * principals are real rows so that presence and comment attribution resolve,
+ * and without a liveness stamp they would accumulate forever.
+ */
+CREATE TABLE IF NOT EXISTS guest_sessions (
+  guest_id     TEXT PRIMARY KEY REFERENCES principals(id) ON DELETE CASCADE,
+  link_id      TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS guest_sessions_link ON guest_sessions(link_id);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS blocks_fts USING fts5(
   block_id UNINDEXED,
   doc_id   UNINDEXED,
@@ -251,6 +363,96 @@ export class Store {
     if (!columns.has('deleted_path')) {
       this.db.exec('ALTER TABLE documents ADD COLUMN deleted_path TEXT');
     }
+
+    const principalColumns = new Set(
+      (this.db.prepare('PRAGMA table_info(principals)').all() as { name: string }[]).map(
+        (column) => column.name,
+      ),
+    );
+    if (!principalColumns.has('external_id')) {
+      this.db.exec('ALTER TABLE principals ADD COLUMN external_id TEXT');
+    }
+    if (!principalColumns.has('email')) {
+      this.db.exec('ALTER TABLE principals ADD COLUMN email TEXT');
+    }
+
+    this.widenPrincipalKinds();
+
+    // After the rebuild, not before: dropping the old `principals` takes its
+    // indexes with it. Unique on external_id — nulls stay unconstrained, so
+    // agents and guests, which have no account behind them, all keep a null.
+    this.db.exec(
+      'CREATE UNIQUE INDEX IF NOT EXISTS principals_external ON principals(external_id)',
+    );
+    this.db.exec('CREATE INDEX IF NOT EXISTS principals_email ON principals(email)');
+  }
+
+  /**
+   * Let `principals.kind` be 'guest' on a database that predates guests.
+   *
+   * SQLite has no way to alter a CHECK constraint, so widening one means
+   * rebuilding the table: a new table with the constraint we want, the rows
+   * copied across, the old one dropped, the new one renamed. `CREATE TABLE IF
+   * NOT EXISTS` gives a fresh database the wide constraint for free and leaves
+   * an existing one on the narrow one, silently, until the first guest signs in
+   * and the insert fails.
+   *
+   * Guarded on the stored DDL rather than on a version number, for the same
+   * reason the rest of `migrate` is: the DDL is what the constraint actually
+   * says, and a version is only a claim about it. That also makes this run at
+   * most once — after the rebuild the DDL mentions 'guest' and the guard is
+   * false forever.
+   *
+   * Foreign keys go off around the whole thing. `grants`, `tokens`, `doc_grants`
+   * and `guest_sessions` all reference `principals`, and with enforcement on,
+   * the DROP would cascade their rows away. They reference it *by name*, and
+   * nothing here renames the table they name, so their clauses still point at
+   * the right table when it comes back. The pragma cannot be changed inside a
+   * transaction, hence the ordering below.
+   */
+  private widenPrincipalKinds(): void {
+    const row = this.db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'principals'")
+      .get() as { sql: string } | undefined;
+    if (!row || row.sql.includes("'guest'")) return;
+
+    this.db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        this.db.exec(`
+          CREATE TABLE principals_rebuild (
+            id          TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            kind        TEXT NOT NULL CHECK (kind IN ('human', 'agent', 'system', 'guest')),
+            name        TEXT NOT NULL,
+            sponsor_id  TEXT REFERENCES principals(id) ON DELETE CASCADE,
+            revoked_at  TEXT,
+            external_id TEXT,
+            email       TEXT
+          );
+          INSERT INTO principals_rebuild
+            (id, workspace_id, kind, name, sponsor_id, revoked_at, external_id, email)
+          SELECT id, workspace_id, kind, name, sponsor_id, revoked_at, external_id, email
+          FROM principals;
+          DROP TABLE principals;
+          ALTER TABLE principals_rebuild RENAME TO principals;
+          CREATE INDEX IF NOT EXISTS principals_sponsor ON principals(sponsor_id);
+        `);
+        // Cheap, and the one thing that would make this migration lossy is a
+        // dangling sponsor_id surviving because enforcement was off.
+        const violations = this.db.prepare('PRAGMA foreign_key_check').all();
+        if (violations.length > 0) {
+          throw new Error(`principals rebuild left ${violations.length} dangling references`);
+        }
+        this.db.exec('COMMIT');
+      } catch (err) {
+        this.db.exec('ROLLBACK');
+        throw err;
+      }
+    } finally {
+      this.db.exec('PRAGMA foreign_keys = ON');
+    }
   }
 
   private prepare(sql: string): StatementSync {
@@ -303,12 +505,28 @@ export class Store {
     kind: string;
     name: string;
     sponsorId?: string | null;
+    externalId?: string | null;
+    email?: string | null;
   }): void {
     this.prepare(
-      `INSERT INTO principals (id, workspace_id, kind, name, sponsor_id)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET name = excluded.name, sponsor_id = excluded.sponsor_id`,
-    ).run(input.id, input.workspaceId, input.kind, input.name, input.sponsorId ?? null);
+      `INSERT INTO principals (id, workspace_id, kind, name, sponsor_id, external_id, email)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name,
+         sponsor_id = excluded.sponsor_id,
+         -- COALESCE, not excluded: an upsert that does not mention the identity
+         -- fields (every existing caller) must not unlink an account.
+         external_id = COALESCE(excluded.external_id, principals.external_id),
+         email = COALESCE(excluded.email, principals.email)`,
+    ).run(
+      input.id,
+      input.workspaceId,
+      input.kind,
+      input.name,
+      input.sponsorId ?? null,
+      input.externalId ?? null,
+      input.email ?? null,
+    );
   }
 
   /**
@@ -336,6 +554,26 @@ export class Store {
     return this.prepare('SELECT * FROM principals WHERE id = ?').get(id) as
       | Record<string, unknown>
       | undefined;
+  }
+
+  getPrincipalByExternalId(externalId: string): Record<string, unknown> | undefined {
+    return this.prepare('SELECT * FROM principals WHERE external_id = ?').get(externalId) as
+      | Record<string, unknown>
+      | undefined;
+  }
+
+  /**
+   * Look someone up by the address an invite was sent to.
+   *
+   * Not unique, unlike `external_id`: the same address can appear on a revoked
+   * principal and its replacement, so this returns the row that is still live
+   * before any that is not.
+   */
+  getPrincipalByEmail(email: string): Record<string, unknown> | undefined {
+    return this.prepare(
+      `SELECT * FROM principals WHERE email = ?
+       ORDER BY (revoked_at IS NOT NULL), id LIMIT 1`,
+    ).get(email) as Record<string, unknown> | undefined;
   }
 
   setGrants(principalId: string, grants: readonly { path: string; capability: string }[]): void {
@@ -375,6 +613,244 @@ export class Store {
        UPDATE tokens SET revoked_at = ? WHERE principal_id IN (SELECT id FROM descendants)`,
     ).run(id, at);
     return Number(result.changes);
+  }
+
+  // -------------------------------------------------------------------------
+  // Sharing
+  // -------------------------------------------------------------------------
+
+  /**
+   * Share one document with one principal.
+   *
+   * An upsert on the pair, never a delete-then-insert. `setGrants` replaces a
+   * principal's whole path list because that list is re-issued as a unit;
+   * shares are not, and rewriting them wholesale would mean any share operation
+   * could drop a share made concurrently by someone else with admin.
+   */
+  setDocGrant(docId: string, principalId: string, capability: string, grantedBy: string): void {
+    this.prepare(
+      `INSERT INTO doc_grants (doc_id, principal_id, capability, granted_by, granted_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(doc_id, principal_id) DO UPDATE SET
+         capability = excluded.capability,
+         granted_by = excluded.granted_by,
+         granted_at = excluded.granted_at`,
+    ).run(docId, principalId, capability, grantedBy, new Date().toISOString());
+  }
+
+  getDocGrant(docId: string, principalId: string): DocGrant | undefined {
+    const row = this.prepare(
+      'SELECT * FROM doc_grants WHERE doc_id = ? AND principal_id = ?',
+    ).get(docId, principalId) as Record<string, unknown> | undefined;
+    return row ? rowToDocGrant(row) : undefined;
+  }
+
+  listDocGrants(docId: string): DocGrant[] {
+    const rows = this.prepare(
+      'SELECT * FROM doc_grants WHERE doc_id = ? ORDER BY granted_at, principal_id',
+    ).all(docId) as Record<string, unknown>[];
+    return rows.map(rowToDocGrant);
+  }
+
+  deleteDocGrant(docId: string, principalId: string): void {
+    this.prepare('DELETE FROM doc_grants WHERE doc_id = ? AND principal_id = ?').run(
+      docId,
+      principalId,
+    );
+  }
+
+  /** Everything shared *with* someone — the "shared with me" list. */
+  listDocGrantsForPrincipal(principalId: string): DocGrant[] {
+    const rows = this.prepare(
+      'SELECT * FROM doc_grants WHERE principal_id = ? ORDER BY granted_at, doc_id',
+    ).all(principalId) as Record<string, unknown>[];
+    return rows.map(rowToDocGrant);
+  }
+
+  addInvite(docId: string, email: string, capability: string, invitedBy: string): void {
+    this.prepare(
+      `INSERT INTO doc_invites (doc_id, email, capability, invited_by, created_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(doc_id, email) DO UPDATE SET
+         capability = excluded.capability,
+         invited_by = excluded.invited_by`,
+    ).run(docId, email, capability, invitedBy, new Date().toISOString());
+  }
+
+  listInvites(docId: string): DocInvite[] {
+    const rows = this.prepare(
+      'SELECT * FROM doc_invites WHERE doc_id = ? ORDER BY created_at, email',
+    ).all(docId) as Record<string, unknown>[];
+    return rows.map(rowToInvite);
+  }
+
+  /**
+   * Read this address's invites and delete them in the same call.
+   *
+   * Redemption at signup, so it has to be exactly-once: returning them and
+   * leaving them behind would re-grant on every subsequent sign-in, including
+   * after the share was deliberately revoked. The delete uses `RETURNING` so
+   * the read and the delete are one statement and cannot be interleaved.
+   */
+  takeInvitesForEmail(email: string): DocInvite[] {
+    const rows = this.prepare('DELETE FROM doc_invites WHERE email = ? RETURNING *').all(
+      email,
+    ) as Record<string, unknown>[];
+    return rows.map(rowToInvite);
+  }
+
+  deleteInvite(docId: string, email: string): void {
+    this.prepare('DELETE FROM doc_invites WHERE doc_id = ? AND email = ?').run(docId, email);
+  }
+
+  createShareLink(input: {
+    id: string;
+    docId: string;
+    capability: string;
+    createdBy: string;
+    allowAgents?: boolean;
+    expiresAt?: string | null;
+  }): void {
+    this.prepare(
+      `INSERT INTO share_links (id, doc_id, capability, created_by, allow_agents, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      input.id,
+      input.docId,
+      input.capability,
+      input.createdBy,
+      input.allowAgents ? 1 : 0,
+      input.expiresAt ?? null,
+    );
+  }
+
+  /**
+   * A link by id, revoked or expired ones included.
+   *
+   * Deliberately not filtered here: whoever opens the link needs to tell a
+   * viewer "this link was turned off" rather than "no such link", and that
+   * distinction is lost if the row never comes back.
+   */
+  getShareLink(id: string): ShareLink | undefined {
+    const row = this.prepare('SELECT * FROM share_links WHERE id = ?').get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? rowToShareLink(row) : undefined;
+  }
+
+  listShareLinks(docId: string): ShareLink[] {
+    const rows = this.prepare('SELECT * FROM share_links WHERE doc_id = ? ORDER BY id').all(
+      docId,
+    ) as Record<string, unknown>[];
+    return rows.map(rowToShareLink);
+  }
+
+  revokeShareLink(id: string, at = new Date().toISOString()): void {
+    this.prepare('UPDATE share_links SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(
+      at,
+      id,
+    );
+  }
+
+  /**
+   * Bind a guest principal to the link it arrived through.
+   *
+   * Idempotent because the guest cookie survives a reload: the same guest
+   * coming back through the same link is the ordinary case, and it must keep
+   * its identity — its `created_at` — rather than look like a new person in
+   * presence and on its own comments.
+   */
+  upsertGuestSession(guestId: string, linkId: string): void {
+    const now = new Date().toISOString();
+    this.prepare(
+      `INSERT INTO guest_sessions (guest_id, link_id, created_at, last_seen_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(guest_id) DO UPDATE SET
+         link_id = excluded.link_id,
+         last_seen_at = excluded.last_seen_at`,
+    ).run(guestId, linkId, now, now);
+  }
+
+  touchGuestSession(guestId: string, at = new Date().toISOString()): void {
+    this.prepare('UPDATE guest_sessions SET last_seen_at = ? WHERE guest_id = ?').run(at, guestId);
+  }
+
+  getGuestSession(guestId: string): GuestSession | undefined {
+    const row = this.prepare('SELECT * FROM guest_sessions WHERE guest_id = ?').get(guestId) as
+      | Record<string, unknown>
+      | undefined;
+    return row
+      ? {
+          guestId: String(row.guest_id),
+          linkId: String(row.link_id),
+          createdAt: String(row.created_at),
+          lastSeenAt: String(row.last_seen_at),
+        }
+      : undefined;
+  }
+
+  /**
+   * Move everything one principal authored onto another.
+   *
+   * The claim step: someone commented as a guest, then signed in, and the work
+   * has to follow them or the document ends up with two of them in it.
+   *
+   * Comments, suggestions and revisions keep their author inside a JSON blob,
+   * so the rewrite goes through `json_set` rather than through a decode/encode
+   * loop in JavaScript — one statement per table, no rows crossing the process
+   * boundary, and the payload's other fields are untouched by construction.
+   * `documents.owner_id` and `audit.actor_id` are plain columns.
+   *
+   * Synchronous like everything else here, and every statement stands alone, so
+   * a caller that wants the whole claim to be atomic wraps the call in
+   * `store.transaction`.
+   */
+  reassignAuthor(fromPrincipalId: string, toPrincipalId: string): void {
+    for (const table of ['comments', 'suggestions', 'revisions'] as const) {
+      this.prepare(
+        `UPDATE ${table} SET payload = json_set(payload, '$.authorId', ?)
+         WHERE json_extract(payload, '$.authorId') = ?`,
+      ).run(toPrincipalId, fromPrincipalId);
+    }
+    this.prepare('UPDATE audit SET actor_id = ? WHERE actor_id = ?').run(
+      toPrincipalId,
+      fromPrincipalId,
+    );
+    this.prepare('UPDATE documents SET owner_id = ? WHERE owner_id = ?').run(
+      toPrincipalId,
+      fromPrincipalId,
+    );
+  }
+
+  /**
+   * Guests nobody has seen since `iso`, oldest first.
+   *
+   * Liveness comes from `guest_sessions`, not from the principal row, because
+   * the principal row never changes after it is written. A guest with no
+   * session row at all is one whose session was already collected, so it is
+   * eligible too.
+   */
+  listGuestPrincipalsOlderThan(iso: string): string[] {
+    const rows = this.prepare(
+      `SELECT p.id FROM principals p
+       LEFT JOIN guest_sessions g ON g.guest_id = p.id
+       WHERE p.kind = 'guest' AND COALESCE(g.last_seen_at, '') < ?
+       ORDER BY COALESCE(g.last_seen_at, '')`,
+    ).all(iso) as { id: string }[];
+    return rows.map((row) => String(row.id));
+  }
+
+  /**
+   * Drop a guest and its session.
+   *
+   * What it deliberately does not touch is anything the guest wrote: a comment
+   * outlives the anonymous identity that left it, and `listPrincipals` already
+   * has to tolerate an author it cannot resolve. Collecting the row is about
+   * presence and storage, not about erasing the contribution.
+   */
+  deleteGuestPrincipal(id: string): void {
+    this.prepare('DELETE FROM guest_sessions WHERE guest_id = ?').run(id);
+    this.prepare("DELETE FROM principals WHERE id = ? AND kind = 'guest'").run(id);
   }
 
   // -------------------------------------------------------------------------
@@ -775,6 +1251,38 @@ export class Store {
     this.statements.clear();
     this.db.close();
   }
+}
+
+function rowToDocGrant(row: Record<string, unknown>): DocGrant {
+  return {
+    docId: String(row.doc_id),
+    principalId: String(row.principal_id),
+    capability: String(row.capability),
+    grantedBy: String(row.granted_by),
+    grantedAt: String(row.granted_at),
+  };
+}
+
+function rowToInvite(row: Record<string, unknown>): DocInvite {
+  return {
+    docId: String(row.doc_id),
+    email: String(row.email),
+    capability: String(row.capability),
+    invitedBy: String(row.invited_by),
+    createdAt: String(row.created_at),
+  };
+}
+
+function rowToShareLink(row: Record<string, unknown>): ShareLink {
+  return {
+    id: String(row.id),
+    docId: String(row.doc_id),
+    capability: String(row.capability),
+    createdBy: String(row.created_by),
+    allowAgents: Number(row.allow_agents) === 1,
+    expiresAt: row.expires_at === null ? null : String(row.expires_at),
+    revokedAt: row.revoked_at === null ? null : String(row.revoked_at),
+  };
 }
 
 function rowToDocument(row: Record<string, unknown>): StoredDocument {

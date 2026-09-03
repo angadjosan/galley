@@ -16,6 +16,7 @@
     "@galley/core": "*",
     "@galley/markdown": "*",
     "fastify": "^5.2.0",
+    "jose": "^5.9.6",
     "ws": "^8.18.0"
   },
   "devDependencies": {
