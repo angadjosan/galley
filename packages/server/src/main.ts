@@ -149,6 +149,12 @@ async function bootstrap(server: ReturnType<typeof build>): Promise<void> {
     workspaceId,
     kind: 'human',
     name: process.env.GALLEY_ADMIN_NAME ?? adminId,
+    // The address that makes signing in land on *this* principal rather than a
+    // fresh one. Without it the first administrator can only ever act through
+    // the bootstrap token, because nothing else grants a person anything —
+    // and revoking that token would leave the workspace with no administrator
+    // at all and no way to appoint one.
+    email: process.env.GALLEY_ADMIN_EMAIL?.trim().toLowerCase(),
   });
   server.store.setGrants(adminId, ADMIN);
 
