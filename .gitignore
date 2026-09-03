@@ -12,3 +12,8 @@ tmp/
 .vite/
 .galley-dev-tokens.json
 .galley-e2e-tokens.json
+
+# Clerk and other local secrets
+.env
+.env.*
+!.env.example
