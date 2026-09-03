@@ -35,11 +35,39 @@ export class ForbiddenError extends AuthError {
   }
 }
 
+/** The authority a share link carries, for the session that opened it. */
+export interface LinkAccess {
+  readonly id: string;
+  readonly docId: string;
+  readonly capability: Capability;
+  readonly allowAgents: boolean;
+}
+
 export interface Session {
   readonly principal: Principal;
   readonly grants: readonly Grant[];
   readonly tokenHash: string;
   readonly sponsor: Principal | null;
+  /** Set when this token was minted by opening a share link. */
+  readonly link?: LinkAccess;
+  readonly guest?: boolean;
+}
+
+/**
+ * A link token says so in its own label.
+ *
+ * The binding has to survive a restart, so it lives in the database rather than
+ * in memory — and `tokens` is the only table that already keys off the thing
+ * being bound. `guest_sessions` holds the same fact for guests, but an agent
+ * that opens a link is not a guest and has no row there, and the schema is
+ * fixed by the sharing contract. Encoding it in the label keeps one code path
+ * for both, and costs nothing: a label is opaque to everything else, and no
+ * ordinary token's label can collide with `link:` unless someone asks for it.
+ */
+const LINK_LABEL = 'link:';
+
+function linkIdFromLabel(label: string): string | null {
+  return label.startsWith(LINK_LABEL) ? label.slice(LINK_LABEL.length) : null;
 }
 
 /** Tokens are stored hashed. A database dump must not be a set of credentials. */
@@ -108,6 +136,19 @@ export class Auth {
     return this.issue(agent.id, options);
   }
 
+  /**
+   * Issue a token whose authority is a share link.
+   *
+   * Deliberately a *separate* token rather than a change to an existing one:
+   * someone who already has access and clicks their own link keeps the token
+   * they had, and a guest's link token can be revoked with the link without
+   * touching anything else.
+   */
+  issueForLink(principalId: string, linkId: string, expiresAt?: string): string {
+    this.loadPrincipal(principalId);
+    return this.issue(principalId, { label: `${LINK_LABEL}${linkId}`, scope: [], expiresAt });
+  }
+
   private issue(principalId: string, options: IssueOptions): string {
     const token = `glly_${randomBytes(32).toString('base64url')}`;
     this.store.insertToken({
@@ -135,6 +176,14 @@ export class Auth {
     }
 
     const principal = this.loadPrincipal(String(row.principal_id));
+
+    // A link token's authority is the link's, and the link is consulted on
+    // every request rather than baked in here — for the same reason an agent's
+    // scope is intersected at verification time. Revoking a link has to lock
+    // the room immediately, not whenever the token happens to expire.
+    const linkId = linkIdFromLabel(String(row.label));
+    if (linkId) return this.sessionForLink(linkId, principal.id, hash, now);
+
     const declaredScope = JSON.parse(String(row.scope)) as Grant[];
     const ownGrants = this.store.getGrants(principal.id) as Grant[];
 
@@ -150,6 +199,51 @@ export class Auth {
     }
 
     return { principal, grants, tokenHash: hash, sponsor };
+  }
+
+  /**
+   * The session a share link confers on whoever opened it.
+   *
+   * A missing, revoked or expired link reads as 404 rather than 403: the person
+   * holding the URL is not being told they lack permission, they are being told
+   * the link is no longer a thing, which is both true and the only answer that
+   * does not confirm the document exists.
+   */
+  sessionForLink(linkId: string, principalId: string, tokenHash = '', now = new Date()): Session {
+    const link = this.store.getShareLink(linkId);
+    if (!link) throw new AuthError('that link no longer exists', 404);
+    if (link.revokedAt) throw new AuthError('that link has been turned off', 404);
+    if (link.expiresAt && new Date(link.expiresAt) <= now) {
+      throw new AuthError('that link has expired', 404);
+    }
+
+    const principal = this.loadPrincipal(principalId);
+    if (principal.kind === 'agent' && !link.allowAgents) {
+      throw new AuthError('this link does not admit agents', 403);
+    }
+
+    // An agent that arrives through a link answers to whoever *made* the link,
+    // never to itself: the capability came out of the creator's authority, so
+    // the creator is the one accountable for it. Loading them here also means a
+    // revoked creator takes their links' agents down with them.
+    const sponsor = principal.kind === 'agent' ? this.loadPrincipal(link.createdBy) : null;
+
+    return {
+      principal,
+      // A link must never cost someone access they already had, so a signed-in
+      // person keeps their own grants alongside it. A guest or an agent has
+      // nothing but the link.
+      grants: principal.kind === 'human' ? (this.store.getGrants(principal.id) as Grant[]) : [],
+      tokenHash,
+      sponsor,
+      link: {
+        id: link.id,
+        docId: link.docId,
+        capability: link.capability as Capability,
+        allowAgents: link.allowAgents,
+      },
+      guest: principal.kind === 'guest',
+    };
   }
 
   /** Throw unless the session may do `required` on `path`. */

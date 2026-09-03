@@ -11,6 +11,7 @@
  *   node --import tsx packages/server/src/main.ts
  */
 import { build } from './server.js';
+import { chooseProvider, type IdentityProvider } from './identity.js';
 import type { Grant } from '@galley/core';
 
 const PORT = Number(process.env.PORT ?? 8080);
@@ -27,10 +28,33 @@ const STATIC_DIR = process.env.GALLEY_STATIC;
 
 const ADMIN: Grant[] = [{ path: '/', capability: 'admin' }];
 
+/**
+ * The sign-in path, if this deployment has one.
+ *
+ * A missing provider is a warning rather than a refusal to start: a server with
+ * no SSO configured is still a working server for issued tokens, and taking a
+ * deployment down over it would turn "nobody new can sign in" into "nobody can
+ * read anything". A *misconfigured* one still throws — `chooseProvider` refuses
+ * the combination that would accept a test credential in production.
+ */
+function identityProvider(): IdentityProvider | undefined {
+  try {
+    return chooseProvider(process.env);
+  } catch (err) {
+    const message = (err as Error).message;
+    if (/^no identity provider configured/.test(message)) {
+      process.stdout.write(`no sign-in configured: ${message}\n`);
+      return undefined;
+    }
+    throw err;
+  }
+}
+
 async function main(): Promise<void> {
   const server = build({
     file: DB,
     logger: true,
+    identity: identityProvider(),
     // A container that binds loopback accepts no traffic and reports no error,
     // which presents as a health check failing for no visible reason.
     host: process.env.GALLEY_HOST ?? '0.0.0.0',
@@ -41,6 +65,10 @@ async function main(): Promise<void> {
   process.stdout.write(`galley on ${url} (db ${DB})\n`);
 
   await bootstrap(server);
+  const guestGc = setInterval(() => collectGuests(server), GUEST_GC_INTERVAL_MS);
+  // Nothing about staying alive depends on the sweep, and an un-unref'd timer
+  // is a process that will not exit on its own.
+  guestGc.unref();
 
   /**
    * Flush on the way out.
@@ -54,11 +82,46 @@ async function main(): Promise<void> {
     if (closing) return;
     closing = true;
     process.stdout.write(`${signal}: draining\n`);
+    clearInterval(guestGc);
     await server.close();
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
+}
+
+const GUEST_GC_INTERVAL_MS = 6 * 3600 * 1000;
+const GUEST_TTL_MS = 30 * 86_400_000;
+
+/**
+ * Collect guests nobody has seen for a month.
+ *
+ * A guest row exists so presence and attribution have a name to render, and
+ * once the visit is long over and left nothing behind, the row is only clutter.
+ * What it deliberately does not collect is a guest who *wrote* something: the
+ * store keeps their comment either way, but deleting the principal would leave
+ * a note signed by an id that resolves to nobody. Cheap enough at this cadence
+ * — the scan only runs when there is actually something expired to consider.
+ */
+function collectGuests(server: ReturnType<typeof build>): void {
+  const stale = server.store.listGuestPrincipalsOlderThan(
+    new Date(Date.now() - GUEST_TTL_MS).toISOString(),
+  );
+  if (stale.length === 0) return;
+
+  const authors = new Set<string>();
+  for (const doc of server.workspace.list('')) {
+    for (const comment of server.store.listComments(doc.docId)) authors.add(comment.authorId);
+    for (const suggestion of server.store.listSuggestions(doc.docId)) authors.add(suggestion.authorId);
+  }
+
+  let collected = 0;
+  for (const id of stale) {
+    if (authors.has(id)) continue;
+    server.store.deleteGuestPrincipal(id);
+    collected++;
+  }
+  if (collected > 0) process.stdout.write(`collected ${collected} expired guest(s)\n`);
 }
 
 /**

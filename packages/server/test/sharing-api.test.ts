@@ -1,0 +1,492 @@
+/**
+ * Claims under test (`src/server.ts`, `src/auth.ts`, `src/identity.ts`):
+ *
+ *  1. Sharing composes by *maximum*. A document shared `read` with a workspace
+ *     admin does not demote them — sharing may only ever add.
+ *  2. An address with no account behind it is still shareable: the invitation
+ *     waits, and signing in with that address turns it into a real grant.
+ *  3. A link confers exactly the capability it was made with, to a real guest
+ *     principal, and stops conferring anything the moment it is revoked.
+ *  4. The delegation rules survive the new doors. Agents pass through a link
+ *     only when the link says so, on the *creator's* authority and never their
+ *     own, and nothing but a signed-in person can register an agent.
+ *  5. Work done as a guest follows the person who signs in.
+ */
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { DevProvider } from '../src/identity.js';
+import { harness, seedDocument, type Harness } from './helpers.js';
+
+let active: Harness | null = null;
+afterEach(async () => {
+  await active?.close();
+  active = null;
+});
+
+/**
+ * A workspace with addresses on it.
+ *
+ * `harness` builds principals without email, because everything that existed
+ * before sharing addressed them by id. Every route here is reached by address.
+ */
+async function open(): Promise<Harness> {
+  const h = await harness({ identity: new DevProvider() });
+  active = h;
+  h.server.store.upsertPrincipal({
+    id: 'u-sam',
+    workspaceId: 'default',
+    kind: 'human',
+    name: 'sam',
+    email: 'sam@example.com',
+  });
+  // Nothing in the workspace at all: the person a share is *for*.
+  h.server.store.upsertPrincipal({
+    id: 'u-dana',
+    workspaceId: 'default',
+    kind: 'human',
+    name: 'dana',
+    email: 'dana@example.com',
+  });
+  return h;
+}
+
+function danaToken(h: Harness): string {
+  return h.server.auth.issueForHuman('u-dana', { label: 'dana', scope: [] });
+}
+
+async function share(
+  h: Harness,
+  docId: string,
+  email: string,
+  capability: string,
+): Promise<string> {
+  const result = await h.json<{ shared: string }>(`/v1/docs/${docId}/shares`, {
+    method: 'POST',
+    body: JSON.stringify({ email, capability }),
+  });
+  return result.shared;
+}
+
+async function makeLink(
+  h: Harness,
+  docId: string,
+  capability: string,
+  extra: Record<string, unknown> = {},
+  token?: string,
+): Promise<string> {
+  const link = await h.json<{ id: string }>(`/v1/docs/${docId}/links`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ capability, ...extra }),
+  });
+  return link.id;
+}
+
+async function errorOf(response: Response): Promise<string> {
+  return ((await response.json()) as { error?: string }).error ?? '';
+}
+
+interface Opened {
+  token: string;
+  docId: string;
+  principal: { id: string; kind: string; name: string };
+}
+
+describe('sharing by address', () => {
+  it('grants immediately when the address already has an account', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    expect(await share(h, docId, 'dana@example.com', 'comment')).toBe('granted');
+
+    const dana = danaToken(h);
+    const seen = await h.json<{ docId: string }>(`/v1/docs/${docId}`, { token: dana });
+    expect(seen.docId).toBe(docId);
+
+    // Exactly what was shared, and nothing above it.
+    const write = await h.request(`/v1/docs/${docId}`, {
+      method: 'PATCH',
+      token: dana,
+      body: JSON.stringify({
+        ops: [{ kind: 'replace', target: blockIds[0], markdown: 'rewritten' }],
+      }),
+    });
+    expect(write.status).toBe(403);
+  });
+
+  it('invites an unknown address, and signing up collects it', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    expect(await share(h, docId, 'newcomer@example.com', 'write')).toBe('invited');
+
+    const listed = await h.json<{ invites: { email: string }[] }>(`/v1/docs/${docId}/shares`);
+    expect(listed.invites.map((i) => i.email)).toEqual(['newcomer@example.com']);
+
+    const session = await h.json<{ token: string; principal: { id: string } }>('/v1/auth/session', {
+      method: 'POST',
+      token: '',
+      body: JSON.stringify({ idToken: 'dev:newcomer@example.com' }),
+    });
+    const read = await h.json<{ docId: string }>(`/v1/docs/${docId}`, { token: session.token });
+    expect(read.docId).toBe(docId);
+
+    // Redeemed exactly once: the invite is gone, the grant is real.
+    const after = await h.json<{ grants: { principalId: string }[]; invites: unknown[] }>(
+      `/v1/docs/${docId}/shares`,
+    );
+    expect(after.invites).toEqual([]);
+    expect(after.grants.map((g) => g.principalId)).toContain(session.principal.id);
+  });
+
+  it('never demotes someone who already had more', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    // Sam is an administrator of the whole workspace. Sharing one document with
+    // them at `read` is an addition that adds nothing, not a restriction.
+    expect(await share(h, docId, 'sam@example.com', 'read')).toBe('granted');
+
+    const write = await h.request(`/v1/docs/${docId}`, {
+      method: 'PATCH',
+      token: h.tokens.sam,
+      body: JSON.stringify({
+        ops: [{ kind: 'replace', target: blockIds[0], markdown: 'still allowed' }],
+      }),
+    });
+    expect(write.status).toBe(200);
+  });
+
+  it('withdraws an invitation', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await share(h, docId, 'newcomer@example.com', 'read');
+
+    // No principal id to name it by — the address is the only handle there is.
+    const removed = await h.request(
+      `/v1/docs/${docId}/invites/${encodeURIComponent('newcomer@example.com')}`,
+      { method: 'DELETE' },
+    );
+    expect(removed.status).toBe(204);
+    expect((await h.json<{ invites: unknown[] }>(`/v1/docs/${docId}/shares`)).invites).toEqual([]);
+
+    // And signing up now collects nothing.
+    const session = await h.json<{ token: string }>('/v1/auth/session', {
+      method: 'POST',
+      token: '',
+      body: JSON.stringify({ idToken: 'dev:newcomer@example.com' }),
+    });
+    expect((await h.request(`/v1/docs/${docId}`, { token: session.token })).status).toBe(403);
+  });
+
+  it('takes a share back', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await share(h, docId, 'dana@example.com', 'read');
+    const dana = danaToken(h);
+    expect((await h.request(`/v1/docs/${docId}`, { token: dana })).status).toBe(200);
+
+    await h.request(`/v1/docs/${docId}/shares/u-dana`, { method: 'DELETE' });
+    expect((await h.request(`/v1/docs/${docId}`, { token: dana })).status).toBe(403);
+  });
+});
+
+describe('what the client is told it may do', () => {
+  it('reports the effective capability on the document it just read', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    await share(h, docId, 'dana@example.com', 'suggest');
+
+    const asAdmin = await h.json<{ capability: string }>(`/v1/docs/${docId}`);
+    expect(asAdmin.capability).toBe('admin');
+
+    const asDana = await h.json<{ capability: string }>(`/v1/docs/${docId}`, {
+      token: danaToken(h),
+    });
+    expect(asDana.capability).toBe('suggest');
+
+    const linkId = await makeLink(h, docId, 'comment');
+    const guest = await h.json<Opened>(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
+    const asGuest = await h.json<{ capability: string }>(`/v1/docs/${docId}`, {
+      token: guest.token,
+    });
+    expect(asGuest.capability).toBe('comment');
+  });
+
+  it('tells the app shell which sign-in to draw, and nothing else', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'galley-static-'));
+    await writeFile(join(root, 'index.html'), '<html><head><title>g</title></head><body></body></html>');
+
+    const dev = await harness({ staticDir: root, identity: new DevProvider() });
+    active = dev;
+    const shell = await (await dev.request('/', { token: '' })).text();
+    expect(shell).toContain('window.__GALLEY_DEV_AUTH__ = true');
+    // A deep link reloads into the same shell rather than 404ing.
+    expect(await (await dev.request('/l/abc', { token: '' })).text()).toContain(
+      '__GALLEY_DEV_AUTH__',
+    );
+    await dev.close();
+
+    const real = await harness({ staticDir: root });
+    active = real;
+    expect(await (await real.request('/', { token: '' })).text()).not.toContain('GALLEY_DEV_AUTH');
+  });
+});
+
+describe('share links', () => {
+  it('confers exactly its capability on a named guest', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    const linkId = await makeLink(h, docId, 'comment');
+
+    const opened = await h.json<Opened>(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
+    expect(opened.docId).toBe(docId);
+    expect(opened.principal.kind).toBe('guest');
+    // A guest is a person with a name, not a null author.
+    expect(opened.principal.name).toMatch(/^\w+ \w+$/);
+
+    expect((await h.request(`/v1/docs/${docId}`, { token: opened.token })).status).toBe(200);
+    const comment = await h.request(`/v1/docs/${docId}/comments`, {
+      method: 'POST',
+      token: opened.token,
+      body: JSON.stringify({ blockId: blockIds[0], body: 'is this still true?' }),
+    });
+    expect(comment.status).toBe(201);
+
+    const write = await h.request(`/v1/docs/${docId}`, {
+      method: 'PATCH',
+      token: opened.token,
+      body: JSON.stringify({
+        ops: [{ kind: 'replace', target: blockIds[0], markdown: 'no' }],
+      }),
+    });
+    expect(write.status).toBe(403);
+  });
+
+  it('refuses a revoked link, and the tokens it already handed out', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    const linkId = await makeLink(h, docId, 'read');
+    const opened = await h.json<Opened>(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
+    expect((await h.request(`/v1/docs/${docId}`, { token: opened.token })).status).toBe(200);
+
+    await h.request(`/v1/links/${linkId}`, { method: 'DELETE' });
+
+    expect((await h.request(`/v1/links/${linkId}/open`, { method: 'POST', token: '' })).status).toBe(
+      404,
+    );
+    // The point of resolving the link on every request rather than at issue:
+    // revocation locks the room now, not when the token expires.
+    expect((await h.request(`/v1/docs/${docId}`, { token: opened.token })).status).toBe(404);
+  });
+
+  it('refuses an expired link', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    const linkId = await makeLink(h, docId, 'read', {
+      expiresAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    expect((await h.request(`/v1/links/${linkId}/open`, { method: 'POST', token: '' })).status).toBe(
+      404,
+    );
+  });
+
+  it('keeps a returning guest the same person', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    const linkId = await makeLink(h, docId, 'read');
+
+    const first = await h.request(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
+    const cookie = first.headers.get('set-cookie') ?? '';
+    expect(cookie).toContain('galley_guest=');
+    expect(cookie).toContain('HttpOnly');
+    expect(cookie).toContain('SameSite=Lax');
+    const one = (await first.json()) as Opened;
+
+    const two = await h.json<Opened>(`/v1/links/${linkId}/open`, {
+      method: 'POST',
+      token: '',
+      headers: { cookie: cookie.split(';')[0]! },
+    });
+    expect(two.principal.id).toBe(one.principal.id);
+    expect(two.principal.name).toBe(one.principal.name);
+  });
+});
+
+describe('what a guest may not do', () => {
+  it('cannot create a document or share one', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    const linkId = await makeLink(h, docId, 'write');
+    const guest = await h.json<Opened>(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
+
+    const created = await h.request('/v1/docs', {
+      method: 'POST',
+      token: guest.token,
+      body: JSON.stringify({ path: 'guests/mine', content: '# hello\n' }),
+    });
+    expect(created.status).toBe(403);
+    expect(await errorOf(created)).toMatch(/guest cannot create a document/);
+
+    // Even holding `write` on this document through the link.
+    const shared = await h.request(`/v1/docs/${docId}/shares`, {
+      method: 'POST',
+      token: guest.token,
+      body: JSON.stringify({ email: 'someone@example.com', capability: 'read' }),
+    });
+    expect(shared.status).toBe(403);
+    expect(await errorOf(shared)).toMatch(/guest cannot share/);
+  });
+
+  it('hands their work over when they sign in', async () => {
+    const h = await open();
+    const { docId, blockIds } = await seedDocument(h);
+    const linkId = await makeLink(h, docId, 'comment');
+    const first = await h.request(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0]!;
+    const guest = (await first.json()) as Opened;
+
+    await h.json(`/v1/docs/${docId}/comments`, {
+      method: 'POST',
+      token: guest.token,
+      body: JSON.stringify({ blockId: blockIds[0], body: 'left as a stranger' }),
+    });
+
+    const session = await h.json<{ principal: { id: string } }>('/v1/auth/session', {
+      method: 'POST',
+      token: '',
+      headers: { cookie },
+      body: JSON.stringify({ idToken: 'dev:dana@example.com' }),
+    });
+    expect(session.principal.id).toBe('u-dana');
+
+    const comments = h.server.store.listComments(docId);
+    expect(comments.map((c) => c.authorId)).toEqual(['u-dana']);
+    expect(h.server.store.getPrincipal(guest.principal.id)).toBeUndefined();
+  });
+});
+
+describe('agents', () => {
+  it('cannot open a link unless the link admits them', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+
+    const closed = await makeLink(h, docId, 'read');
+    const refused = await h.request(`/v1/links/${closed}/open`, {
+      method: 'POST',
+      token: h.tokens.bot,
+    });
+    expect(refused.status).toBe(403);
+
+    const opened = await makeLink(h, docId, 'read', { allowAgents: true });
+    const allowed = await h.request(`/v1/links/${opened}/open`, {
+      method: 'POST',
+      token: h.tokens.bot,
+    });
+    expect(allowed.status).toBe(200);
+  });
+
+  it('answers to whoever made the link, not to itself', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    // Sam makes the link; the bot is sponsored by Priya. Passing through the
+    // link must put Sam's name on the delegation, because the capability came
+    // out of Sam's authority.
+    const linkId = await makeLink(h, docId, 'read', { allowAgents: true }, h.tokens.sam);
+    const opened = await h.json<Opened>(`/v1/links/${linkId}/open`, {
+      method: 'POST',
+      token: h.tokens.bot,
+    });
+    expect(opened.principal.id).toBe('a-bot');
+
+    const session = h.server.auth.verify(opened.token);
+    expect(session.sponsor?.id).toBe('u-sam');
+    expect(session.link?.docId).toBe(docId);
+    // Nothing but the link: an agent's own scope does not come along.
+    expect(session.grants).toEqual([]);
+  });
+
+  it('is registered by a person and by nobody else', async () => {
+    const h = await open();
+    const created = await h.json<{ agentId: string; token: string }>('/v1/agents', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'galley-bot/docs', scope: '/specs' }),
+    });
+    expect(created.agentId).toMatch(/^a-/);
+
+    const asAgent = await h.request('/v1/agents', {
+      method: 'POST',
+      token: created.token,
+      body: JSON.stringify({ name: 'galley-bot/spawn', scope: '/' }),
+    });
+    expect(asAgent.status).toBe(403);
+    expect(await errorOf(asAgent)).toMatch(/agent cannot register another agent/);
+
+    const { docId } = await seedDocument(h);
+    const linkId = await makeLink(h, docId, 'read');
+    const guest = await h.json<Opened>(`/v1/links/${linkId}/open`, { method: 'POST', token: '' });
+    const asGuest = await h.request('/v1/agents', {
+      method: 'POST',
+      token: guest.token,
+      body: JSON.stringify({ name: 'galley-bot/anon', scope: '/' }),
+    });
+    expect(asGuest.status).toBe(403);
+    expect(await errorOf(asGuest)).toMatch(/guest cannot register an agent/);
+  });
+
+  it('lists and revokes what a person set up', async () => {
+    const h = await open();
+    const created = await h.json<{ agentId: string; token: string }>('/v1/agents', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'galley-bot/docs', scope: '/specs' }),
+    });
+    const listed = await h.json<{ agents: { id: string; scope: string; sponsorName: string }[] }>(
+      '/v1/agents',
+    );
+    const row = listed.agents.find((a) => a.id === created.agentId);
+    expect(row).toMatchObject({ scope: '/specs', sponsorName: 'priya' });
+
+    expect((await h.request(`/v1/agents/${created.agentId}`, { method: 'DELETE' })).status).toBe(204);
+    expect((await h.request('/v1/me', { token: created.token })).status).toBe(401);
+  });
+});
+
+describe('sign-in', () => {
+  it('reports who the caller is', async () => {
+    const h = await open();
+    const session = await h.json<{ token: string }>('/v1/auth/session', {
+      method: 'POST',
+      token: '',
+      body: JSON.stringify({ idToken: 'dev:sam@example.com' }),
+    });
+    const me = await h.json<{ principal: { id: string; email: string } }>('/v1/me', {
+      token: session.token,
+    });
+    // Matched to the account that already held the address rather than making a
+    // second one beside it.
+    expect(me.principal.id).toBe('u-sam');
+    expect(me.principal.email).toBe('sam@example.com');
+  });
+
+  it('refuses a credential the provider will not vouch for', async () => {
+    const h = await open();
+    const response = await h.request('/v1/auth/session', {
+      method: 'POST',
+      token: '',
+      body: JSON.stringify({ idToken: 'not-a-dev-identity' }),
+    });
+    expect(response.status).toBe(401);
+  });
+
+  it('stops working on logout', async () => {
+    const h = await open();
+    const session = await h.json<{ token: string }>('/v1/auth/session', {
+      method: 'POST',
+      token: '',
+      body: JSON.stringify({ idToken: 'dev:sam@example.com' }),
+    });
+    expect((await h.request('/v1/auth/logout', { method: 'POST', token: session.token })).status).toBe(
+      204,
+    );
+    expect((await h.request('/v1/me', { token: session.token })).status).toBe(401);
+  });
+});

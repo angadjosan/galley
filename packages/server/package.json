@@ -9,6 +9,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.0.2",
     "@fastify/static": "^8.0.3",
     "@fastify/websocket": "^11.0.1",
     "@galley/anchor": "*",
