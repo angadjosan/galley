@@ -70,6 +70,12 @@ export interface EditorProps {
    */
   revision: number;
   readOnly?: boolean;
+  /**
+   * Whether leaving a note is offered while `readOnly` — someone shared this
+   * document at `comment` or `suggest` can select words and comment on them,
+   * and only the typing is refused.
+   */
+  canComment?: boolean;
   highlights: CommentHighlightState;
   /**
    * The designs this document links to, so each reference draws underneath the
@@ -343,6 +349,18 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
 
   // Highlights change often (a new note, a resolved thread) and must not
   // rebuild the document — they go in through a plugin transaction.
+  /**
+   * Re-ask whether this view is editable.
+   *
+   * ProseMirror caches the answer and only recomputes it when the view is
+   * updated, which for a document nobody can type in never happens on its own.
+   * Access can change under an open tab — a link downgraded while it is being
+   * read — and the view has to follow.
+   */
+  useEffect(() => {
+    view.current?.setProps({ editable: () => !callbacks.current.readOnly });
+  }, [props.readOnly]);
+
   useEffect(() => {
     const editor = view.current;
     if (!editor) return;
@@ -399,12 +417,16 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
           : next;
       });
 
-    if (surface.dragging || surface.composing || props.readOnly) {
+    if (surface.dragging || surface.composing || (props.readOnly && !props.canComment)) {
       keep(null);
       return;
     }
     const { selection } = editor.state;
-    if (selection.empty || !editor.hasFocus()) {
+    // A view that is not editable never takes DOM focus, so `hasFocus` is
+    // permanently false there — asking it would hide the one control a reader
+    // with `comment` access still has. ProseMirror keeps reading the selection
+    // either way, which is what this depends on.
+    if (selection.empty || (editor.editable && !editor.hasFocus())) {
       keep(null);
       return;
     }

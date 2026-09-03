@@ -1468,14 +1468,26 @@ test.describe('sharing', () => {
       await expect(sam.getByTestId('doc-title')).toHaveText('Refund policy');
       await expect(sam.locator('.prose')).toContainText('thirty days of delivery');
 
-      // And cannot change it. He was given `comment`, so the words he types are
-      // refused by the server.
+      // And cannot change it. He was given `comment`, so the editor itself
+      // refuses the keystrokes — they never reach the document, let alone the
+      // server. This used to be tested the other way round: Sam typed, the
+      // words appeared, and a save came back 403 as "That change couldn't be
+      // saved... we'll keep trying", which reads as a network blip and is a
+      // promise the app cannot keep. The absence of that banner is half the
+      // assertion.
+      await expect(sam.getByTestId('access-note')).toContainText('Read only');
+      await expect(sam.getByTestId('access-note')).toContainText('comment');
+      await expect(sam.locator('.prose')).toHaveAttribute('contenteditable', 'false');
       await caretAtEndOf(sam, '.prose > p[data-block-id]');
       await sam.keyboard.type(' SAM-SHOULD-NOT-WRITE.');
-      await expect(sam.getByTestId('notice')).toContainText("couldn't be saved", {
-        timeout: 15_000,
-      });
+      await expect(sam.locator('.prose')).not.toContainText('SAM-SHOULD-NOT-WRITE');
+      await expect(sam.getByTestId('notice')).toHaveCount(0);
       expect(await readAsAgent('policies/refunds')).not.toContain('SAM-SHOULD-NOT-WRITE.');
+
+      // Commenting is what he *was* given, so it is still on the toolbar, and
+      // sharing — which needs `admin` — is not offered at all.
+      await expect(sam.getByRole('button', { name: 'Add comment' })).toBeVisible();
+      await expect(sam.getByRole('button', { name: 'Share', exact: true })).toHaveCount(0);
     } finally {
       await priyaContext.close();
       await samContext.close();

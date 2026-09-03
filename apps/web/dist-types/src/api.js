@@ -25,6 +25,7 @@ let baseUrl = initialBaseUrl();
 export function serverBaseUrl() {
     return baseUrl;
 }
+const URL_TOKEN_KEY = 'galley.url-token';
 /**
  * A token handed over in the address bar.
  *
@@ -32,17 +33,27 @@ export function serverBaseUrl() {
  * runs a state initialiser twice, and the second run would find an address bar
  * this one had already cleaned. It stays as an escape hatch for scripted
  * sessions and tests; people sign in.
+ *
+ * This one — and only this one — is kept in `sessionStorage`, so that a reload
+ * does not sign the tab out. There is no SSO session behind a `?token=` boot to
+ * silently re-mint from, so without this every reload of a scripted session, an
+ * e2e test, or a `GALLEY_DEV_AUTH=1` development tab lands on the sign-in
+ * screen. It is not a weakening: a token that arrived in a URL has already been
+ * through the browser's history, the referer header and whatever logged the
+ * request on the way, so it was never a secret. A token minted by a real
+ * sign-in never touched the address bar and stays in memory, where it belongs.
  */
 const urlToken = (() => {
     const url = new URL(window.location.href);
     const token = url.searchParams.get('token');
     if (!token)
-        return null;
+        return sessionStorage.getItem(URL_TOKEN_KEY);
     // Out of the address bar, so it does not end up in a screenshot, a bookmark
     // or a referrer header.
     url.searchParams.delete('token');
     url.searchParams.delete('server');
     window.history.replaceState({}, '', url.toString());
+    sessionStorage.setItem(URL_TOKEN_KEY, token);
     return token;
 })();
 /** `/l/<id>` — someone arriving on a share link rather than at the app. */
@@ -78,6 +89,7 @@ export function onSessionLost(handler) {
 function forget() {
     token = null;
     renew = null;
+    sessionStorage.removeItem(URL_TOKEN_KEY);
     lost?.();
 }
 async function renewToken() {
@@ -290,6 +302,8 @@ export async function signOut() {
     }
     token = null;
     renew = null;
+    // A remembered `?token=` boot is a session too, and signing out ends it.
+    sessionStorage.removeItem(URL_TOKEN_KEY);
 }
 async function openLinkOnce(linkId) {
     return raw('POST', `/v1/links/${encodeURIComponent(linkId)}/open`, undefined, false);

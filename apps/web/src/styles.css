@@ -4313,3 +4313,21 @@ kbd {
   gap: 2px;
   margin-left: auto;
 }
+
+/* --------------------------------------------------------------- access */
+
+/*
+ * "Read only · you can comment", beside the save state.
+ *
+ * The same weight and colour as the save badge next to it, because it answers
+ * the same kind of question — what is happening to my typing — and because a
+ * permission stated loudly reads as an accusation. It never leaves while the
+ * document is open: the fact does not stop being true after five seconds.
+ */
+.access-note {
+  font-size: var(--fs-small);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

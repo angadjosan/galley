@@ -275,7 +275,9 @@ function buildMenus(props) {
                 app('table', 'Table', props.onTable, { enabled: !readOnly && !!state }),
                 separator('i1'),
                 app('link', 'Link', props.onLink, { shortcut: '⌘K', enabled: !readOnly && !!state }),
-                app('comment', 'Comment', props.onComment, { shortcut: '⌘⌥M', enabled: !!state }),
+                ...(props.canComment === false
+                    ? []
+                    : [app('comment', 'Comment', props.onComment, { shortcut: '⌘⌥M', enabled: !!state })]),
                 separator('i2'),
                 action(INSERT_QUOTE),
                 action(INSERT_CALLOUT),

@@ -107,6 +107,8 @@ function renderCard(suggestion, currentText, handlers) {
         diff.append(span);
     }
     card.append(diff);
+    if (handlers.current.readOnly)
+        return card;
     const foot = document.createElement('footer');
     foot.className = 'suggestion-foot';
     if (suggestion.state === 'stale') {

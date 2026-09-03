@@ -2,11 +2,14 @@ import { GalleyClient } from '@galley/client';
 /**
  * Credentials for the browser session.
  *
- * The token is **never** written to `localStorage` or `sessionStorage`. A
- * bearer token that outlives the tab is a bearer token on a shared machine —
- * and now that sign-in can silently re-mint one, persistence buys nothing: a
- * reload asks the identity provider again and gets a fresh token in a round
- * trip nobody sees. In-memory is strictly less to lose.
+ * A token minted by signing in is **never** written to `localStorage` or
+ * `sessionStorage`. A bearer token that outlives the tab is a bearer token on a
+ * shared machine — and now that sign-in can silently re-mint one, persistence
+ * buys nothing: a reload asks the identity provider again and gets a fresh
+ * token in a round trip nobody sees. In-memory is strictly less to lose.
+ *
+ * The one exception is a token that arrived as `?token=` in the address bar,
+ * which is remembered for the tab; see `urlToken` for why that costs nothing.
  *
  * The base URL is not a credential, so it is remembered; forgetting it would
  * break a reload against a development server on another port for no gain.

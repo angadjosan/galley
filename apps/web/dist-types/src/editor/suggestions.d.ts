@@ -27,6 +27,14 @@ export interface PendingSuggestion {
     readonly at: string;
 }
 export interface SuggestionHandlers {
+    /**
+     * True when this reader may not write the document.
+     *
+     * Accepting or dismissing a suggestion rewrites a paragraph, so both need
+     * `write`. The card still draws — seeing what was proposed is reading — but
+     * without the two buttons that would be refused.
+     */
+    readOnly?: boolean;
     accept(id: string): void;
     reject(id: string): void;
     /** Accept, then leave the caret in the block so it can be edited on. */

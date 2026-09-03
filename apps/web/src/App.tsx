@@ -41,6 +41,7 @@ import {
   serverBaseUrl,
   signOut as endSession,
   type Boot,
+  type Capability,
   type Credentials,
   type PeerPresence,
   type Viewer,
@@ -711,6 +712,30 @@ function DocumentView({
   const cardNodes = useRef(new Map<string, HTMLElement>());
 
   const [loaded, setLoaded] = useState<{ path: string; content: string; version: number } | null>(null);
+  /**
+   * What this reader is allowed to do here, as the server sees it.
+   *
+   * Read from the document rather than inferred from the identity: a guest on a
+   * `write` link may edit, and a signed-in colleague on a `read` share may not.
+   * Being a guest is not a capability.
+   *
+   * `write` until the first read answers, and `write` again if an older server
+   * omits the field. Defaulting the other way would lock out every writer the
+   * moment a response was slow, and the server is the thing that actually
+   * enforces this — the UI's job is to stop offering what would be refused.
+   */
+  const [capability, setCapability] = useState<Capability>('write');
+
+  /**
+   * The four questions every surface below asks, answered once.
+   *
+   * Each maps to the capability the server checks for the corresponding route,
+   * so a control that is offered is a control that will work.
+   */
+  const canEdit = capability === 'write' || capability === 'admin';
+  const canComment = canEdit || capability === 'comment' || capability === 'suggest';
+  const canSuggest = canEdit || capability === 'suggest';
+  const canShare = capability === 'admin';
   const [draft, setDraft] = useState('');
   const [save, setSave] = useState<SaveState>('saved');
   const [comments, setComments] = useState<Comment[]>([]);
@@ -773,6 +798,7 @@ function DocumentView({
       client.history(docId),
     ]);
     serverContent.current = doc.content;
+    if (doc.capability) setCapability(doc.capability);
     // Only re-seed the editor when the server is telling us something we do
     // not already have. Every save echoes back as a change event, and feeding
     // that echo to the editor would rebuild it — throwing the caret of the
@@ -846,6 +872,11 @@ function DocumentView({
 
   const flush = useCallback(async () => {
     if (saving.current) return;
+    // Nothing typed here can be saved, so there is nothing to try. Without
+    // this the round trip comes back 403 and says "we'll keep trying", which
+    // is both a lie and the wrong sentence: the person did not lose a change,
+    // they were never able to make one.
+    if (!canEdit) return;
     const ops = diffToBlockOps(serverContent.current, latestDraft.current);
     if (ops.length === 0) {
       setSave('saved');
@@ -883,7 +914,7 @@ function DocumentView({
       setSave('error');
       setNotice(failure("That change couldn't be saved. It is still here — we'll keep trying.", err));
     }
-  }, [client, docId, path, onRenamed]);
+  }, [canEdit, client, docId, path, onRenamed]);
 
   useEffect(() => {
     if (save !== 'dirty') return;
@@ -1056,6 +1087,10 @@ function DocumentView({
 
   const suggestionHandlers = useMemo(
     () => ({
+      // Accepting or dismissing a suggestion rewrites the document, so both are
+      // a `write`. A reader still sees what was proposed; they are simply not
+      // offered the two buttons that would come back 403.
+      readOnly: !canEdit,
       accept: (id: string) => void acceptSuggestion(id),
       acceptAndEdit: (id: string) => void acceptSuggestion(id, true),
       reject: (id: string) => {
@@ -1066,7 +1101,7 @@ function DocumentView({
         })();
       },
     }),
-    [acceptSuggestion, client, docId],
+    [acceptSuggestion, canEdit, client, docId],
   );
 
   // Cards sit beside the paragraph they are about. That vertical coupling is
@@ -1259,14 +1294,17 @@ function DocumentView({
               </span>
             </nav>
             <div className="chrome-right">
+              <AccessNote capability={capability} canSuggest={canSuggest} />
               <SaveBadge state={save} />
               <Presence peers={peers} />
               {guest ? (
                 <GuestBadge name={viewer.name} onSignIn={onClaim} />
               ) : (
-                <button className="chrome-button chrome-share" onClick={() => setShareOpen(true)}>
-                  Share
-                </button>
+                canShare && (
+                  <button className="chrome-button chrome-share" onClick={() => setShareOpen(true)}>
+                    Share
+                  </button>
+                )
               )}
             </div>
           </div>
@@ -1282,6 +1320,7 @@ function DocumentView({
         <Boundary what="the design canvas">
         <DesignEditor
           source={asDesign.source}
+          readOnly={!canEdit}
           // A layer with a note on it keeps its id in the file. Same rule as a
           // paragraph: identity materializes when something durable needs it.
           anchored={
@@ -1313,7 +1352,7 @@ function DocumentView({
           onClose={onToggleLibrary}
         />
         </Boundary>
-        {shareOpen && !guest && (
+        {shareOpen && canShare && (
           <Overlay title="Share" onClose={() => setShareOpen(false)}>
             <ShareDialog
               docRef={docId}
@@ -1357,14 +1396,17 @@ function DocumentView({
           </nav>
 
           <div className="chrome-right">
+            <AccessNote capability={capability} canSuggest={canSuggest} />
             <SaveBadge state={save} />
             <Presence peers={peers} />
             {guest ? (
               <GuestBadge name={viewer.name} onSignIn={onClaim} />
             ) : (
-              <button className="chrome-button chrome-share" onClick={() => setShareOpen(true)}>
-                Share
-              </button>
+              canShare && (
+                <button className="chrome-button chrome-share" onClick={() => setShareOpen(true)}>
+                  Share
+                </button>
+              )
             )}
           </div>
         </div>
@@ -1380,7 +1422,9 @@ function DocumentView({
         {!guest && (
         <MenuBar
           state={editorState}
-          readOnly={false}
+          readOnly={!canEdit}
+          canShare={canShare}
+          canComment={canComment}
           run={(command) => editor.current?.run(command)}
           onLink={() => editor.current?.openLink()}
           onComment={() => editor.current?.openComment()}
@@ -1399,7 +1443,8 @@ function DocumentView({
 
         <Toolbar
           state={editorState}
-          readOnly={false}
+          readOnly={!canEdit}
+          canComment={canComment}
           run={(command) => editor.current?.run(command)}
           onLink={() => editor.current?.openLink()}
           onComment={() => editor.current?.openComment()}
@@ -1430,6 +1475,8 @@ function DocumentView({
               ref={editor}
               markdown={loaded.content}
               revision={loaded.version}
+              readOnly={!canEdit}
+              canComment={canComment}
               highlights={highlights}
               designs={designs}
               suggestions={inlineSuggestions}
@@ -1450,6 +1497,7 @@ function DocumentView({
                 setNoteDraft(null);
               }}
               onRequestComment={(target) => {
+                if (!canComment) return;
                 setNoteDraft({
                   blockId: target.blockId,
                   quotedText: target.quotedText,
@@ -1502,11 +1550,15 @@ function DocumentView({
                   setActiveThread(comment.threadId);
                   if (comment.anchor.blockId) editor.current?.revealBlock(comment.anchor.blockId);
                 }}
-                onResolve={async () => {
-                  await client.resolveComment(docId, comment.id);
-                  setComments(await client.comments(docId));
-                  setNotice({ tone: 'good', text: 'Note resolved.' });
-                }}
+                onResolve={
+                  canComment
+                    ? async () => {
+                        await client.resolveComment(docId, comment.id);
+                        setComments(await client.comments(docId));
+                        setNotice({ tone: 'good', text: 'Note resolved.' });
+                      }
+                    : undefined
+                }
               />
             ))}
 
@@ -1526,7 +1578,7 @@ function DocumentView({
                   <article key={orphan.anchorId} className="card is-lost" data-testid="orphan-card">
                     <p className="card-quote">{orphan.lastKnownText.slice(0, 200)}</p>
                     <footer className="card-foot">
-                      {activeBlock ? (
+                      {activeBlock && canComment ? (
                         <button
                           className="primary"
                           onClick={async () => {
@@ -1547,7 +1599,20 @@ function DocumentView({
 
             {openThreads.length === 0 && !noteDraft && orphans.length === 0 && (
               <p className="lane-empty">
-                No notes yet. Select any text and press <kbd>⌘⌥M</kbd> to leave one.
+                {canComment ? (
+                  canEdit ? (
+                    <>
+                      No notes yet. Select any text and press <kbd>⌘⌥M</kbd> to leave one.
+                    </>
+                  ) : (
+                    // The shortcut is a keystroke the editor swallows when it is
+                    // not editable, so a reader is pointed at the button instead
+                    // of at a key that does nothing.
+                    <>No notes yet. Select any text and choose Add comment to leave one.</>
+                  )
+                ) : (
+                  <>No notes yet.</>
+                )}
               </p>
             )}
           </aside>
@@ -1567,7 +1632,7 @@ function DocumentView({
         />
       )}
 
-      {shareOpen && !guest && (
+      {shareOpen && canShare && (
         <Overlay title="Share" onClose={() => setShareOpen(false)}>
           <ShareDialog
             docRef={docId}
@@ -1655,7 +1720,8 @@ function NoteCard({
   hovered: boolean;
   onHover(threadId: string | null): void;
   onOpen(): void;
-  onResolve(): Promise<void>;
+  /** Absent for a reader, who may not resolve anybody's note. */
+  onResolve?(): Promise<void>;
 }): JSX.Element {
   return (
     <article
@@ -1686,7 +1752,7 @@ function NoteCard({
       </header>
       <p className="card-body">{comment.body}</p>
       {comment.orphanedAt && <p className="card-lost">The text this note pointed to has changed.</p>}
-      {active && (
+      {active && onResolve && (
         <footer className="card-foot">
           <button
             className="ghost"
@@ -2119,6 +2185,33 @@ function Overlay({
 // ---------------------------------------------------------------------------
 // Small pieces
 // ---------------------------------------------------------------------------
+
+/**
+ * Why this document cannot be typed in.
+ *
+ * One quiet line, always in the same place, said once. Not a toast — this is
+ * not an event, it is a standing fact about the document, and a message that
+ * disappears leaves someone who looks up two minutes later with no explanation
+ * for why the keyboard does nothing. Not a modal either: nobody did anything
+ * wrong, and there is nothing to acknowledge.
+ *
+ * It also says what they *can* do, because "read only" on its own reads as a
+ * closed door to someone who was invited specifically to leave notes.
+ */
+function AccessNote({
+  capability,
+  canSuggest,
+}: {
+  capability: Capability;
+  canSuggest: boolean;
+}): JSX.Element | null {
+  if (capability === 'write' || capability === 'admin') return null;
+  return (
+    <span className="access-note" data-testid="access-note">
+      Read only{canSuggest ? ' \u00b7 you can suggest edits' : capability === 'comment' ? ' \u00b7 you can comment' : ''}
+    </span>
+  );
+}
 
 function SaveBadge({ state }: { state: SaveState }): JSX.Element {
   const label =

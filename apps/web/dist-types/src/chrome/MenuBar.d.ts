@@ -37,6 +37,15 @@ export interface MenuBarProps {
     /** False for a guest, who may edit through a link but not share or create. */
     canShare?: boolean;
     canCreate?: boolean;
+    /**
+     * False at `read`, where leaving a note would be refused.
+     *
+     * The one place this menu bar's "disabled, not hidden" rule gives way, and
+     * for the same reason `canShare` does: a permission is not a state of the
+     * selection. A greyed-out Comment says "not right now"; the truth is "not
+     * with this link", which greying cannot say.
+     */
+    canComment?: boolean;
     onHistory(): void;
     onNewDocument(): void;
     onToggleLibrary(): void;

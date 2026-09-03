@@ -174,7 +174,18 @@ export class GalleyClient {
   async read(
     ref: string,
     options: { markers?: boolean } = {},
-  ): Promise<{ docId: string; path: string; content: string; ticket: number }> {
+  ): Promise<{
+    docId: string;
+    path: string;
+    content: string;
+    ticket: number;
+    /**
+     * What this caller may do here. Optional because a server that predates
+     * the field still answers this route, and a client that assumed the worst
+     * would lock everyone out of it.
+     */
+    capability?: 'read' | 'comment' | 'suggest' | 'write' | 'admin';
+  }> {
     const query = options.markers ? '?markers=1' : '';
     return this.call('GET', `/v1/docs/${encodeURIComponent(ref)}${query}`);
   }

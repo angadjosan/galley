@@ -30,6 +30,14 @@ export interface ToolbarProps {
     run(command: Command): void;
     onLink(): void;
     onComment(): void;
+    /**
+     * False at `read`, where there is nowhere to put a note.
+     *
+     * Absent rather than disabled — the exception to this row's rule, because a
+     * permission is not a property of the selection and greying cannot say which
+     * of the two it is.
+     */
+    canComment?: boolean;
     onImage(): void;
     onDesign(): void;
     onTable(): void;
