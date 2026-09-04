@@ -828,6 +828,15 @@ function DocumentView({
    * either loses them or applies them twice.
    */
   const savePromise = useRef<Promise<void> | null>(null);
+  /**
+   * The save state, readable from callbacks that must not re-close over it.
+   *
+   * This is the app's own answer to "has this person typed something that has
+   * not been sent", and it is a stronger signal than comparing bytes: the
+   * editor's Markdown is a *re-serialization*, so it can differ from the
+   * server's copy cosmetically while nobody has typed anything at all.
+   */
+  const saveState = useRef<SaveState>('saved');
 
   const loadAll = useCallback(async () => {
     // Wait out a save that is already travelling, so the document read below
@@ -847,8 +856,21 @@ function DocumentView({
     if (doc.capability) setCapability(doc.capability);
 
     const local = editor.current?.markdown();
-    // What has been typed here and not yet sent.
-    const unsent = local === undefined ? [] : diffToBlockOps(base, local);
+    // What has been typed here and not yet sent — defined exactly as the save
+    // path defines it, so a rebase replays the ops `flush` would have sent and
+    // nothing else.
+    //
+    // Gated on the save state as well as the diff. A re-serialization that is
+    // cosmetically different from the server's bytes produces ops while
+    // representing no edit at all, and replaying *those* onto an incoming
+    // document rewrites blocks nobody touched — which moves anchors and
+    // orphans comments attached to them.
+    // Anything but a settled "saved" is treated as possibly-unsent. The ref is
+    // updated during render, so immediately after the awaited save above it can
+    // still read 'saving'; reporting "saved" on that stale value would leave
+    // typed text sitting unsent behind a badge claiming otherwise.
+    const unsent =
+      saveState.current === 'saved' ? [] : diffToBlockOps(base, latestDraft.current);
 
     const reseed = (content: string, state: SaveState): void => {
       // The version counter, not the content, is what the editor rebuilds on.
@@ -949,6 +971,7 @@ function DocumentView({
   // and the badge said "Saved".
   const latestDraft = useRef(draft);
   latestDraft.current = draft;
+  saveState.current = save;
   const saving = useRef(false);
 
   const flush = useCallback(async () => {
