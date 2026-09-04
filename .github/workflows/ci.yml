@@ -1,0 +1,81 @@
+# Push to main is the only way production changes.
+#
+# `fly deploy` from a laptop deploys whatever that laptop happens to have
+# checked out, which is not necessarily what is on main and not necessarily
+# anything that passed a test. Here the artifact that reaches production is
+# built from the commit that CI just proved, and nothing else.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Superseded pull-request runs are worth cancelling. The deploy job opts out of
+# this — see its own `concurrency` block.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Typecheck, unit tests, web build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # `tsc --build` is the lint gate too — see the `lint` script.
+      - run: npm run typecheck
+      - run: npm test
+      # The image builds the web client, so a build break must fail here rather
+      # than fifteen minutes later inside a Docker layer.
+      - run: npm --prefix apps/web run build
+
+  e2e:
+    name: End-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Chromium only: the Playwright config declares exactly one project.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            test-results
+            playwright-report
+          retention-days: 7
+          if-no-files-found: ignore
+
+  deploy:
+    name: Deploy to Fly
+    needs: [check, e2e]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    # Never cancel a deploy in flight. Galley runs as exactly one machine with
+    # one attached volume (see fly.toml), so two overlapping deploys contend for
+    # the same machine — and a cancelled one can leave it half-replaced. Queue
+    # them instead.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      # Remote builds: the image is assembled on Fly's builder, so the runner
+      # does not need a Docker daemon and the layer cache survives between runs.
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
