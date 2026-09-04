@@ -21,7 +21,7 @@ import type {
 } from '@galley/client';
 import type { EditorState } from 'prosemirror-state';
 import { diffToBlockOps } from '@galley/core/diff';
-import { parseDocument } from '@galley/markdown';
+import { applyBlockOps, parseDocument } from '@galley/markdown';
 import { embedDesign, extractDesign, parseDesign } from '@galley/design';
 import { Editor, type EditorHandle } from './editor/Editor.js';
 import { INSERT_TABLE, insertDesignLink, insertImage } from './editor/commands.js';
@@ -819,8 +819,20 @@ function DocumentView({
 
   const serverContent = useRef('');
   const live = useRef<LiveConnection | null>(null);
+  /**
+   * The save currently on the wire, if there is one.
+   *
+   * `loadAll` waits on it. A read that overlaps a save in flight has an
+   * indeterminate vintage — it may or may not contain the operations that are
+   * still travelling — and rebasing unsent edits onto a document like that
+   * either loses them or applies them twice.
+   */
+  const savePromise = useRef<Promise<void> | null>(null);
 
   const loadAll = useCallback(async () => {
+    // Wait out a save that is already travelling, so the document read below
+    // has a known vintage. See `savePromise`.
+    if (savePromise.current) await savePromise.current.catch(() => {});
     const [doc, threads, proposals, tray, timeline] = await Promise.all([
       client.read(docId, { markers: true }),
       client.comments(docId),
@@ -828,29 +840,67 @@ function DocumentView({
       client.orphans(docId),
       client.history(docId),
     ]);
+    // The bytes the server last confirmed, before this read replaced them. The
+    // only base this session's unsent operations are valid against.
+    const base = serverContent.current;
     serverContent.current = doc.content;
     if (doc.capability) setCapability(doc.capability);
-    // Only re-seed the editor when the server is telling us something we do
-    // not already have. Every save echoes back as a change event, and feeding
-    // that echo to the editor would rebuild it — throwing the caret of the
-    // person who is still typing to the top of the document.
+
     const local = editor.current?.markdown();
-    if (local === undefined || local !== doc.content) {
+    // What has been typed here and not yet sent.
+    const unsent = local === undefined ? [] : diffToBlockOps(base, local);
+
+    const reseed = (content: string, state: SaveState): void => {
       // The version counter, not the content, is what the editor rebuilds on.
       // Keying on the text means a restore that brings back exactly the bytes
       // this session opened with produces an identical string, and the editor
       // never learns that anything happened.
       setLoaded((previous) => ({
         path: doc.path,
-        content: doc.content,
+        content,
         version: (previous?.version ?? 0) + 1,
       }));
-      setDraft(doc.content);
-      setSave('saved');
+      setDraft(content);
+      setSave(state);
+    };
+
+    if (local === undefined) {
+      reseed(doc.content, 'saved');
+    } else if (doc.content === base) {
+      // The server is holding nothing this session has not already seen — this
+      // is our own echo, or a notification about comments rather than text.
+      // Whether the document is dirty is a question about what has been typed
+      // since the last save, not about this round trip completing.
+      setSave(unsent.length > 0 ? 'dirty' : 'saved');
+    } else if (unsent.length === 0) {
+      // Someone else's change, and nothing of this session's to lose.
+      reseed(doc.content, 'saved');
     } else {
-      // Our own echo. Whether this document is still dirty depends on text
-      // typed since the save went out, not on the round trip completing.
-      setSave(diffToBlockOps(doc.content, latestDraft.current).length > 0 ? 'dirty' : 'saved');
+      // Someone else's change *and* unsent work here.
+      //
+      // Seeding the editor with the server's copy is what this did before, and
+      // it deleted every word typed since the last save while setting the badge
+      // to "Saved" — the guard it used, `local !== doc.content`, is true
+      // precisely *because* there is unsaved work, which is the one case it was
+      // meant to exclude.
+      //
+      // The unsent edits are scoped block ops addressed by id, so they replay
+      // onto the document that arrived. That is a rebase: this session's
+      // changes are re-expressed against the newer text, and the result is
+      // dirty because it still has not been sent.
+      try {
+        reseed(applyBlockOps(parseDocument(doc.content), unsent).source, 'dirty');
+      } catch (err) {
+        // A block this session edited is gone, or the ops do not fit. Neither
+        // is worth losing the text over: keep what is on screen and leave the
+        // base where it was, so the next flush sends these same scoped ops and
+        // the server resolves them by id against its own current copy.
+        serverContent.current = base;
+        setSave('dirty');
+        setNotice(
+          failure('Someone else changed this document while you were typing. Your work is still here.', err),
+        );
+      }
     }
     setComments(threads);
     setSuggestions(proposals);
@@ -915,35 +965,46 @@ function DocumentView({
     }
     saving.current = true;
     setSave('saving');
-    const titleBefore = titleOf(serverContent.current, path);
+    // Published so `loadAll` can wait for it. Assigned before the first await,
+    // so a change notification that arrives while this is on the wire cannot
+    // observe a gap where a save is in flight and `savePromise` is still null.
+    const run = (async (): Promise<void> => {
+      const titleBefore = titleOf(serverContent.current, path);
+      try {
+        const result = await client.applyOps(docId, ops);
+        // The annotated form, not the clean one: the next diff has to be taken
+        // against the same bytes this client holds.
+        serverContent.current = result.source;
+        // A document is named by its first heading, so a save that changed that
+        // heading renamed the document, and the list in the sidebar is now wrong.
+        //
+        // The new name is handed up rather than the list being refetched. A
+        // refetch would race the server's *debounced* snapshot — the title in
+        // storage is written when the document is flushed, not when the op lands,
+        // so a list fetched immediately after a save reliably returns the old
+        // name. This client already knows the answer; it just wrote it.
+        const titleNow = titleOf(result.source, path);
+        if (titleNow !== titleBefore) onRenamed(titleNow);
+        const [threads, proposals] = await Promise.all([
+          client.comments(docId),
+          client.suggestions(docId),
+        ]);
+        setComments(threads);
+        setSuggestions(proposals);
+        saving.current = false;
+        // Anything typed while that was in flight is still unsent.
+        setSave(diffToBlockOps(serverContent.current, latestDraft.current).length > 0 ? 'dirty' : 'saved');
+      } catch (err) {
+        saving.current = false;
+        setSave('error');
+        setNotice(failure("That change couldn't be saved. It is still here — we'll keep trying.", err));
+      }
+    })();
+    savePromise.current = run;
     try {
-      const result = await client.applyOps(docId, ops);
-      // The annotated form, not the clean one: the next diff has to be taken
-      // against the same bytes this client holds.
-      serverContent.current = result.source;
-      // A document is named by its first heading, so a save that changed that
-      // heading renamed the document, and the list in the sidebar is now wrong.
-      //
-      // The new name is handed up rather than the list being refetched. A
-      // refetch would race the server's *debounced* snapshot — the title in
-      // storage is written when the document is flushed, not when the op lands,
-      // so a list fetched immediately after a save reliably returns the old
-      // name. This client already knows the answer; it just wrote it.
-      const titleNow = titleOf(result.source, path);
-      if (titleNow !== titleBefore) onRenamed(titleNow);
-      const [threads, proposals] = await Promise.all([
-        client.comments(docId),
-        client.suggestions(docId),
-      ]);
-      setComments(threads);
-      setSuggestions(proposals);
-      saving.current = false;
-      // Anything typed while that was in flight is still unsent.
-      setSave(diffToBlockOps(serverContent.current, latestDraft.current).length > 0 ? 'dirty' : 'saved');
-    } catch (err) {
-      saving.current = false;
-      setSave('error');
-      setNotice(failure("That change couldn't be saved. It is still here — we'll keep trying.", err));
+      await run;
+    } finally {
+      savePromise.current = null;
     }
   }, [canEdit, client, docId, path, onRenamed]);
 
