@@ -88,39 +88,92 @@ describe('transforming a splice past a committed one', () => {
   });
 });
 
+describe('two edits at the same spot', () => {
+  // The rules ProseMirror settled on, for the reason it settled on them: a
+  // range must not grow sideways to swallow text inserted against its edge.
+
+  it('does not delete a word inserted against the front of the deleted range', () => {
+    const base = 'hello world';
+    // Someone types "brave " immediately before "world".
+    const committed = { index: 6, deleteCount: 0, insert: 'brave ' };
+    // Meanwhile this one deletes "world".
+    const pending = { index: 6, deleteCount: 5, insert: '' };
+
+    const moved = transformSplice(pending, committed);
+    const result = applySplice(applySplice(base, committed), moved);
+
+    expect(result).toBe('hello brave ');
+    // Mapping both ends the same way loses this word, silently, and only when
+    // two people are in the same sentence.
+    expect(result).toContain('brave');
+  });
+
+  it('does not delete a word inserted against the back of the deleted range', () => {
+    const base = 'hello world';
+    const committed = { index: 11, deleteCount: 0, insert: ' now' };
+    const pending = { index: 6, deleteCount: 5, insert: '' };
+
+    const moved = transformSplice(pending, committed);
+    expect(applySplice(applySplice(base, committed), moved)).toBe('hello  now');
+  });
+
+  it('puts a concurrent insert at the same point after the committed one', () => {
+    const base = 'ac';
+    const committed = { index: 1, deleteCount: 0, insert: 'X' };
+    const pending = { index: 1, deleteCount: 0, insert: 'Y' };
+
+    const moved = transformSplice(pending, committed);
+    // Deterministic, and the same for every peer, because one server decides.
+    expect(applySplice(applySplice(base, committed), moved)).toBe('aXYc');
+  });
+});
+
 describe('rebasing against a document history', () => {
+  // A client at version V has seen every ticket *below* V. So a splice based at
+  // V must be transformed past ticket V itself — the edit that beat it to the
+  // server by one turn, and the most common collision there is.
   const committed: CommittedSplice[] = [
     { blockId: 'p1', ticket: 5, index: 0, deleteCount: 0, insert: 'X' },
     { blockId: 'p2', ticket: 6, index: 0, deleteCount: 0, insert: 'IGNORED' },
     { blockId: 'p1', ticket: 7, index: 1, deleteCount: 0, insert: 'Y' },
   ];
 
-  it('skips everything at or before the base ticket', () => {
+  it('skips everything below the base version', () => {
     const moved = rebaseSplice(
-      { blockId: 'p1', baseTicket: 7, index: 0, deleteCount: 0, insert: 'a' },
+      { blockId: 'p1', baseTicket: 8, index: 0, deleteCount: 0, insert: 'a' },
       committed,
     );
     expect(moved.index).toBe(0);
   });
 
-  it('skips other blocks, because a segment is its own container', () => {
+  it('transforms past the splice at exactly the base version', () => {
+    // Based at 7, so ticket 7 (insert "Y" at 1) still counts.
     const moved = rebaseSplice(
-      { blockId: 'p1', baseTicket: 5, index: 0, deleteCount: 0, insert: 'a' },
+      { blockId: 'p1', baseTicket: 7, index: 1, deleteCount: 0, insert: 'a' },
       committed,
     );
-    // Only ticket 7 applies: p2's edit cannot move an offset inside p1.
+    // Slid past "Y" rather than landing in front of it.
+    expect(moved.index).toBe(2);
+  });
+
+  it('skips other blocks, because a segment is its own container', () => {
+    // Based at 6: p2's edit at ticket 6 is in range by version and must still
+    // be ignored, because it cannot move an offset inside p1.
+    const moved = rebaseSplice(
+      { blockId: 'p1', baseTicket: 6, index: 0, deleteCount: 0, insert: 'a' },
+      committed,
+    );
+    // Only ticket 7 applies, and it inserts at 1 — after this splice's offset.
     expect(moved.index).toBe(0);
   });
 
   it('composes every applicable splice in ticket order', () => {
-    const base = 'hello';
-    const applicable = committed.filter((c) => c.blockId === 'p1');
-    let text = base;
-    for (const c of applicable) text = applySplice(text, c);
+    let text = 'hello';
+    for (const c of committed.filter((c) => c.blockId === 'p1')) text = applySplice(text, c);
     expect(text).toBe('XYhello');
 
     const moved = rebaseSplice(
-      { blockId: 'p1', baseTicket: 4, index: 5, deleteCount: 0, insert: '!' },
+      { blockId: 'p1', baseTicket: 5, index: 5, deleteCount: 0, insert: '!' },
       committed,
     );
     expect(applySplice(text, moved)).toBe('XYhello!');

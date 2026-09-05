@@ -1,6 +1,7 @@
 import { LoroDoc, LoroMap, LoroText, VersionVector, type LoroMovableList } from 'loro-crdt';
 import { blockId, ulid } from '@galley/anchor';
 import {
+  UnknownBlockError,
   applyBlockOps,
   parseDocument,
   setFrontmatterKeys,
@@ -9,6 +10,7 @@ import {
 } from '@galley/markdown';
 import { assemble, segment, segmentParsed, type Segment, type SegmentedDocument } from './segments.js';
 import { minimalSplice, reconcile, type ReconcileStep } from './reconcile.js';
+import type { Splice } from './transform.js';
 
 const SEGMENTS = 'segments';
 const PREAMBLE = 'preamble';
@@ -332,6 +334,54 @@ export class GalleyDocument {
       entry.parsed ??= afterParsed;
     }
     return { source, steps };
+  }
+
+  /**
+   * Splice one segment's text at a character offset.
+   *
+   * The offset-bearing write, and the counterpart to `setMarkdown`. Where that
+   * one takes a whole block and works out what changed, this one is *told* —
+   * which is the difference between a document that can carry two writers in one
+   * paragraph and one that cannot.
+   *
+   * Offsets are into the segment's **stored bytes**, id marker and container
+   * prefix included, because that is the only coordinate space both sides can
+   * agree on without a serializer standing between them.
+   *
+   * Callers must rebase first: this applies exactly what it is given, against
+   * whatever the document says now. `DocumentActor.applySplice` is the path that
+   * does the rebasing, and the one to use.
+   */
+  spliceSegment(target: string, splice: Splice): { source: string; sid: string } {
+    // Segments are top-level blocks in document order (D11), so the id a client
+    // holds resolves to a list position without a second index to keep true.
+    const topLevel = this.parsed().blocks.filter((b) => b.depth === 0);
+    const index = topLevel.findIndex((b) => b.id === target);
+    if (index === -1) throw new UnknownBlockError(target);
+
+    const list = this.segmentList();
+    const map = list.get(index) as LoroMap;
+    const text = map.get('text') as LoroText;
+    const current = text.toString();
+
+    const end = splice.index + splice.deleteCount;
+    if (splice.index < 0 || splice.deleteCount < 0 || end > current.length) {
+      release(text, map, list);
+      throw new RangeError(
+        `splice [${splice.index},${end}) is outside block ${target} (length ${current.length})`,
+      );
+    }
+
+    // Delete before insert, and only when there is something to do: an empty
+    // call on a `LoroText` still mints an operation, and this path runs at
+    // keystroke rate.
+    if (splice.deleteCount > 0) text.delete(splice.index, splice.deleteCount);
+    if (splice.insert) text.insert(splice.index, splice.insert);
+
+    const sid = map.get('sid') as string;
+    release(text, map, list);
+    this.loro.commit();
+    return { source: this.toMarkdown(), sid };
   }
 
   /** Set or update frontmatter keys, preserving the rest of the block. */

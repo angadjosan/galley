@@ -39,6 +39,12 @@ export interface PendingSplice extends Splice {
   /**
    * The document version the author's text was at.
    *
+   * `DocumentActor.version` — the ticket that will be issued *next*, so a client
+   * holding version V has seen every ticket below V and nothing at or above it.
+   * That is the boundary `rebaseSplice` transforms across, and getting it off by
+   * one silently disables the whole mechanism: every splice is skipped, offsets
+   * are applied raw, and the sentence is quietly corrupted.
+   *
    * Not optional, and not defaulted to "current": a splice with no base is a
    * splice whose offsets mean nothing, and accepting one is how the whole-block
    * replacement bug got in.
@@ -53,31 +59,48 @@ export interface CommittedSplice extends Splice {
 }
 
 /**
+ * Which side of the committed text a position sticks to when it lands exactly
+ * on the seam. `after` slides past inserted characters, `before` stays in front
+ * of them.
+ */
+type Bias = 'before' | 'after';
+
+/**
  * Move one position past a committed splice.
  *
- * A position inside the committed splice's deleted range refers to characters
- * that no longer exist. It collapses to the end of the replacement text rather
- * than the start, so an edit *within* a region someone else rewrote lands after
- * their words instead of in front of them — which is what "they replaced this
- * sentence while I was typing in it" should look like.
+ * The bias is the whole subtlety, and it is not a detail: it decides what
+ * happens when two people edit the *same spot* rather than merely the same
+ * block. ProseMirror learned this the hard way and settled on mapping the start
+ * of a range forward and its end backward, so that a range cannot grow sideways
+ * to swallow text somebody inserted against its edge.
+ *
+ * A position strictly inside the committed splice's deleted range refers to
+ * characters that no longer exist, and collapses to one end of the replacement.
  */
-function movePast(position: number, past: Splice): number {
+function movePast(position: number, past: Splice, bias: Bias): number {
   const end = past.index + past.deleteCount;
-  if (position <= past.index) return position;
-  if (position >= end) return position + past.insert.length - past.deleteCount;
-  return past.index + past.insert.length;
+  if (position < past.index) return position;
+  if (position > end) return position + past.insert.length - past.deleteCount;
+  // On the seam or inside the replaced region.
+  return bias === 'before' ? past.index : past.index + past.insert.length;
 }
 
 /**
  * Rewrite a splice so it means the same thing against text that has moved on.
  *
- * The deleted range is mapped end-for-end rather than by shifting the index and
- * keeping the count: characters the committed splice already removed must not be
- * deleted twice, and mapping both ends is what drops them from the range.
+ * Both ends are mapped, rather than shifting the index and keeping the count:
+ * characters the committed splice already removed must not be deleted twice,
+ * and mapping both ends is what drops them from the range.
+ *
+ * The start maps *after* committed text and the end maps *before* it. That
+ * asymmetry is what stops a deletion from eating an insertion made against its
+ * boundary — delete "world" while someone types "brave " immediately in front of
+ * it, and their word survives. Mapping both ends the same way loses it, silently
+ * and only when two people are in the same sentence.
  */
 export function transformSplice(splice: Splice, past: Splice): Splice {
-  const start = movePast(splice.index, past);
-  const end = Math.max(start, movePast(splice.index + splice.deleteCount, past));
+  const start = movePast(splice.index, past, 'after');
+  const end = Math.max(start, movePast(splice.index + splice.deleteCount, past, 'before'));
   return { index: start, deleteCount: end - start, insert: splice.insert };
 }
 
@@ -100,7 +123,11 @@ export function rebaseSplice(
     insert: pending.insert,
   };
   for (const entry of committed) {
-    if (entry.ticket <= pending.baseTicket) continue;
+    // `>= baseTicket` because a client at version V has seen everything *below*
+    // V. Using `>` here skips the splice that landed at exactly V, which is the
+    // most common one there is: the edit that beat this one to the server by a
+    // single turn.
+    if (entry.ticket < pending.baseTicket) continue;
     if (entry.blockId !== pending.blockId) continue;
     result = transformSplice(result, entry);
   }
