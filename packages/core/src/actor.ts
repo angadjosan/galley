@@ -13,6 +13,7 @@ import { anchorsFor, blockId, reanchor, type Anchor, type Resolution } from '@ga
 import { applyBlockOps, parseDocument, type BlockOp } from '@galley/markdown';
 import { GalleyDocument, type ApplyResult } from './document.js';
 import { diffToBlockOps } from './diff.js';
+import { rebaseSplice, type CommittedSplice, type PendingSplice, type Splice } from './transform.js';
 import {
   CommentBudget,
   assertTransition,
@@ -94,6 +95,25 @@ export interface ActorOptions {
  *   reading is evicted from the feed, never waited on. The feed is a
  *   notification, not the ledger.
  */
+/**
+ * A splice arrived based on a version the document no longer holds history for.
+ *
+ * Not a failure of the client: it fell far enough behind that the operations it
+ * would have to be moved past have been dropped. The answer is to resynchronize
+ * and send again, and the reason this is an error rather than a best effort is
+ * that the best effort available — applying it unrebased — is exactly the
+ * silent overwrite the splice path exists to remove.
+ */
+export class StaleBaseError extends Error {
+  constructor(
+    readonly baseTicket: number,
+    readonly oldestRetained: number,
+  ) {
+    super(`splice is based at ${baseTicket}, older than the retained history (${oldestRetained})`);
+    this.name = 'StaleBaseError';
+  }
+}
+
 export class DocumentActor {
   readonly docId: string;
   readonly sequencer: Sequencer;
@@ -281,6 +301,113 @@ export class DocumentActor {
       ticket = submission.ticket;
       return submission.result;
     });
+  }
+
+  /**
+   * The document's current version.
+   *
+   * A splice is only meaningful against the version it was written on, so this
+   * is part of the protocol rather than a diagnostic: a client is told this when
+   * it opens the document and repeats it back with every edit.
+   */
+  get version(): number {
+    return this.sequencer.watermark.cursor;
+  }
+
+  /**
+   * Apply one offset-bearing splice from a live editor.
+   *
+   * This is the realtime write path, and the difference between it and
+   * `applyOps` is the whole point: `applyOps` is handed a block's new text and
+   * has to work out what changed, which resolves a concurrent edit to the same
+   * block by deleting it. This one is handed the change itself, and moves it
+   * past whatever was committed while it was in flight.
+   *
+   * The rebase happens *inside the lane*, so the splice is transformed against
+   * exactly the set of splices that precede it in the total order. Doing it
+   * outside would race: another splice can commit between the rebase and the
+   * write, and the offsets would be stale again by the time they landed.
+   */
+  applySplice(
+    pending: PendingSplice,
+    principal: Principal,
+    requestId?: string,
+  ): Promise<{ ticket: number; source: string; applied: Splice }> {
+    return this.command(requestId, () => {
+      let ticket = -1;
+      const submission = this.sequencer.submit<{ ticket: number; source: string; applied: Splice }>(
+        this.docId,
+        async () => {
+          this.assertLive();
+          // A base older than the history still held cannot be rebased, and
+          // applying it unrebased is precisely the bug this path exists to
+          // remove. Refuse, and let the client resynchronize — a round trip is
+          // cheap next to silently deleting somebody's sentence.
+          if (pending.baseTicket <= this.newestDroppedSplice) {
+            throw new StaleBaseError(pending.baseTicket, this.newestDroppedSplice);
+          }
+          const stop = this.applyLatency.start();
+          try {
+            const applied = rebaseSplice(pending, this.committedSplices);
+            const result = await this.lock.withWrite(() =>
+              this.doc.spliceSegment(pending.blockId, applied),
+            );
+            this.rememberSplice({ ...applied, blockId: pending.blockId, ticket });
+            this.counters.inc('applied-splices');
+            this.refreshSuggestionStaleness();
+            // Recorded as a replace of the block it touched. The timeline is
+            // about who changed which block, not about the wire format that
+            // carried it, and attribution must not depend on which write path a
+            // client happened to use.
+            this.recordRevision({
+              ops: [{ kind: 'replace', target: pending.blockId, markdown: '' }],
+              principal,
+              ticket,
+              kind: 'edit',
+              content: result.source,
+              blockIds: [pending.blockId],
+            });
+            this.emit({
+              kind: 'changed',
+              docId: this.docId,
+              ticket,
+              by: describePrincipal(principal),
+            });
+            return { ticket, source: result.source, applied };
+          } finally {
+            stop();
+          }
+        },
+      );
+      ticket = submission.ticket;
+      return submission.result;
+    });
+  }
+
+  /**
+   * Splices committed recently, newest last, for rebasing arrivals.
+   *
+   * Bounded, because this grows at keystroke rate and a document that is open
+   * for a day would otherwise hold every character anyone typed into it. The
+   * bound is what makes `StaleBaseError` reachable, and the two have to be
+   * understood together: the window is how far behind a client may be before it
+   * is asked to catch up, not an optimization.
+   */
+  private readonly committedSplices: CommittedSplice[] = [];
+  private newestDroppedSplice = -1;
+  private static readonly SPLICE_WINDOW = 1_024;
+
+  private rememberSplice(entry: CommittedSplice): void {
+    this.committedSplices.push(entry);
+    if (this.committedSplices.length <= DocumentActor.SPLICE_WINDOW) return;
+    const dropped = this.committedSplices.splice(
+      0,
+      this.committedSplices.length - DocumentActor.SPLICE_WINDOW,
+    );
+    const last = dropped[dropped.length - 1];
+    // Anything based at or before the newest dropped entry can no longer be
+    // rebased correctly, because the splice it would have to move past is gone.
+    if (last) this.newestDroppedSplice = last.ticket;
   }
 
   /**
