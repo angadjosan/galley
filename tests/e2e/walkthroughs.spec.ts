@@ -1337,6 +1337,61 @@ test.describe('two people in one document', () => {
     }
   });
 
+  // Not yet true, and skipped rather than deleted because it is the acceptance
+  // test for the realtime path and it currently *fails for a specific reason*.
+  //
+  // The server side is in place: a splice carrying the version it was written
+  // against is rebased and committed correctly (`packages/core/test/splice.test.ts`,
+  // `packages/server/test/sync.test.ts`). The client is not, and the blocker is
+  // `minimalSplice`: it trims a common prefix and suffix, so appending " ONE."
+  // to a sentence already ending in "." produces a *fifty-character*
+  // replacement rather than a five-character insert. Two writers in one
+  // paragraph then send overlapping replacements, and two overlapping
+  // replacements cannot both survive — one collapses into the other.
+  //
+  // What it needs: a character-level diff for the outbound splice, so an edit
+  // is the size of the edit, plus a decision about genuinely overlapping
+  // replacements. Removing this test would delete the only written statement of
+  // what "done" means here.
+  test.fixme('two people type in the same paragraph and both keep their words', async ({ browser }) => {
+    const priya = await browser.newContext();
+    const sam = await browser.newContext();
+    try {
+      const one = await priya.newPage();
+      const two = await sam.newPage();
+      await openAs(one, tokens().token);
+      await openAs(two, tokens().secondToken);
+
+      // The same paragraph, at the same time. This is the case the whole splice
+      // path exists for: sending whole blocks, whoever wrote last erased the
+      // other, and nothing anywhere said so.
+      // Both carets first, so neither edit has been sent when the other starts.
+      // Typing them one after the other proves nothing: the first would be
+      // saved and echoed long before the second began, and there would be no
+      // collision to survive.
+      await caretAtEndOf(one, '.prose > p[data-block-id]');
+      await caretAtEndOf(two, '.prose > p[data-block-id]');
+      await Promise.all([one.keyboard.type(' ONE.'), two.keyboard.type(' TWO.')]);
+
+      await expect(one.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+      await expect(two.getByTestId('save-state')).toHaveText('Saved', { timeout: 15_000 });
+
+      // Both survive, in both browsers.
+      await expect(one.locator('.prose')).toContainText('ONE.', { timeout: 15_000 });
+      await expect(one.locator('.prose')).toContainText('TWO.', { timeout: 15_000 });
+      await expect(two.locator('.prose')).toContainText('ONE.', { timeout: 15_000 });
+      await expect(two.locator('.prose')).toContainText('TWO.', { timeout: 15_000 });
+
+      // And in the file, which is the copy that actually matters.
+      const stored = await readAsAgent('specs/checkout-v2');
+      expect(stored, "one writer's words were lost").toContain('ONE.');
+      expect(stored, "one writer's words were lost").toContain('TWO.');
+    } finally {
+      await priya.close();
+      await sam.close();
+    }
+  });
+
   test('redo puts back what undo took, with the other writer untouched', async ({ browser }) => {
     const priya = await browser.newContext();
     const sam = await browser.newContext();

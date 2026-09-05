@@ -6,14 +6,70 @@ export type ClientFrame =
   | { readonly t: 'hello'; readonly doc: string; readonly vv?: string }
   | { readonly t: 'update'; readonly update: string }
   | { readonly t: 'presence'; readonly cursor: { blockId: string; offset: number } | null }
+  /**
+   * One keystroke's worth of intent, and the version it was written against.
+   *
+   * The difference between this and `update` is who does the merging. `update`
+   * carries CRDT bytes a client produced from its own replica; this carries what
+   * the person *did*, and the server works out where it lands. That keeps the
+   * merge — and the authorization boundary around it — on this side.
+   */
+  | {
+      readonly t: 'splice';
+      readonly blockId: string;
+      readonly index: number;
+      readonly deleteCount: number;
+      readonly insert: string;
+      readonly baseTicket: number;
+    }
   | { readonly t: 'ping' };
 
 export type ServerFrame =
-  | { readonly t: 'welcome'; readonly docId: string; readonly snapshot: string; readonly ticket: number }
+  | {
+      readonly t: 'welcome';
+      readonly docId: string;
+      readonly snapshot: string;
+      readonly ticket: number;
+      /**
+       * This connection's own id.
+       *
+       * Sent so a client can recognise the echo of its own typing. Committed
+       * splices go to everyone, the author included — that echo is how the
+       * author learns where the server actually put its edit after rebasing,
+       * which is not always where it asked.
+       */
+      readonly peerId: string;
+    }
   | { readonly t: 'update'; readonly update: string }
   | { readonly t: 'changed'; readonly ticket: number; readonly by: string }
   | { readonly t: 'presence'; readonly peers: readonly PeerPresence[] }
   | { readonly t: 'event'; readonly event: DocumentEvent }
+  /**
+   * A splice that committed, as every other client should apply it.
+   *
+   * Carries the *rebased* offsets, not the ones the author sent, so a peer can
+   * apply it verbatim against the version named by `ticket` with no arithmetic
+   * of its own. `peerId` is the author, so a client can skip the echo of its own
+   * typing rather than re-applying it.
+   */
+  | {
+      readonly t: 'spliced';
+      readonly blockId: string;
+      readonly index: number;
+      readonly deleteCount: number;
+      readonly insert: string;
+      readonly ticket: number;
+      readonly peerId: string;
+      readonly by: string;
+    }
+  /**
+   * This client fell too far behind to be rebased and must reload.
+   *
+   * Separate from `error` because it is not a failure the person can do anything
+   * about and not one the client should surface as one — it is an instruction,
+   * and the client acts on it silently.
+   */
+  | { readonly t: 'resync'; readonly reason: string }
   | { readonly t: 'ended'; readonly reason: string }
   | { readonly t: 'error'; readonly message: string }
   | { readonly t: 'pong' };

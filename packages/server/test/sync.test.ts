@@ -117,6 +117,117 @@ async function open(options: Parameters<typeof harness>[0] = {}): Promise<Harnes
   return active;
 }
 
+describe('realtime splices', () => {
+  /** Where a phrase starts inside its own segment, as a client computes it. */
+  function offsetIn(client: TestClient, needle: string): number {
+    const segment = client.doc!.segmented().segments.find((s) => s.text.includes(needle));
+    if (!segment) throw new Error(`no segment containing ${JSON.stringify(needle)}`);
+    return segment.text.indexOf(needle);
+  }
+
+  it('keeps both writers when they type in the same paragraph', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+
+    const priya = new TestClient(h.baseUrl, h.tokens.priya, docId);
+    const sam = new TestClient(h.baseUrl, h.tokens.sam, docId);
+    await priya.ready();
+    await sam.ready();
+
+    const welcome = (await priya.waitFor('welcome')) as Extract<ServerFrame, { t: 'welcome' }>;
+    await sam.waitFor('welcome');
+
+    // Both are looking at the same version, and both measure their offsets
+    // against it — which is the situation the whole mechanism is for.
+    const base = welcome.ticket;
+    const optionalAt = offsetIn(priya, 'optional');
+    const currencyAt = offsetIn(priya, 'currency');
+
+    // Priya edits near the end of the paragraph. Sam edits earlier, which
+    // shifts everything after it — so Priya's offset is wrong by the time it
+    // arrives unless the server moves it.
+    sam.send({
+      t: 'splice',
+      blockId: 'b1',
+      index: currencyAt,
+      deleteCount: 'currency'.length,
+      insert: 'settlement currency',
+      baseTicket: base,
+    });
+    await delay(60);
+    priya.send({
+      t: 'splice',
+      blockId: 'b1',
+      index: optionalAt,
+      deleteCount: 'optional'.length,
+      insert: 'mandatory',
+      baseTicket: base,
+    });
+    await delay(120);
+
+    const read = await h.json<{ content: string }>(`/v1/docs/${docId}`);
+    expect(read.content).toContain(
+      'The settlement currency field is mandatory for a charge request.',
+    );
+  });
+
+  it('tells the other client what committed, with the offsets it should use', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+
+    const priya = new TestClient(h.baseUrl, h.tokens.priya, docId);
+    const sam = new TestClient(h.baseUrl, h.tokens.sam, docId);
+    await priya.ready();
+    await sam.ready();
+    const welcome = (await priya.waitFor('welcome')) as Extract<ServerFrame, { t: 'welcome' }>;
+    await sam.waitFor('welcome');
+
+    priya.send({
+      t: 'splice',
+      blockId: 'b1',
+      index: offsetIn(priya, 'optional'),
+      deleteCount: 'optional'.length,
+      insert: 'mandatory',
+      baseTicket: welcome.ticket,
+    });
+
+    const spliced = (await sam.waitFor('spliced')) as Extract<ServerFrame, { t: 'spliced' }>;
+    expect(spliced.blockId).toBe('b1');
+    expect(spliced.insert).toBe('mandatory');
+    expect(spliced.by).toContain('priya');
+
+    // The author gets the echo too, carrying the offsets the server actually
+    // used, and its own peer id so it can tell the echo from a peer's edit.
+    const own = (await priya.waitFor('spliced')) as Extract<ServerFrame, { t: 'spliced' }>;
+    const welcomeFrame = priya.frames.find((f) => f.t === 'welcome') as Extract<
+      ServerFrame,
+      { t: 'welcome' }
+    >;
+    expect(own.peerId).toBe(welcomeFrame.peerId);
+    expect(spliced.peerId).toBe(welcomeFrame.peerId);
+  });
+
+  it('rejects a malformed splice rather than trusting the numbers', async () => {
+    const h = await open();
+    const { docId } = await seedDocument(h);
+    const client = new TestClient(h.baseUrl, h.tokens.priya, docId);
+    await client.ready();
+    await client.waitFor('welcome');
+
+    client.send({
+      t: 'splice',
+      blockId: 'b1',
+      index: -5,
+      deleteCount: 1.5,
+      insert: 'x',
+      baseTicket: 0,
+    });
+
+    const error = (await client.waitFor('error')) as Extract<ServerFrame, { t: 'error' }>;
+    expect(error.message).toContain('malformed splice');
+  });
+});
+
 describe('sync handshake', () => {
   it('sends a snapshot the client can open', async () => {
     const h = await open();

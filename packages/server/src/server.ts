@@ -9,9 +9,11 @@ import { randomUUID } from 'node:crypto';
 import { Deadline, Semaphore, TimeoutError, CapacityError } from '@galley/concurrency';
 import {
   CommentBudgetError,
+  StaleBaseError,
   SuggestionStateError,
   capabilityFor,
   citationFor,
+  describePrincipal,
   implies,
   needsAttention,
   renderCleanMarkdown,
@@ -1646,6 +1648,7 @@ export function build(options: ServerOptions = {}): GalleyServer {
         docId: actor.docId,
         snapshot: Buffer.from(snapshot).toString('base64'),
         ticket: actor.sequencer.watermark.cursor,
+        peerId: connection.peerId,
       });
 
       // Writer: one task per connection draining its outbound channel. The
@@ -1796,6 +1799,77 @@ export function build(options: ServerOptions = {}): GalleyServer {
           connection.offer({
             t: 'error',
             message: `rejected update: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+        return;
+      }
+      case 'splice': {
+        const path = workspace.pathOf(actor.docId) ?? actor.docId;
+        if (!canDoc(session, actor.docId, path, 'write')) {
+          connection.offer({ t: 'error', message: 'not permitted to write this document' });
+          return;
+        }
+        // Validated here rather than trusted, for the same reason every other
+        // client-supplied number is: these are array indices into a CRDT text
+        // container, and a non-integer or a negative one is a crash or a
+        // corruption rather than a bad edit.
+        if (
+          !Number.isInteger(frame.index) ||
+          !Number.isInteger(frame.deleteCount) ||
+          !Number.isInteger(frame.baseTicket) ||
+          frame.index < 0 ||
+          frame.deleteCount < 0 ||
+          typeof frame.insert !== 'string' ||
+          typeof frame.blockId !== 'string'
+        ) {
+          connection.offer({ t: 'error', message: 'malformed splice' });
+          return;
+        }
+        try {
+          const { ticket, applied } = await actor.applySplice(
+            {
+              blockId: frame.blockId,
+              index: frame.index,
+              deleteCount: frame.deleteCount,
+              insert: frame.insert,
+              baseTicket: frame.baseTicket,
+            },
+            principalOf(session),
+          );
+          // The *rebased* offsets go out, not the ones that arrived, so every
+          // peer applies the same edit at the same place with no arithmetic of
+          // its own.
+          //
+          // Sent to the author too. Its edit may not have landed where it asked
+          // — that is the entire point of rebasing — and the echo is how it
+          // finds out, and how it learns that the server has caught up with it.
+          // Filtering the author out would leave it guessing.
+          hub.broadcast(actor.docId, {
+            t: 'spliced',
+            blockId: frame.blockId,
+            index: applied.index,
+            deleteCount: applied.deleteCount,
+            insert: applied.insert,
+            ticket,
+            peerId: connection.peerId,
+            by: describePrincipal(principalOf(session)),
+          });
+          // This client is already at the version it just produced, so the CRDT
+          // delta pump must not send the same operations back to it.
+          connection.lastVersion = actor.document.versionVector();
+          workspace.markChanged(actor.docId);
+          workspace.audit(principalOf(session), 'document.edit', actor.docId, 'live edit');
+        } catch (err) {
+          // A client too far behind to rebase is told to reload rather than
+          // shown an error: there is nothing the person did wrong and nothing
+          // they can do about it.
+          if (err instanceof StaleBaseError) {
+            connection.offer({ t: 'resync', reason: 'too far behind to merge' });
+            return;
+          }
+          connection.offer({
+            t: 'error',
+            message: `rejected splice: ${err instanceof Error ? err.message : String(err)}`,
           });
         }
         return;
